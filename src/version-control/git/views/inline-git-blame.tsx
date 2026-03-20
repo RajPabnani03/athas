@@ -211,7 +211,7 @@ export const InlineGitBlame = ({ blameLine, className }: InlineGitBlameProps) =>
               left: `${position.x}px`,
               top: `${position.y}px`,
             }}
-            // TODO: Fix this
+            // Keep popover interactions from reaching the editor beneath the portal
             onClick={(e) => e.stopPropagation()}
             onSelect={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
