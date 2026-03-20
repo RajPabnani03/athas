@@ -133,7 +133,6 @@ export const useAppStore = createSelectors(
             }
           } else if (activeBuffer.path.startsWith("remote://")) {
             // Handle remote save
-            markBufferDirty(activeBuffer.id, true);
             const pathParts = activeBuffer.path.replace("remote://", "").split("/");
             const connectionId = pathParts.shift();
             const remotePath = `/${pathParts.join("/")}`;
@@ -148,7 +147,6 @@ export const useAppStore = createSelectors(
                 markBufferDirty(activeBuffer.id, false);
               } catch (error) {
                 console.error("Error saving remote file:", error);
-                markBufferDirty(activeBuffer.id, true);
               }
             }
           } else {

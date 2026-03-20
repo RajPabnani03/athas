@@ -246,15 +246,12 @@ export const useLspStore = createSelectors(
         set({ currentCompletionRequest: abortController });
 
         try {
-          const startTime = performance.now();
           const completions = await getCompletions(filePath, line, character);
 
           // Check if request was cancelled
           if (abortController.signal.aborted) {
             return;
           }
-
-          const _elapsed = performance.now() - startTime;
 
           if (completions.length > 0) {
             // Cache the results

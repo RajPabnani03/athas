@@ -792,15 +792,7 @@ const FileTree = ({
     }
     // Handle external file drops to root
     else if (e.dataTransfer.files.length > 0) {
-      // Get root path - handle both forward and backslashes
-      const firstFilePath = files[0]?.path || "";
-      const pathSep = firstFilePath.includes("\\") ? "\\" : "/";
-      const _rootPath = firstFilePath.split(pathSep).slice(0, -1).join(pathSep) || ".";
-
-      for (let i = 0; i < e.dataTransfer.files.length; i++) {
-        const _file = e.dataTransfer.files[i];
-        // TODO: Implement file upload
-      }
+      // TODO: Implement file upload
     }
   };
 

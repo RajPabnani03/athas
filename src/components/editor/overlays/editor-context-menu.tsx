@@ -222,7 +222,7 @@ const EditorContextMenu = ({
     onClose();
   };
 
-  const _handleInsertLine = () => {
+  const handleInsertLine = () => {
     if (onInsertLine) onInsertLine();
     onClose();
   };
@@ -393,6 +393,17 @@ const EditorContextMenu = ({
           <span>Move Line Down</span>
         </div>
         <KeybindingBadge keys={["⌥", "↓"]} className="opacity-60" />
+      </button>
+
+      {/* Insert Line Below */}
+      <button
+        className="flex w-full items-center justify-between gap-2 px-2.5 py-1 text-left font-mono text-text text-xs hover:bg-hover"
+        onClick={handleInsertLine}
+      >
+        <div className="flex items-center gap-2">
+          <FileText size={11} />
+          <span>Insert Line Below</span>
+        </div>
       </button>
 
       {/* Toggle Case */}

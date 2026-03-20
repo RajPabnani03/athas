@@ -59,23 +59,85 @@ const LineRendererInternal = ({
     return <>{elements}</>;
   };
 
-  const applyDecorations = (baseContent: React.ReactNode) => {
+  const renderContent = () => {
     const inlineDecorations = decorations.filter(
       (d) => d.type === "inline" && d.range.start.line === lineNumber,
     );
 
     if (inlineDecorations.length === 0 && searchHighlight.length === 0) {
-      return baseContent;
+      return renderTokenizedContent();
     }
 
-    // TODO: Apply decorations and search highlights
-    // For now, just return the base content
-    return baseContent;
+    // Collect all boundaries from tokens, search highlights, and inline decorations
+    const boundaries = new Set<number>([0, content.length]);
+
+    for (const token of tokens) {
+      boundaries.add(token.startColumn);
+      boundaries.add(token.endColumn);
+    }
+
+    for (const highlight of searchHighlight) {
+      boundaries.add(Math.max(0, highlight.start));
+      boundaries.add(Math.min(content.length, highlight.end));
+    }
+
+    for (const dec of inlineDecorations) {
+      boundaries.add(Math.max(0, dec.range.start.column));
+      boundaries.add(Math.min(content.length, dec.range.end.column));
+    }
+
+    const sortedBoundaries = [...boundaries]
+      .filter((b) => b >= 0 && b <= content.length)
+      .sort((a, b) => a - b);
+
+    const elements: React.ReactNode[] = [];
+
+    for (let i = 0; i < sortedBoundaries.length - 1; i++) {
+      const start = sortedBoundaries[i];
+      const end = sortedBoundaries[i + 1];
+      const text = content.slice(start, end);
+
+      if (!text) continue;
+
+      const classes: string[] = [];
+
+      for (const token of tokens) {
+        if (start >= token.startColumn && end <= token.endColumn && token.className) {
+          classes.push(token.className);
+        }
+      }
+
+      for (const highlight of searchHighlight) {
+        if (start >= highlight.start && end <= highlight.end) {
+          classes.push("search-highlight");
+        }
+      }
+
+      for (const dec of inlineDecorations) {
+        const decStart = dec.range.start.column;
+        const decEnd = dec.range.end.column;
+        if (start >= decStart && end <= decEnd && dec.className) {
+          classes.push(dec.className);
+        }
+      }
+
+      elements.push(
+        <span key={`seg-${start}`} className={classes.length > 0 ? classes.join(" ") : undefined}>
+          {text}
+        </span>,
+      );
+    }
+
+    if (elements.length === 0) {
+      elements.push(<span key="empty">{"\u00A0"}</span>);
+    }
+
+    return <>{elements}</>;
   };
 
   return (
     <div className={cn("editor-line", isSelected && "selected")} data-line-number={lineNumber}>
-      <span className="editor-line-content">{applyDecorations(renderTokenizedContent())}</span>
+      <span className="editor-line-content">{renderContent()}</span>
     </div>
   );
 };

@@ -117,8 +117,6 @@ export const MultiFileDiffViewer = memo(function MultiFileDiffViewer({
     // Initialize with auto-collapse logic
     const initialState = new Map<string, boolean>();
     multiDiff.files.forEach((diff, index) => {
-      const _additions = diff.lines.filter((line) => line.line_type === "added").length;
-      const _deletions = diff.lines.filter((line) => line.line_type === "removed").length;
       const totalLines = diff.lines.length;
 
       // Auto-collapse criteria:

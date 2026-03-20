@@ -211,7 +211,6 @@ export const InlineGitBlame = ({ blameLine, className }: InlineGitBlameProps) =>
               left: `${position.x}px`,
               top: `${position.y}px`,
             }}
-            // TODO: Fix this
             onClick={(e) => e.stopPropagation()}
             onSelect={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}

@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useFileSystemStore } from "../file-system/controllers/store";
 import { useSettingsStore } from "../settings/store";
@@ -17,9 +16,6 @@ export function useMenuEventsWrapper() {
   const activeBuffer = buffers.find((b) => b.id === activeBufferId) || null;
   const { closeBuffer, switchToNextBuffer, switchToPreviousBuffer } = useBufferStore.use.actions();
   const { handleSave } = useAppStore.use.actions();
-
-  // Get current window for window operations (currently unused but kept for future functionality)
-  const _currentWindow = getCurrentWebviewWindow();
 
   useMenuEvents({
     onNewFile: fileSystemStore.handleCreateNewFile,

@@ -247,8 +247,6 @@ const AIChatInputBar = memo(function AIChatInputBar({
         const selection = window.getSelection();
         if (!selection || selection.rangeCount === 0) return;
 
-        // Get a simple cursor position estimation
-        const _range = selection.getRangeAt(0);
         const beforeCursor = plainText.slice(0, plainText.length);
         const lastAtIndex = beforeCursor.lastIndexOf("@");
 
