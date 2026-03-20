@@ -1,5 +1,14 @@
 import type { FileEntry } from "../models/app";
 
+/** Normalize filesystem paths so tree lookups match across `/` vs `\\` and trailing slashes. */
+export function normalizePathKey(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+export function pathsEqual(a: string, b: string): boolean {
+  return normalizePathKey(a) === normalizePathKey(b);
+}
+
 export function sortFileEntries(entries: FileEntry[]): FileEntry[] {
   return entries.sort((a, b) => {
     // Directories come first
@@ -12,8 +21,9 @@ export function sortFileEntries(entries: FileEntry[]): FileEntry[] {
 }
 
 export function findFileInTree(files: FileEntry[], targetPath: string): FileEntry | null {
+  const targetKey = normalizePathKey(targetPath);
   for (const file of files) {
-    if (file.path === targetPath) {
+    if (normalizePathKey(file.path) === targetKey) {
       return file;
     }
     if (file.children) {
@@ -29,8 +39,9 @@ export function updateFileInTree(
   targetPath: string,
   updater: (file: FileEntry) => FileEntry,
 ): FileEntry[] {
+  const targetKey = normalizePathKey(targetPath);
   return files.map((file) => {
-    if (file.path === targetPath) {
+    if (normalizePathKey(file.path) === targetKey) {
       return updater(file);
     }
     if (file.children) {
@@ -44,8 +55,9 @@ export function updateFileInTree(
 }
 
 export function removeFileFromTree(files: FileEntry[], targetPath: string): FileEntry[] {
+  const targetKey = normalizePathKey(targetPath);
   return files
-    .filter((file) => file.path !== targetPath)
+    .filter((file) => normalizePathKey(file.path) !== targetKey)
     .map((file) => {
       if (file.children) {
         return {
@@ -70,17 +82,17 @@ export function addFileToTree(
   // Check if parentPath matches the root folder (when files are direct children of parentPath)
   // This happens when creating files in the root directory
   if (files.length > 0 && files[0].path) {
-    const firstFilePath = files[0].path;
-    // Extract the parent directory of the first file
-    const rootDirFromFirstFile = firstFilePath.substring(0, firstFilePath.lastIndexOf("/"));
-    if (parentPath === rootDirFromFirstFile) {
+    const norm = normalizePathKey(files[0].path);
+    const lastSlash = norm.lastIndexOf("/");
+    const rootDirFromFirstFile = lastSlash >= 0 ? norm.slice(0, lastSlash) : norm;
+    if (pathsEqual(parentPath, rootDirFromFirstFile)) {
       // Add to top level since parentPath is the root directory
       return sortFileEntries([...files, newFile]);
     }
   }
 
   const result = files.map((file) => {
-    if (file.path === parentPath && file.isDir) {
+    if (pathsEqual(file.path, parentPath) && file.isDir) {
       const children = sortFileEntries([...(file.children || []), newFile]);
       return { ...file, children, expanded: true };
     }

@@ -32,10 +32,18 @@
   font-family: var(--app-font-family, monospace) !important;
 }
 
-/* Sticky parent folders - simple and clean */
-.file-tree-item-dir {
+/*
+ * Only the project root row is sticky. Sticky on every depth stacked overlapping rows:
+ * parent folders stayed on top of nested rows and intercepted clicks, so folders below
+ * the second level could not be expanded (see athasdev/athas#556).
+ */
+.file-tree-item-dir[data-depth="0"] {
   position: sticky !important;
-  top: calc(var(--depth, 0) * 22px) !important;
+  top: 0 !important;
+}
+
+.file-tree-item-dir:not([data-depth="0"]) {
+  position: relative !important;
 }
 
 /* Ensure file tree content wrapper stretches to full scrollable area */

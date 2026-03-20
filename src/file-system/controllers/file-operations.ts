@@ -65,13 +65,16 @@ export async function readDirectoryContents(path: string): Promise<FileEntry[]> 
         const isDir = entry.is_dir || false;
         return !shouldIgnore(name, isDir);
       })
-      .map((entry: any) => ({
-        name: entry.name || "Unknown",
-        path: entry.path || `${path}/${entry.name}`,
-        isDir: entry.is_dir || false,
-        expanded: false,
-        children: undefined,
-      }));
+      .map((entry: any) => {
+        const sep = path.includes("\\") ? "\\" : "/";
+        return {
+          name: entry.name || "Unknown",
+          path: entry.path || `${path.replace(/[/\\]+$/, "")}${sep}${entry.name}`,
+          isDir: entry.is_dir || false,
+          expanded: false,
+          children: undefined,
+        };
+      });
   } catch (error) {
     throw new Error(`Failed to read directory ${path}: ${error}`);
   }
