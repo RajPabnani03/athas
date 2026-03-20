@@ -13,7 +13,7 @@
     "format": "bun check --write",
     "check:all": "bun typecheck && bun lint",
     "check:fix": "biome check --write --unsafe",
-    "clean": "concurrently --names \"node,rust\" --prefix-colors \"cyan,yellow\" \"rimraf dist build node_modules bun.lockb && bun install\" \"cargo clean && cargo build\"",
+    "clean": "concurrently --names \"node,rust\" --prefix-colors \"cyan,yellow\" \"rimraf dist build node_modules bun.lock bun.lockb && bun install\" \"cargo clean && cargo build\"",
     "prepare": "simple-git-hooks",
     "commitlint": "commitlint",
     "setup": "chmod +x scripts/linux/setup.sh && ./scripts/linux/setup.sh",
