@@ -412,9 +412,13 @@ export const useAIChatStore = create<AIChatState & AIChatActions>()(
             state.mentionState.position = position;
           }),
 
-        selectNext: () =>
+        selectNext: (totalItems) =>
           set((state) => {
-            state.mentionState.selectedIndex = Math.min(state.mentionState.selectedIndex + 1, 4);
+            const maxIndex = Math.max(0, totalItems - 1);
+            state.mentionState.selectedIndex = Math.min(
+              state.mentionState.selectedIndex + 1,
+              maxIndex,
+            );
           }),
 
         selectPrevious: () =>
