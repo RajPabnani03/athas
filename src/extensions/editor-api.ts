@@ -4,6 +4,7 @@ import { useEditorCursorStore } from "../stores/editor-cursor-store";
 import { useEditorDecorationsStore } from "../stores/editor-decorations-store";
 import { useEditorSettingsStore } from "../stores/editor-settings-store";
 import { useEditorViewStore } from "../stores/editor-view-store";
+import { useSettingsStore } from "../settings/store";
 import type { Decoration, Position, Range } from "../types/editor-types";
 import type { EditorAPI, EditorEvent, EditorSettings, EventHandler } from "./extension-types";
 
@@ -232,7 +233,7 @@ class EditorAPIImpl implements EditorAPI {
       tabSize,
       lineNumbers,
       wordWrap,
-      theme: "default", // TODO: Implement theme support
+      theme: useSettingsStore.getState().settings.theme,
     };
   }
 

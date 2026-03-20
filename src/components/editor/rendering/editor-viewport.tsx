@@ -1,5 +1,5 @@
 import type React from "react";
-import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { EDITOR_CONSTANTS } from "@/constants/editor-constants";
 import { useEditorLayout } from "@/hooks/use-editor-layout";
 import { useEditorCursorStore } from "@/stores/editor-cursor-store";
@@ -9,6 +9,7 @@ import { useEditorViewStore } from "@/stores/editor-view-store";
 import { LineWithContent } from "./line-with-content";
 
 interface EditorViewportProps {
+  ref?: React.Ref<HTMLDivElement>;
   onScroll?: (scrollTop: number, scrollLeft: number) => void;
   onClick?: (e: React.MouseEvent<HTMLElement>) => void;
   onMouseDown?: (e: React.MouseEvent<HTMLElement>) => void;
@@ -17,10 +18,8 @@ interface EditorViewportProps {
   onContextMenu?: (e: React.MouseEvent<HTMLElement>) => void;
 }
 
-// TODO: use ref as props since we are in React 19
 export const EditorViewport = memo(
-  forwardRef<HTMLDivElement, EditorViewportProps>(
-    ({ onScroll, onClick, onMouseDown, onMouseMove, onMouseUp, onContextMenu }, ref) => {
+  ({ ref, onScroll, onClick, onMouseDown, onMouseMove, onMouseUp, onContextMenu }: EditorViewportProps) => {
       const selection = useEditorCursorStore((state) => state.selection);
       const lineCount = useEditorViewStore((state) => state.lines.length);
       const showLineNumbers = useEditorSettingsStore.use.lineNumbers();
@@ -40,8 +39,15 @@ export const EditorViewport = memo(
       }, [selection]);
       const containerRef = useRef<HTMLDivElement>(null);
 
-      // Expose the container ref to parent components
-      useImperativeHandle(ref, () => containerRef.current!, []);
+      // Sync external ref with internal containerRef
+      useEffect(() => {
+        if (!ref) return;
+        if (typeof ref === "function") {
+          ref(containerRef.current);
+          return () => ref(null);
+        }
+        (ref as React.MutableRefObject<HTMLDivElement | null>).current = containerRef.current;
+      }, [ref]);
 
       const [, setIsScrolling] = useState(false);
       const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -167,8 +173,7 @@ export const EditorViewport = memo(
           </div>
         </div>
       );
-    },
-  ),
+  },
 );
 
 EditorViewport.displayName = "EditorViewport";
