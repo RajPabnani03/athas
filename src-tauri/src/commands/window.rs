@@ -18,15 +18,12 @@ pub async fn create_remote_window(
    }
 
    let url = format!("index.html?remote={connection_id}");
-   let mut window_builder =
-      WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::App(url.into()));
-
    #[cfg(target_os = "macos")]
-   {
-      window_builder = window_builder
-         .hidden_title(true)
-         .title_bar_style(TitleBarStyle::Overlay);
-   }
+   let window_builder = WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::App(url.into()))
+      .hidden_title(true)
+      .title_bar_style(TitleBarStyle::Overlay);
+   #[cfg(not(target_os = "macos"))]
+   let window_builder = WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::App(url.into()));
 
    let window = window_builder
       .transparent(true)

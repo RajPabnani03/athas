@@ -29,36 +29,34 @@ fn get_system_theme_sync() -> String {
    {
       // Try GNOME color-scheme first (most reliable on modern systems)
       if let Ok(output) = Command::new("gsettings")
-         .args(&["get", "org.gnome.desktop.interface", "color-scheme"])
+         .args(["get", "org.gnome.desktop.interface", "color-scheme"])
          .output()
+         && output.status.success()
       {
-         if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let theme = stdout.trim().replace('\'', "").replace('\"', "");
-            match theme.as_str() {
-               "prefer-dark" => return "dark".to_string(),
-               "prefer-light" => return "light".to_string(),
-               _ => {} // Continue to fallback
-            }
+         let stdout = String::from_utf8_lossy(&output.stdout);
+         let theme = stdout.trim().replace(['\'', '\"'], "");
+         match theme.as_str() {
+            "prefer-dark" => return "dark".to_string(),
+            "prefer-light" => return "light".to_string(),
+            _ => {} // Continue to fallback
          }
       }
 
       // Fallback to gtk-theme
       if let Ok(output) = Command::new("gsettings")
-         .args(&["get", "org.gnome.desktop.interface", "gtk-theme"])
+         .args(["get", "org.gnome.desktop.interface", "gtk-theme"])
          .output()
+         && output.status.success()
       {
-         if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
-            if stdout.contains("dark") || stdout.contains("adwaita-dark") {
-               return "dark".to_string();
-            }
+         let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+         if stdout.contains("dark") || stdout.contains("adwaita-dark") {
+            return "dark".to_string();
          }
       }
 
       // Check for KDE Plasma theme
       if let Ok(output) = Command::new("kreadconfig5")
-         .args(&[
+         .args([
             "--file",
             "kdeglobals",
             "--group",
@@ -67,12 +65,11 @@ fn get_system_theme_sync() -> String {
             "ColorScheme",
          ])
          .output()
+         && output.status.success()
       {
-         if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
-            if stdout.contains("dark") || stdout.contains("breeze dark") {
-               return "dark".to_string();
-            }
+         let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+         if stdout.contains("dark") || stdout.contains("breeze dark") {
+            return "dark".to_string();
          }
       }
 
@@ -100,19 +97,18 @@ fn get_system_theme_sync() -> String {
    {
       // For Windows, check registry for dark theme
       if let Ok(output) = Command::new("reg")
-         .args(&[
+         .args([
             "query",
             "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
             "/v",
             "AppsUseLightTheme",
          ])
          .output()
+         && output.status.success()
       {
-         if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if stdout.contains("0x0") {
-               return "dark".to_string();
-            }
+         let stdout = String::from_utf8_lossy(&output.stdout);
+         if stdout.contains("0x0") {
+            return "dark".to_string();
          }
       }
       "light".to_string()
