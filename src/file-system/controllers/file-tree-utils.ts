@@ -1,5 +1,11 @@
 import type { FileEntry } from "../models/app";
 
+/** Normalize paths for tree lookups (trailing slashes differ between APIs and UI). */
+export function normalizePathKey(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/, "");
+  return trimmed || path;
+}
+
 export function sortFileEntries(entries: FileEntry[]): FileEntry[] {
   return entries.sort((a, b) => {
     // Directories come first
@@ -12,8 +18,9 @@ export function sortFileEntries(entries: FileEntry[]): FileEntry[] {
 }
 
 export function findFileInTree(files: FileEntry[], targetPath: string): FileEntry | null {
+  const target = normalizePathKey(targetPath);
   for (const file of files) {
-    if (file.path === targetPath) {
+    if (normalizePathKey(file.path) === target) {
       return file;
     }
     if (file.children) {
@@ -29,8 +36,9 @@ export function updateFileInTree(
   targetPath: string,
   updater: (file: FileEntry) => FileEntry,
 ): FileEntry[] {
+  const target = normalizePathKey(targetPath);
   return files.map((file) => {
-    if (file.path === targetPath) {
+    if (normalizePathKey(file.path) === target) {
       return updater(file);
     }
     if (file.children) {
@@ -44,8 +52,9 @@ export function updateFileInTree(
 }
 
 export function removeFileFromTree(files: FileEntry[], targetPath: string): FileEntry[] {
+  const target = normalizePathKey(targetPath);
   return files
-    .filter((file) => file.path !== targetPath)
+    .filter((file) => normalizePathKey(file.path) !== target)
     .map((file) => {
       if (file.children) {
         return {
@@ -79,8 +88,9 @@ export function addFileToTree(
     }
   }
 
+  const normalizedParent = normalizePathKey(parentPath);
   const result = files.map((file) => {
-    if (file.path === parentPath && file.isDir) {
+    if (normalizePathKey(file.path) === normalizedParent && file.isDir) {
       const children = sortFileEntries([...(file.children || []), newFile]);
       return { ...file, children, expanded: true };
     }

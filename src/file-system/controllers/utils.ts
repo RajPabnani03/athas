@@ -1,5 +1,5 @@
 import type { FileEntry } from "../models/app";
-import { sortFileEntries } from "./file-tree-utils";
+import { normalizePathKey, sortFileEntries } from "./file-tree-utils";
 
 // Common directories and patterns to ignore for performance
 export const IGNORE_PATTERNS: string[] = [
@@ -213,23 +213,27 @@ export function updateDirectoryContents(
   newEntries: any[],
   preserveStates: boolean = true,
 ): boolean {
+  const dirKey = normalizePathKey(dirPath);
   for (const item of files) {
-    if (item.path === dirPath && item.isDir) {
+    if (normalizePathKey(item.path) === dirKey && item.isDir) {
       // Create a map of existing children to preserve their states
       const existingChildrenMap = new Map<string, FileEntry>();
       if (preserveStates && item.children) {
         item.children.forEach((child) => {
-          existingChildrenMap.set(child.path, child);
+          existingChildrenMap.set(normalizePathKey(child.path), child);
         });
       }
 
       // Update children with new entries and sort them
       item.children = sortFileEntries(
         newEntries.map((entry: any) => {
-          const existingChild = preserveStates ? existingChildrenMap.get(entry.path) : null;
+          const entryPath = entry.path as string;
+          const existingChild = preserveStates
+            ? existingChildrenMap.get(normalizePathKey(entryPath))
+            : null;
           return {
             name: entry.name || "Unknown",
-            path: entry.path,
+            path: entryPath,
             isDir: entry.is_dir || false,
             expanded: existingChild?.expanded || false,
             children: existingChild?.children || undefined,
