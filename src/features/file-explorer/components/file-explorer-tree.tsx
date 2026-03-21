@@ -39,6 +39,7 @@ import { cn } from "@/utils/cn";
 import { getRelativePath } from "@/utils/path-helpers";
 import { useFileExplorerDragDrop } from "../hooks/use-file-explorer-drag-drop";
 import { FileExplorerTreeItem } from "./file-explorer-tree-item";
+import { buildVisibleFileTreeRows } from "./visible-file-tree-rows";
 import "../styles/file-explorer-tree.css";
 
 const ALWAYS_HIDDEN_FILE_NAMES = new Set([".ds_store"]);
@@ -58,8 +59,8 @@ interface FileExplorerTreeProps {
   activePath?: string;
   updateActivePath?: (path: string) => void;
   rootFolderPath?: string;
-  onFileSelect: (path: string, isDir: boolean) => void;
-  onFileOpen?: (path: string, isDir: boolean) => void;
+  onFileSelect: (path: string, isDir: boolean) => void | Promise<void>;
+  onFileOpen?: (path: string, isDir: boolean) => void | Promise<void>;
   onCreateNewFileInDirectory: (directoryPath: string, fileName: string) => void;
   onCreateNewFolderInDirectory?: (directoryPath: string, folderName: string) => void;
   onDeletePath?: (path: string, isDir: boolean) => void;
@@ -71,12 +72,6 @@ interface FileExplorerTreeProps {
   onRevealInFinder?: (path: string) => void;
   onUploadFile?: (directoryPath: string) => void;
   onFileMove?: (oldPath: string, newPath: string) => void;
-}
-
-interface VisibleRow {
-  file: FileEntry;
-  depth: number;
-  isExpanded: boolean;
 }
 
 function FileExplorerTreeComponent({
@@ -119,6 +114,14 @@ function FileExplorerTreeComponent({
   const clipboard = useFileClipboardStore((s) => s.clipboard);
 
   const { dragState, startDrag } = useFileExplorerDragDrop(rootFolderPath, onFileMove);
+
+  // Route all directory expansion through the controller so children are loaded from disk
+  const toggleDirectory = useCallback(
+    (path: string) => {
+      void Promise.resolve(onFileSelect(path, true));
+    },
+    [onFileSelect],
+  );
 
   const [mouseDownInfo, setMouseDownInfo] = useState<{
     x: number;
@@ -266,20 +269,10 @@ function FileExplorerTreeComponent({
 
   // Compute visible rows based on expansion state in the UI store
   const expandedPaths = useFileTreeStore((s) => s.expandedPaths);
-  const visibleRows = useMemo(() => {
-    const rows: VisibleRow[] = [];
-    const walk = (items: FileEntry[], depth: number) => {
-      for (const item of items) {
-        const isExpanded = item.isDir && expandedPaths.has(item.path);
-        rows.push({ file: item, depth, isExpanded });
-        if (item.isDir && isExpanded && item.children) {
-          walk(item.children, depth + 1);
-        }
-      }
-    };
-    walk(filteredFiles, 0);
-    return rows;
-  }, [filteredFiles, expandedPaths]);
+  const visibleRows = useMemo(
+    () => buildVisibleFileTreeRows(filteredFiles, expandedPaths),
+    [filteredFiles, expandedPaths],
+  );
 
   // Virtualizer setup
   const rowVirtualizer = useVirtualizer({
@@ -455,10 +448,14 @@ function FileExplorerTreeComponent({
       }
       e.preventDefault();
       e.stopPropagation();
-      onFileSelect(t.path, t.isDir);
+      if (t.isDir) {
+        toggleDirectory(t.path);
+      } else {
+        void Promise.resolve(onFileSelect(t.path, false));
+      }
       updateActivePath?.(t.path);
     },
-    [onFileSelect, updateActivePath, pathToFile],
+    [onFileSelect, toggleDirectory, updateActivePath, pathToFile],
   );
 
   const handleContainerDoubleClick = useCallback(
@@ -467,7 +464,7 @@ function FileExplorerTreeComponent({
       if (!t) return;
       e.preventDefault();
       e.stopPropagation();
-      onFileOpen?.(t.path, t.isDir);
+      void Promise.resolve(onFileOpen?.(t.path, t.isDir));
       updateActivePath?.(t.path);
     },
     [onFileOpen, updateActivePath, pathToFile],
@@ -894,8 +891,6 @@ function FileExplorerTreeComponent({
         const current = visibleRows[curIndex]?.file;
         const isDir = visibleRows[curIndex]?.file.isDir;
 
-        const toggle = (path: string) => useFileTreeStore.getState().toggleFolder(path);
-
         const mod = e.metaKey || e.ctrlKey;
         if (mod && current) {
           if (e.key === "c") {
@@ -976,7 +971,7 @@ function FileExplorerTreeComponent({
             if (isDir) {
               const expanded = useFileTreeStore.getState().isExpanded(current.path);
               if (!expanded) {
-                toggle(current.path);
+                toggleDirectory(current.path);
               } else {
                 const child = visibleRows[curIndex + 1];
                 if (child && child.depth === visibleRows[curIndex].depth + 1) {
@@ -991,7 +986,7 @@ function FileExplorerTreeComponent({
             if (!current) break;
             e.preventDefault();
             if (isDir && useFileTreeStore.getState().isExpanded(current.path)) {
-              toggle(current.path);
+              toggleDirectory(current.path);
             } else {
               const sep = current.path.includes("\\") ? "\\" : "/";
               const parentPath = current.path.split(sep).slice(0, -1).join(sep);
@@ -1007,9 +1002,9 @@ function FileExplorerTreeComponent({
             if (!current) break;
             e.preventDefault();
             if (isDir) {
-              toggle(current.path);
+              toggleDirectory(current.path);
             } else {
-              onFileOpen?.(current.path, false);
+              void Promise.resolve(onFileOpen?.(current.path, false));
             }
             break;
           }
