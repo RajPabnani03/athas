@@ -38,6 +38,7 @@ import Dialog from "@/ui/dialog";
 import { cn } from "@/utils/cn";
 import { getRelativePath } from "@/utils/path-helpers";
 import { useFileExplorerDragDrop } from "../hooks/use-file-explorer-drag-drop";
+import { buildVisibleRows } from "../utils/file-explorer-tree-utils";
 import { FileExplorerTreeItem } from "./file-explorer-tree-item";
 import "../styles/file-explorer-tree.css";
 
@@ -71,12 +72,6 @@ interface FileExplorerTreeProps {
   onRevealInFinder?: (path: string) => void;
   onUploadFile?: (directoryPath: string) => void;
   onFileMove?: (oldPath: string, newPath: string) => void;
-}
-
-interface VisibleRow {
-  file: FileEntry;
-  depth: number;
-  isExpanded: boolean;
 }
 
 function FileExplorerTreeComponent({
@@ -266,20 +261,10 @@ function FileExplorerTreeComponent({
 
   // Compute visible rows based on expansion state in the UI store
   const expandedPaths = useFileTreeStore((s) => s.expandedPaths);
-  const visibleRows = useMemo(() => {
-    const rows: VisibleRow[] = [];
-    const walk = (items: FileEntry[], depth: number) => {
-      for (const item of items) {
-        const isExpanded = item.isDir && expandedPaths.has(item.path);
-        rows.push({ file: item, depth, isExpanded });
-        if (item.isDir && isExpanded && item.children) {
-          walk(item.children, depth + 1);
-        }
-      }
-    };
-    walk(filteredFiles, 0);
-    return rows;
-  }, [filteredFiles, expandedPaths]);
+  const visibleRows = useMemo(
+    () => buildVisibleRows(filteredFiles, expandedPaths),
+    [filteredFiles, expandedPaths],
+  );
 
   // Virtualizer setup
   const rowVirtualizer = useVirtualizer({
@@ -894,7 +879,7 @@ function FileExplorerTreeComponent({
         const current = visibleRows[curIndex]?.file;
         const isDir = visibleRows[curIndex]?.file.isDir;
 
-        const toggle = (path: string) => useFileTreeStore.getState().toggleFolder(path);
+        const toggle = (path: string) => onFileSelect(path, true);
 
         const mod = e.metaKey || e.ctrlKey;
         if (mod && current) {

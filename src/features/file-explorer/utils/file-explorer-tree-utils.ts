@@ -138,6 +138,30 @@ export function addNewItemToTree(
   });
 }
 
+export interface VisibleRow {
+  file: FileEntry;
+  depth: number;
+  isExpanded: boolean;
+}
+
+export function buildVisibleRows(
+  files: FileEntry[],
+  expandedPaths: Set<string>,
+): VisibleRow[] {
+  const rows: VisibleRow[] = [];
+  const walk = (items: FileEntry[], depth: number) => {
+    for (const item of items) {
+      const isExpanded = item.isDir && expandedPaths.has(item.path);
+      rows.push({ file: item, depth, isExpanded });
+      if (item.isDir && isExpanded && item.children) {
+        walk(item.children, depth + 1);
+      }
+    }
+  };
+  walk(files, 0);
+  return rows;
+}
+
 export function removeEditingItemsFromTree(items: FileEntry[]): FileEntry[] {
   return items
     .filter((item) => !(item.isNewItem && item.isEditing))
