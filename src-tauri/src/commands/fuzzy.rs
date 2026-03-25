@@ -3,6 +3,7 @@ use nucleo_matcher::{
    pattern::{Atom, AtomKind, CaseMatching, Normalization},
 };
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FuzzyMatchItem {
@@ -71,7 +72,7 @@ pub fn fuzzy_match(request: FuzzyMatchRequest) -> Vec<FuzzyMatchItem> {
    }
 
    // Sort by score in descending order
-   matches.sort_by(|a, b| b.score.cmp(&a.score));
+   matches.sort_by_key(|m| Reverse(m.score));
 
    matches
 }
@@ -190,7 +191,7 @@ pub fn filter_completions(request: CompletionFilterRequest) -> Vec<FilteredCompl
    }
 
    // Sort by score in descending order
-   filtered.sort_by(|a, b| b.score.cmp(&a.score));
+   filtered.sort_by_key(|c| Reverse(c.score));
 
    // Limit to top 50 results
    filtered.truncate(50);
