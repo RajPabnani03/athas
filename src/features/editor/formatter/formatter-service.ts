@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { extensionRegistry } from "@/extensions/registry/extension-registry";
 import { getLanguageIdFromPath } from "@/features/editor/utils/language-id";
 import { logger } from "@/features/editor/utils/logger";
+import { resolveWorkspaceRoot } from "@/features/file-system/controllers/workspace-root";
 
 export interface FormatOptions {
   filePath: string;
@@ -41,9 +42,7 @@ export async function formatContent(options: FormatOptions): Promise<FormatResul
 
     const language = languageId || getLanguageIdFromPath(filePath) || "plaintext";
     const formatterName = getFormatterName(formatterConfig.command);
-
-    // Get workspace folder (if available)
-    const workspaceFolder = getWorkspaceFolder(filePath);
+    const workspaceFolder = await resolveWorkspaceRoot(filePath);
 
     try {
       const response = await invoke<{
@@ -123,18 +122,4 @@ function getFormatterName(command: string): string {
 
   // Default to prettier for unknown formatters
   return "prettier";
-}
-
-/**
- * Get workspace folder from file path
- */
-function getWorkspaceFolder(filePath: string): string | undefined {
-  // Try to get workspace folder from file system store
-  // For now, use the directory containing the file
-  // TODO: Get actual workspace root from file system store
-  const parts = filePath.split("/");
-  if (parts.length > 1) {
-    return parts.slice(0, -1).join("/");
-  }
-  return undefined;
 }

@@ -1,15 +1,25 @@
 import type { StoreApi, UseBoundStore } from "zustand";
 
-type WithSelectors<S> = S extends { getState: () => infer T }
-  ? S & { use: { [K in keyof T]: () => T[K] } }
-  : never;
+type SelectorHooks<TState extends object> = {
+  [TKey in keyof TState]: () => TState[TKey];
+};
 
-export const createSelectors = <S extends UseBoundStore<StoreApi<object>>>(_store: S) => {
-  const store = _store as WithSelectors<typeof _store>;
-  store.use = {};
-  for (const k of Object.keys(store.getState())) {
-    (store.use as any)[k] = () => store((s) => s[k as keyof typeof s]);
+type WithSelectors<TStore extends UseBoundStore<StoreApi<object>>> =
+  TStore extends UseBoundStore<StoreApi<infer TState extends object>>
+    ? TStore & { use: SelectorHooks<TState> }
+    : never;
+
+export const createSelectors = <TStore extends UseBoundStore<StoreApi<object>>>(
+  baseStore: TStore,
+) => {
+  const store = baseStore as WithSelectors<TStore>;
+  const useSelectors = {} as WithSelectors<TStore>["use"];
+  const stateKeys = Object.keys(store.getState()) as Array<keyof typeof useSelectors>;
+
+  for (const key of stateKeys) {
+    useSelectors[key] = () => store((state) => state[key]);
   }
 
+  store.use = useSelectors;
   return store;
 };
