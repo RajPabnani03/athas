@@ -42,7 +42,7 @@ jobs:
         run: bun check
 
       - name: Run frontend tests
-        run: bun test
+        run: bun run test
 
   rust:
     if: github.repository == 'athasdev/athas'

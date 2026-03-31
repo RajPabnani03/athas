@@ -1,4 +1,8 @@
-import { buildRemoteRootPath, isRemotePath, parseRemotePath } from "@/features/remote/utils/remote-path";
+import {
+  buildRemoteRootPath,
+  isRemotePath,
+  parseRemotePath,
+} from "@/features/remote/utils/remote-path";
 
 export const WORKSPACE_ROOT_MARKERS = [
   ".git",
@@ -177,12 +181,7 @@ async function findWorkspaceRootWithinPreferredRoot(
   pathExists: PathExists,
   markers: readonly string[],
 ): Promise<string> {
-  const searchResult = await findWorkspaceRoot(
-    filePath,
-    pathExists,
-    markers,
-    preferredRoot,
-  );
+  const searchResult = await findWorkspaceRoot(filePath, pathExists, markers, preferredRoot);
 
   if (!searchResult) {
     return preferredRoot;

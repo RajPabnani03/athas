@@ -123,4 +123,3 @@ export function isLintingAvailable(filePath: string, languageId?: string): boole
 
   return false;
 }
-
