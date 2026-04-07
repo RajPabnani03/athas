@@ -87,7 +87,9 @@ describe("extension-store installExtension", () => {
     await useExtensionStore.getState().actions.installExtension(NON_LANGUAGE_EXTENSION_ID);
 
     expect(installExtensionLifecycleMock).toHaveBeenCalledTimes(1);
-    const extension = useExtensionStore.getState().availableExtensions.get(NON_LANGUAGE_EXTENSION_ID);
+    const extension = useExtensionStore
+      .getState()
+      .availableExtensions.get(NON_LANGUAGE_EXTENSION_ID);
     expect(extension?.isInstalling).toBe(false);
     expect(extension?.isInstalled).toBe(true);
     expect(extension?.installProgress).toBe(100);
