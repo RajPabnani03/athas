@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { enableMapSet } from "immer";
 import type { AvailableExtension } from "./extension-store-types";
 
 const { installExtensionLifecycleMock } = vi.hoisted(() => ({
   installExtensionLifecycleMock: vi.fn(),
 }));
+
+enableMapSet();
 
 vi.mock("./extension-store-helpers", () => ({
   findExtensionForFile: vi.fn(),
