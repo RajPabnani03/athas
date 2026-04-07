@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { AvailableExtension } from "./extension-store-types";
 
-const installExtensionLifecycleMock = vi.fn();
+const { installExtensionLifecycleMock } = vi.hoisted(() => ({
+  installExtensionLifecycleMock: vi.fn(),
+}));
 
 vi.mock("./extension-store-helpers", () => ({
   findExtensionForFile: vi.fn(),
