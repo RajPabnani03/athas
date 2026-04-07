@@ -152,47 +152,45 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
         });
 
         try {
-          if (extension.manifest.languages && extension.manifest.languages.length > 0) {
-            await installExtensionLifecycle({
-              extensionId,
-              extension,
-              onProgress: (progress) => {
-                set((state) => {
-                  const ext = state.availableExtensions.get(extensionId);
-                  if (ext) {
-                    ext.installProgress = progress;
-                  }
-                });
-              },
-              onLanguageInstalled: (runtimeManifest) => {
-                set((state) => {
-                  const ext = state.availableExtensions.get(extensionId);
-                  if (ext) {
-                    ext.isInstalling = false;
-                    ext.isInstalled = true;
-                    ext.installProgress = 100;
-                    ext.manifest = runtimeManifest;
-                    state.installedExtensions.set(
-                      extensionId,
-                      buildInstalledExtensionMetadata(extensionId, ext),
-                    );
-                  }
-                  state.availableExtensions = new Map(state.availableExtensions);
-                });
-              },
-              onNonLanguageInstalled: () => {
-                set((state) => {
-                  const ext = state.availableExtensions.get(extensionId);
-                  if (ext) {
-                    ext.isInstalling = false;
-                    ext.isInstalled = true;
-                    ext.installProgress = 100;
-                  }
-                });
-              },
-              reloadInstalledExtensions: get().actions.loadInstalledExtensions,
-            });
-          }
+          await installExtensionLifecycle({
+            extensionId,
+            extension,
+            onProgress: (progress) => {
+              set((state) => {
+                const ext = state.availableExtensions.get(extensionId);
+                if (ext) {
+                  ext.installProgress = progress;
+                }
+              });
+            },
+            onLanguageInstalled: (runtimeManifest) => {
+              set((state) => {
+                const ext = state.availableExtensions.get(extensionId);
+                if (ext) {
+                  ext.isInstalling = false;
+                  ext.isInstalled = true;
+                  ext.installProgress = 100;
+                  ext.manifest = runtimeManifest;
+                  state.installedExtensions.set(
+                    extensionId,
+                    buildInstalledExtensionMetadata(extensionId, ext),
+                  );
+                }
+                state.availableExtensions = new Map(state.availableExtensions);
+              });
+            },
+            onNonLanguageInstalled: () => {
+              set((state) => {
+                const ext = state.availableExtensions.get(extensionId);
+                if (ext) {
+                  ext.isInstalling = false;
+                  ext.isInstalled = true;
+                  ext.installProgress = 100;
+                }
+              });
+            },
+            reloadInstalledExtensions: get().actions.loadInstalledExtensions,
+          });
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
 
