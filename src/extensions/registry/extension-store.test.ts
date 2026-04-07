@@ -33,6 +33,12 @@ vi.mock("./extension-store-lifecycle", () => ({
   updateExtensionLifecycle: vi.fn(),
 }));
 
+vi.mock("./extension-store-runtime", () => ({
+  resolveInstalledExtensionId: vi.fn((installed: { extensionId?: string; languageId: string }) => {
+    return installed.extensionId || `athas.${installed.languageId}`;
+  }),
+}));
+
 vi.mock("../installer/extension-installer", () => ({
   extensionInstaller: {
     listInstalled: vi.fn(async () => []),
