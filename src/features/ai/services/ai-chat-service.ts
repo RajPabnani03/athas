@@ -9,6 +9,7 @@ import { getModelById, getProviderById } from "@/features/ai/types/providers";
 import { getProvider } from "@/features/ai/services/providers/ai-provider-registry";
 import { processStreamingResponse } from "@/utils/stream-utils";
 import { getProviderApiToken } from "@/features/ai/services/ai-token-service";
+import { processCompanyMessage } from "@/features/ai/company/services/company-chat-service";
 import { AcpStreamHandler } from "./acp-stream-handler";
 import { buildContextPrompt, buildSystemPrompt } from "../utils/ai-context-builder";
 
@@ -58,7 +59,24 @@ export const getChatCompletionStream = async (
       return;
     }
 
-    // For "custom" agent, use HTTP API providers
+    // For "company" agent, route through orchestration service then to configured provider
+    let enrichedMessage = userMessage;
+    if (agentId === "company") {
+      try {
+        const companyContext = processCompanyMessage(userMessage);
+        enrichedMessage = companyContext;
+        if (onToolUse) {
+          onToolUse("company-orchestration", { request: userMessage }, "company-orch-1");
+        }
+        if (onToolComplete) {
+          onToolComplete("company-orchestration", "company-orch-1");
+        }
+      } catch (error: any) {
+        console.error("Company orchestration error:", error);
+      }
+    }
+
+    // For "custom" or "company" agent, use HTTP API providers
     const provider = getProviderById(providerId);
 
     // Check for model in static list or dynamic store
@@ -100,10 +118,10 @@ export const getChatCompletionStream = async (
       messages.push(...conversationHistory);
     }
 
-    // Add the current user message
+    // Add the current user message (enriched with company context if applicable)
     messages.push({
       role: "user" as const,
-      content: userMessage,
+      content: agentId === "company" ? enrichedMessage : userMessage,
     });
 
     // Use provider abstraction
