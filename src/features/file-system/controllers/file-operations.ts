@@ -1,13 +1,11 @@
 import type { FileEntry } from "../types/app";
 import {
-  getSymlinkInfo,
   createDirectory as platformCreateDirectory,
   deletePath as platformDeletePath,
   readDirectory as platformReadDirectory,
   readFile as platformReadFile,
   writeFile as platformWriteFile,
 } from "./platform";
-import { useFileSystemStore } from "./store";
 import { shouldIgnore } from "./utils";
 
 export async function readFileContent(path: string): Promise<string> {
@@ -60,7 +58,6 @@ export async function deleteFileOrDirectory(path: string): Promise<void> {
 export async function readDirectoryContents(path: string): Promise<FileEntry[]> {
   try {
     const entries = await platformReadDirectory(path);
-    const workspaceRoot = useFileSystemStore.getState().rootFolderPath;
 
     const filteredEntries = (entries as any[]).filter((entry: any) => {
       const name = entry.name || "Unknown";
@@ -68,34 +65,19 @@ export async function readDirectoryContents(path: string): Promise<FileEntry[]> 
       return !shouldIgnore(name, isDir);
     });
 
-    const entriesWithSymlinkInfo = await Promise.all(
-      filteredEntries.map(async (entry: any) => {
-        const entryPath = entry.path || `${path}/${entry.name}`;
-
-        try {
-          const symlinkInfo = await getSymlinkInfo(entryPath, workspaceRoot);
-
-          return {
-            name: entry.name || "Unknown",
-            path: entryPath,
-            isDir: symlinkInfo.is_symlink ? false : entry.is_dir || false,
-            children: undefined,
-            isSymlink: symlinkInfo.is_symlink,
-            symlinkTarget: symlinkInfo.target,
-          };
-        } catch (error) {
-          console.error(`Failed to get symlink info for ${entryPath}:`, error);
-          return {
-            name: entry.name || "Unknown",
-            path: entryPath,
-            isDir: entry.is_dir || false,
-            children: undefined,
-          };
-        }
-      }),
-    );
-
-    return entriesWithSymlinkInfo;
+    // Skip per-entry symlink resolution during initial directory read.
+    // Symlink info is resolved lazily when a file is opened (handleFileSelect)
+    // or a directory is expanded, avoiding hundreds of stat syscalls that
+    // cause significant lag on large projects (see #572).
+    return filteredEntries.map((entry: any) => {
+      const entryPath = entry.path || `${path}/${entry.name}`;
+      return {
+        name: entry.name || "Unknown",
+        path: entryPath,
+        isDir: entry.is_dir || false,
+        children: undefined,
+      };
+    });
   } catch (error) {
     throw new Error(`Failed to read directory ${path}: ${error}`);
   }

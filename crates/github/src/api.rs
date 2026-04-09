@@ -40,9 +40,31 @@ pub fn github_check_cli_status(app: AppHandle) -> Result<GitHubCliStatus, String
       .output()
       .map_err(|e| format!("Failed to execute gh command: {}", e))?;
 
+   // gh auth status reports results on stderr. On some versions, exit code 0
+   // is returned even when the token is expired or invalid (see cli/cli#8845).
+   // Parse stderr to look for authentication failure indicators instead of
+   // relying solely on the exit code.
+   let stderr = String::from_utf8_lossy(&output.stderr);
+
    if output.status.success() {
-      Ok(GitHubCliStatus::Authenticated)
+      // Exit code 0, but verify the output actually confirms authentication.
+      // A successful auth status contains "Logged in to" on stderr.
+      if stderr.contains("Logged in to") {
+         Ok(GitHubCliStatus::Authenticated)
+      } else if stderr.contains("not logged in")
+         || stderr.contains("no authentications")
+         || stderr.contains("token is invalid")
+         || stderr.contains("Failed to log in")
+         || (stderr.contains("The token") && stderr.contains("is invalid"))
+      {
+         // Token exists but is invalid/expired — gh still exits 0 in some versions
+         Ok(GitHubCliStatus::NotAuthenticated)
+      } else {
+         // Exit code 0 with no recognizable failure — assume authenticated
+         Ok(GitHubCliStatus::Authenticated)
+      }
    } else {
+      // Non-zero exit code always means not authenticated
       Ok(GitHubCliStatus::NotAuthenticated)
    }
 }

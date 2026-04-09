@@ -42,7 +42,6 @@ import {
   createNewFile,
   deleteFileOrDirectory,
   readDirectoryContents,
-  readFileContent,
 } from "./file-operations";
 import {
   addFileToTree,
@@ -791,38 +790,6 @@ export const useFileSystemStore = createSelectors(
           );
           fileOpenBenchmark.finish(path, "binary-buffer-opened");
         } else {
-          if (!path.startsWith("remote://")) {
-            try {
-              const fileData = await readFile(resolvedPath);
-
-              if (isStaleRequest()) return;
-
-              if (isBinaryContent(fileData)) {
-                openBuffer(
-                  path,
-                  fileName,
-                  "",
-                  false,
-                  undefined,
-                  false,
-                  false,
-                  undefined,
-                  false,
-                  false,
-                  false,
-                  undefined,
-                  false,
-                  false,
-                  true,
-                );
-                fileOpenBenchmark.finish(path, "binary-sniff-buffer-opened");
-                return;
-              }
-            } catch (error) {
-              console.error("Failed to inspect file bytes before opening:", error);
-            }
-          }
-
           // Check if external editor is enabled for text files
           const { settings } = useSettingsStore.getState();
           const { openExternalEditorBuffer } = useBufferStore.getState().actions;
@@ -867,7 +834,38 @@ export const useFileSystemStore = createSelectors(
               filePath: remotePath,
             });
           } else {
-            content = await readFileContent(resolvedPath);
+            // Read file as binary first to perform binary sniffing without
+            // a separate read pass (avoids reading large files twice, see #572).
+            const fileData = await readFile(resolvedPath);
+            fileOpenBenchmark.mark(path, "file-read-bytes", `${fileData.length} bytes`);
+
+            if (isStaleRequest()) return;
+
+            if (isBinaryContent(fileData)) {
+              openBuffer(
+                path,
+                fileName,
+                "",
+                false,
+                undefined,
+                false,
+                false,
+                undefined,
+                false,
+                false,
+                false,
+                undefined,
+                false,
+                false,
+                true,
+              );
+              fileOpenBenchmark.finish(path, "binary-sniff-buffer-opened");
+              return;
+            }
+
+            // Decode the already-read bytes instead of reading the file again
+            const decoder = new TextDecoder("utf-8");
+            content = decoder.decode(fileData);
           }
           fileOpenBenchmark.mark(path, "file-read", `${content.length} chars`);
 
@@ -1914,6 +1912,14 @@ export const useFileSystemStore = createSelectors(
 
           useWorkspaceTabsStore.getState().setActiveProjectTab(projectId);
 
+          // Close old project's buffers BEFORE loading new project to prevent
+          // race conditions between session save and restore, and to ensure
+          // terminal PTY processes from the old workspace are cleaned up
+          // before new ones are spawned.
+          if (currentBufferIds.length > 0) {
+            bufferActions.closeBuffersBatch(currentBufferIds, true);
+          }
+
           if (remoteTabInfo) {
             const reconnected = await get().handleOpenRemoteProject(
               remoteTabInfo.connectionId,
@@ -2058,10 +2064,6 @@ export const useFileSystemStore = createSelectors(
                 console.error("Failed to refresh workspace git state:", error);
               }
             })();
-          }
-
-          if (currentBufferIds.length > 0) {
-            bufferActions.closeBuffersBatch(currentBufferIds, true);
           }
 
           set((state) => {
