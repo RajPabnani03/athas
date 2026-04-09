@@ -43,6 +43,7 @@ export type AgentType =
   | "kimi-cli"
   | "opencode"
   | "qwen-code"
+  | "company"
   | "custom";
 
 export interface AgentInfo {
@@ -88,6 +89,12 @@ export const AGENT_OPTIONS: AgentInfo[] = [
     name: "Qwen Code",
     description: "Alibaba Qwen Code",
     isAcp: true,
+  },
+  {
+    id: "company",
+    name: "Company Agent",
+    description: "100-member AI company with CEO, departments, and hierarchical task delegation",
+    isAcp: false,
   },
   {
     id: "custom",
