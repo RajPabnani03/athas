@@ -27,6 +27,7 @@ interface TabBarItemProps {
   displayName: string;
   index: number;
   isActive: boolean;
+  isPaneActive: boolean;
   isDraggedTab: boolean;
   showDropIndicatorBefore?: boolean;
   tabRef?: RefCallback<HTMLDivElement>;
@@ -43,6 +44,7 @@ const TabBarItem = memo(function TabBarItem({
   buffer,
   displayName,
   isActive,
+  isPaneActive,
   isDraggedTab,
   showDropIndicatorBefore = false,
   tabRef,
@@ -193,7 +195,7 @@ const TabBarItem = memo(function TabBarItem({
         <span
           className={cn(
             "ui-font ui-text-sm max-w-full overflow-hidden text-ellipsis whitespace-nowrap",
-            isActive ? "text-text" : "text-text-lighter",
+            isActive && isPaneActive ? "text-text" : "text-text-lighter",
             buffer.isPreview && "italic",
           )}
           title={buffer.path}

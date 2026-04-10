@@ -808,6 +808,7 @@ const TabBar = ({
                 displayName={getBufferDisplayName(buffer)}
                 index={index}
                 isActive={isActive}
+                isPaneActive={isActivePane}
                 isDraggedTab={isDraggedTab}
                 showDropIndicatorBefore={showDropIndicatorBefore}
                 tabRef={(el) => {
@@ -876,6 +877,7 @@ const TabBar = ({
               {isPaneFullscreen ? <Minimize2 /> : <Maximize2 />}
             </Button>
           )}
+          </div>
           <div className="flex shrink-0 items-center">
             <NewTabMenu />
           </div>

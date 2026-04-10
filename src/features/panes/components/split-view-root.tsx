@@ -23,6 +23,14 @@ export function SplitViewRoot() {
     }
   }, [exitPaneFullscreen, fullscreenPane, fullscreenPaneId]);
 
+  useEffect(() => {
+    if (collapsedSplitRepairs.length === 0) return;
+
+    collapsedSplitRepairs.forEach(({ splitId, sizes }) => {
+      updatePaneSizes(splitId, sizes);
+    });
+  }, [collapsedSplitRepairs, updatePaneSizes]);
+
   const titleBarHeight = IS_MAC ? 44 : 28;
   const footerHeight = 32;
 

@@ -133,8 +133,8 @@ export function useMenuEventsWrapper() {
     onSplitEditor: () => {
       const paneStore = usePaneStore.getState();
       const activePane = paneStore.actions.getActivePane();
-      if (activePane?.activeBufferId) {
-        paneStore.actions.splitPane(activePane.id, "horizontal", activePane.activeBufferId);
+      if (activePane) {
+        paneStore.actions.splitPane(activePane.id, "horizontal");
       }
     },
     onToggleVim: () => {
