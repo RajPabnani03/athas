@@ -129,6 +129,12 @@ fn main() {
          delete_chat,
          search_chats,
          get_chat_stats,
+         // Copilot commands
+         copilot_start_device_flow,
+         copilot_poll_device_token,
+         copilot_get_auth_status,
+         copilot_get_api_token,
+         copilot_logout,
          // Window commands
          create_app_window,
          create_embedded_webview,

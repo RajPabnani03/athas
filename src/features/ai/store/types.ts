@@ -63,6 +63,12 @@ export interface AIChatState {
   // Dynamic models state
   dynamicModels: Record<string, ProviderModel[]>;
 
+  // Copilot auth state
+  copilotAuthStatus: {
+    isAuthenticated: boolean;
+    userLogin: string | null;
+  };
+
   // Mention state
   mentionState: {
     active: boolean;
@@ -151,6 +157,11 @@ export interface AIChatActions {
 
   // Dynamic models actions
   setDynamicModels: (providerId: string, models: ProviderModel[]) => void;
+
+  // Copilot auth actions
+  checkCopilotAuth: () => Promise<void>;
+  setCopilotAuthStatus: (status: { isAuthenticated: boolean; userLogin: string | null }) => void;
+  copilotLogout: () => Promise<void>;
 
   // Mention actions
   showMention: (position: InlineDropdownPosition, search: string, startIndex: number) => void;

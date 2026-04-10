@@ -59,3 +59,26 @@ export const validateProviderApiKey = async (
     return false;
   }
 };
+
+// Copilot auth helpers
+export const getCopilotAuthStatus = async (): Promise<{
+  isAuthenticated: boolean;
+  userLogin?: string;
+}> => {
+  try {
+    const status = await invoke<{
+      is_authenticated: boolean;
+      user_login?: string;
+    }>("copilot_get_auth_status");
+    return {
+      isAuthenticated: status.is_authenticated,
+      userLogin: status.user_login || undefined,
+    };
+  } catch {
+    return { isAuthenticated: false };
+  }
+};
+
+export const copilotLogout = async (): Promise<void> => {
+  await invoke("copilot_logout");
+};

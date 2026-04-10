@@ -328,6 +328,14 @@ export const AI_PROVIDERS: ModelProvider[] = [
     requiresApiKey: false,
     models: [],
   },
+  {
+    id: "copilot",
+    name: "GitHub Copilot",
+    apiUrl: "https://api.githubcopilot.com/chat/completions",
+    requiresApiKey: false,
+    requiresAuth: true,
+    models: [],
+  },
 ];
 
 // Get all API providers (no longer includes Claude Code since it's now an agent)

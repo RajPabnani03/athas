@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import { AlertCircle, CheckCircle, Globe, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle, Globe, LogIn, LogOut, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CopilotAuthModal } from "@/features/ai/components/copilot-auth-modal";
 import { ProviderModelSelector } from "@/features/ai/components/selectors/provider-model-selector";
 import { useAIChatStore } from "@/features/ai/store/store";
 import type { AgentConfig, SessionConfigOption, SessionMode } from "@/features/ai/types/acp";
@@ -8,7 +9,6 @@ import { getAvailableProviders, updateAgentStatus } from "@/features/ai/types/pr
 import { useToast } from "@/features/layout/contexts/toast-context";
 import { getDefaultSetting, useSettingsStore } from "@/features/settings/store";
 import { useAuthStore } from "@/features/window/stores/auth-store";
-import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
 import Input from "@/ui/input";
 import Section, { SETTINGS_CONTROL_WIDTHS, SettingRow } from "../settings-section";
@@ -53,6 +53,11 @@ export const AISettings = () => {
   const [autocompleteModels, setAutocompleteModels] = useState(DEFAULT_AUTOCOMPLETE_MODELS);
   const [isLoadingAutocompleteModels, setIsLoadingAutocompleteModels] = useState(false);
   const [autocompleteModelError, setAutocompleteModelError] = useState<string | null>(null);
+  const [copilotAuthModalOpen, setCopilotAuthModalOpen] = useState(false);
+
+  const copilotAuthStatus = useAIChatStore((state) => state.copilotAuthStatus);
+  const checkCopilotAuth = useAIChatStore((state) => state.checkCopilotAuth);
+  const copilotLogoutAction = useAIChatStore((state) => state.copilotLogout);
 
   // Ollama URL state
   const [ollamaUrl, setOllamaUrl] = useState(settings.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL);
@@ -69,6 +74,7 @@ export const AISettings = () => {
       }
     };
     detectAgents();
+    void checkCopilotAuth();
   }, []);
 
   useEffect(() => {
@@ -240,15 +246,52 @@ export const AISettings = () => {
             <SettingRow
               key={provider.id}
               label={provider.name}
-              description="Requires OAuth authentication"
+              description={
+                provider.id === "copilot" && copilotAuthStatus.isAuthenticated
+                  ? copilotAuthStatus.userLogin
+                    ? `Connected as @${copilotAuthStatus.userLogin}`
+                    : "Connected"
+                  : "Requires OAuth authentication"
+              }
             >
-              <Badge variant="default" size="default">
-                Coming Soon
-              </Badge>
+              {provider.id === "copilot" && copilotAuthStatus.isAuthenticated ? (
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="size-3.5 text-success" />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    onClick={async () => {
+                      await copilotLogoutAction();
+                    }}
+                    className="gap-1 text-text-lighter hover:text-error"
+                  >
+                    <LogOut />
+                    Sign Out
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="xs"
+                  onClick={() => setCopilotAuthModalOpen(true)}
+                  className="gap-1"
+                >
+                  <LogIn />
+                  Sign In
+                </Button>
+              )}
             </SettingRow>
           ))}
         </Section>
       )}
+
+      <CopilotAuthModal
+        isOpen={copilotAuthModalOpen}
+        onClose={() => setCopilotAuthModalOpen(false)}
+        onAuthComplete={() => void checkCopilotAuth()}
+      />
 
       {availableModes.length > 0 && (
         <Section title="Agent Defaults">

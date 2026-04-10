@@ -42,6 +42,9 @@ export abstract class AIProvider {
     return [];
   }
 
+  // Optional: Allows providers to build headers asynchronously (e.g., OAuth token refresh)
+  async buildHeadersAsync?(apiKey?: string): Promise<ProviderHeaders>;
+
   get id(): string {
     return this.config.id;
   }

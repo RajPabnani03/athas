@@ -1,4 +1,5 @@
 import { AnthropicProvider } from "./anthropic-provider";
+import { CopilotProvider } from "./copilot-provider";
 import { GeminiProvider } from "./gemini-provider";
 import { GrokProvider } from "./grok-provider";
 import { OllamaProvider } from "./ollama-provider";
@@ -62,6 +63,15 @@ function initializeProviders(): void {
     maxTokens: 4096,
   };
   providers.set("ollama", new OllamaProvider(ollamaConfig));
+
+  const copilotConfig: ProviderConfig = {
+    id: "copilot",
+    name: "GitHub Copilot",
+    apiUrl: "https://api.githubcopilot.com/chat/completions",
+    requiresApiKey: false,
+    maxTokens: 128000,
+  };
+  providers.set("copilot", new CopilotProvider(copilotConfig));
 }
 
 export function getProvider(providerId: string): AIProvider | undefined {

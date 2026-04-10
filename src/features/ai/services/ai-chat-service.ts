@@ -1,4 +1,5 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { invoke } from "@tauri-apps/api/core";
 import { useAIChatStore } from "@/features/ai/store/store";
 import type { ChatMode, OutputStyle } from "@/features/ai/store/types";
 import type { AcpEvent } from "@/features/ai/types/acp";
@@ -7,6 +8,7 @@ import { AGENT_OPTIONS, type AgentType } from "@/features/ai/types/ai-chat";
 import type { AIMessage } from "@/features/ai/types/messages";
 import { getModelById, getProviderById } from "@/features/ai/types/providers";
 import { getProvider } from "@/features/ai/services/providers/ai-provider-registry";
+import type { ProviderHeaders } from "@/features/ai/services/providers/ai-provider-interface";
 import { processStreamingResponse } from "@/utils/stream-utils";
 import { getProviderApiToken } from "@/features/ai/services/ai-token-service";
 import { AcpStreamHandler } from "./acp-stream-handler";
@@ -89,6 +91,19 @@ export const getChatCompletionStream = async (
       throw new Error(`${provider.name} API key not found`);
     }
 
+    // Copilot uses OAuth — skip API key requirement
+    if (providerId === "copilot") {
+      try {
+        const status = await invoke<{ is_authenticated: boolean }>("copilot_get_auth_status");
+        if (!status.is_authenticated) {
+          throw new Error("GitHub Copilot not authenticated. Please sign in first.");
+        }
+      } catch (err: any) {
+        if (err.message?.includes("not authenticated")) throw err;
+        throw new Error("Failed to check GitHub Copilot authentication status.");
+      }
+    }
+
     const contextPrompt = buildContextPrompt(context);
     const systemPrompt = buildSystemPrompt(contextPrompt, mode, outputStyle);
 
@@ -125,7 +140,13 @@ export const getChatCompletionStream = async (
       apiKey: apiKey || undefined,
     };
 
-    const headers = providerImpl.buildHeaders(apiKey || undefined);
+    // Use async headers if available (e.g., Copilot OAuth token refresh)
+    let headers: ProviderHeaders;
+    if (typeof providerImpl.buildHeadersAsync === "function") {
+      headers = await providerImpl.buildHeadersAsync(apiKey || undefined);
+    } else {
+      headers = providerImpl.buildHeaders(apiKey || undefined);
+    }
     const payload = providerImpl.buildPayload(streamRequest);
     const url = providerImpl.buildUrl ? providerImpl.buildUrl(streamRequest) : provider.apiUrl;
 
@@ -133,7 +154,7 @@ export const getChatCompletionStream = async (
 
     // Use Tauri's fetch for providers that don't support browser CORS
     const needsTauriFetch =
-      providerId === "gemini" || providerId === "ollama" || providerId === "anthropic";
+      providerId === "gemini" || providerId === "ollama" || providerId === "anthropic" || providerId === "copilot";
     const fetchFn = needsTauriFetch ? tauriFetch : fetch;
     const response = await fetchFn(url, {
       method: "POST",

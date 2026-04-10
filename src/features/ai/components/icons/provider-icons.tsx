@@ -105,6 +105,14 @@ export function CustomAPIIcon({ size, className, ...props }: IconProps) {
   );
 }
 
+export function CopilotIcon({ size, className, ...props }: IconProps) {
+  return (
+    <svg aria-hidden="true" {...defaultProps(size, className)} {...props}>
+      <path d="M8 12a4 4 0 1 0 8 0 4 4 0 0 0-8 0zm4-10C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm0 2a8 8 0 0 1 4.891 1.672 7.04 7.04 0 0 0-3.083 5.324H10.19a7.04 7.04 0 0 0-3.082-5.324A8 8 0 0 1 12 4zm-6.316 3.42a5.036 5.036 0 0 1 2.25 3.576H4.069A8.02 8.02 0 0 1 5.684 7.42zm12.632 0A8.02 8.02 0 0 1 19.93 11h-3.865a5.036 5.036 0 0 1 2.25-3.58zM9.49 14h5.02a5.036 5.036 0 0 1-2.251 3.576A5.036 5.036 0 0 1 9.49 14zm-5.422 0h3.866a7.04 7.04 0 0 0 3.082 5.324A8.004 8.004 0 0 1 4.069 14zm11.994 0h3.866a8.004 8.004 0 0 1-6.948 5.324A7.04 7.04 0 0 0 16.063 14z" />
+    </svg>
+  );
+}
+
 export function ProviderIcon({
   providerId,
   size = 14,
@@ -139,6 +147,8 @@ export function ProviderIcon({
       return <OpenRouterIcon {...props} />;
     case "kimi-cli":
       return <MoonshotIcon {...props} />;
+    case "copilot":
+      return <CopilotIcon {...props} />;
     case "qwen-code":
       return <QwenIcon {...props} />;
     case "opencode":

@@ -9,6 +9,8 @@ import {
   Globe,
   Key,
   Lock,
+  LogIn,
+  LogOut,
   RefreshCw,
   Search,
   Trash2,
@@ -24,6 +26,7 @@ import {
   useState,
 } from "react";
 import { ProviderIcon } from "@/features/ai/components/icons/provider-icons";
+import { CopilotAuthModal } from "@/features/ai/components/copilot-auth-modal";
 import { useAIChatStore } from "@/features/ai/store/store";
 import {
   getAvailableProviders,
@@ -96,8 +99,12 @@ export function ProviderModelSelector({
   const [ollamaUrlStatus, setOllamaUrlStatus] = useState<"idle" | "checking" | "ok" | "error">(
     "idle",
   );
+  const [copilotAuthModalOpen, setCopilotAuthModalOpen] = useState(false);
 
   const { isPro } = useProFeature();
+  const copilotAuthStatus = useAIChatStore((state) => state.copilotAuthStatus);
+  const checkCopilotAuth = useAIChatStore((state) => state.checkCopilotAuth);
+  const copilotLogoutAction = useAIChatStore((state) => state.copilotLogout);
   const { dynamicModels, setDynamicModels } = useAIChatStore();
   const hasProviderApiKey = useAIChatStore((state) => state.hasProviderApiKey);
   const saveApiKey = useAIChatStore((state) => state.saveApiKey);
@@ -128,7 +135,12 @@ export function ProviderModelSelector({
 
     setModelFetchError(null);
 
-    if (!instance?.getModels || config?.requiresApiKey) {
+    if (!instance?.getModels || (config?.requiresApiKey && !hasProviderApiKey(providerId))) {
+      return;
+    }
+
+    // Copilot needs auth but not an API key
+    if (providerId === "copilot" && !copilotAuthStatus.isAuthenticated) {
       return;
     }
 
@@ -168,7 +180,8 @@ export function ProviderModelSelector({
     const searchLower = search.toLowerCase();
 
     for (const provider of providers) {
-      const providerHasKey = !provider.requiresApiKey || hasProviderApiKey(provider.id);
+      const providerHasKey = !provider.requiresApiKey || hasProviderApiKey(provider.id) ||
+        (provider.id === "copilot" && copilotAuthStatus.isAuthenticated);
       const models = dynamicModels[provider.id] || provider.models;
       const providerNameMatches = provider.name.toLowerCase().includes(searchLower);
 
@@ -622,6 +635,37 @@ export function ProviderModelSelector({
                             Set URL
                           </Button>
                         )}
+
+                        {item.providerId === "copilot" && !isEditing && (
+                          copilotAuthStatus.isAuthenticated ? (
+                            <>
+                              <CheckCircle className="size-3 text-success" />
+                              <Button
+                                type="button"
+                                onClick={() => void copilotLogoutAction()}
+                                variant="ghost"
+                                size="xs"
+                                className="h-auto px-1.5 text-[10px] text-text-lighter hover:text-error"
+                                aria-label="Sign out of Copilot"
+                              >
+                                <LogOut />
+                                Sign Out
+                              </Button>
+                            </>
+                          ) : (
+                            <Button
+                              type="button"
+                              onClick={() => setCopilotAuthModalOpen(true)}
+                              variant="primary"
+                              size="xs"
+                              className="h-auto gap-1 px-1.5 text-[10px]"
+                              aria-label="Authenticate with GitHub Copilot"
+                            >
+                              <LogIn />
+                              Authenticate
+                            </Button>
+                          )
+                        )}
                       </div>
                     </div>
 
@@ -819,6 +863,12 @@ export function ProviderModelSelector({
           )}
         </div>
       </MenuPopover>
+
+      <CopilotAuthModal
+        isOpen={copilotAuthModalOpen}
+        onClose={() => setCopilotAuthModalOpen(false)}
+        onAuthComplete={() => void checkCopilotAuth()}
+      />
     </div>
   );
 }

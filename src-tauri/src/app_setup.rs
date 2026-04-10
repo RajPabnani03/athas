@@ -8,6 +8,7 @@ use athas_ai::AcpAgentBridge;
 use athas_database::ConnectionManager;
 use athas_lsp::LspManager;
 use athas_project::FileWatcher;
+use commands::ai::copilot::CopilotState;
 use log::{debug, info};
 use std::sync::Arc;
 use tauri::{Emitter, Manager, Wry};
@@ -69,6 +70,7 @@ fn register_managed_state(app: &mut tauri::App<Wry>) {
    app.manage(ThemeCache::new(std::collections::HashMap::new()));
    app.manage(FileClipboard::new(None));
    app.manage(Arc::new(ConnectionManager::new()));
+   app.manage(CopilotState::new());
 }
 
 fn emit_cli_open_requests(app: &tauri::App<Wry>) {

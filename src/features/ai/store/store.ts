@@ -48,6 +48,10 @@ export const useAIChatStore = create<AIChatState & AIChatActions>()(
         providerApiKeys: new Map<string, boolean>(),
         apiKeyModalState: { isOpen: false, providerId: null },
         dynamicModels: {},
+        copilotAuthStatus: {
+          isAuthenticated: false,
+          userLogin: null,
+        },
 
         mentionState: {
           active: false,
@@ -549,6 +553,49 @@ export const useAIChatStore = create<AIChatState & AIChatActions>()(
           set((state) => {
             state.dynamicModels[providerId] = models;
           }),
+
+        // Copilot auth actions
+        checkCopilotAuth: async () => {
+          try {
+            const { getCopilotAuthStatus } = await import(
+              "@/features/ai/services/ai-token-service"
+            );
+            const status = await getCopilotAuthStatus();
+            set((state) => {
+              state.copilotAuthStatus = {
+                isAuthenticated: status.isAuthenticated,
+                userLogin: status.userLogin || null,
+              };
+            });
+          } catch {
+            set((state) => {
+              state.copilotAuthStatus = {
+                isAuthenticated: false,
+                userLogin: null,
+              };
+            });
+          }
+        },
+        setCopilotAuthStatus: (status) =>
+          set((state) => {
+            state.copilotAuthStatus = status;
+          }),
+        copilotLogout: async () => {
+          try {
+            const { copilotLogout } = await import(
+              "@/features/ai/services/ai-token-service"
+            );
+            await copilotLogout();
+            set((state) => {
+              state.copilotAuthStatus = {
+                isAuthenticated: false,
+                userLogin: null,
+              };
+            });
+          } catch (error) {
+            console.error("Failed to logout from Copilot:", error);
+          }
+        },
 
         // Mention actions
         showMention: (position, search, startIndex) =>
