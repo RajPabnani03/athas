@@ -37,7 +37,7 @@ export const CompanyPanel = memo(function CompanyPanel() {
   if (!isActive) return null;
 
   return (
-    <div className="flex h-full flex-col border-t border-border bg-primary-bg">
+    <div className="flex shrink-0 flex-col border-t border-border bg-primary-bg">
       <button
         type="button"
         onClick={togglePanel}
@@ -58,7 +58,7 @@ export const CompanyPanel = memo(function CompanyPanel() {
       </button>
 
       {isPanelExpanded && (
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex h-64 min-h-0 flex-col">
           <div className="flex border-b border-border">
             <ViewTab
               active={view === "org"}
