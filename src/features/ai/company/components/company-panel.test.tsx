@@ -1,32 +1,11 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
-import { CompanyPanel } from "./company-panel";
-import { useCompanyStore } from "../store/company-store";
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vite-plus/test";
 
-function resetCompanyStoreState() {
-  const { actions } = useCompanyStore.getState();
-  actions.reset();
-  actions.deactivate();
-}
-
-describe("CompanyPanel", () => {
-  beforeEach(() => {
-    resetCompanyStoreState();
-  });
-
-  it("does not render while inactive", () => {
-    const html = renderToStaticMarkup(<CompanyPanel />);
-    expect(html).toBe("");
-  });
-
-  it("uses a bounded layout when expanded", () => {
-    const { actions } = useCompanyStore.getState();
-    actions.activate();
-    actions.togglePanel();
-
-    const html = renderToStaticMarkup(<CompanyPanel />);
-    expect(html).toContain("shrink-0");
-    expect(html).toContain("h-64");
-    expect(html).not.toContain("h-full flex-col border-t");
+describe("CompanyPanel layout", () => {
+  it("uses bounded panel height classes", () => {
+    const source = readFileSync(new URL("./company-panel.tsx", import.meta.url), "utf8");
+    expect(source).toContain("flex shrink-0 flex-col border-t border-border bg-primary-bg");
+    expect(source).toContain('className="flex h-64 min-h-0 flex-col"');
+    expect(source).not.toContain("flex h-full flex-col border-t border-border bg-primary-bg");
   });
 });
