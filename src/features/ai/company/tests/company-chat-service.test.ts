@@ -4,7 +4,8 @@ import { useCompanyStore } from "../store/company-store";
 
 describe("processCompanyMessage", () => {
   test("resets company state between requests to avoid prompt bloat", () => {
-    const message = "Build a secure backend API with frontend UI updates, tests, and documentation.";
+    const message =
+      "Build a secure backend API with frontend UI updates, tests, and documentation.";
     const store = useCompanyStore.getState();
 
     store.actions.reset();
