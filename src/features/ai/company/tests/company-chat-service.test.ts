@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vite-plus/test";
+import { enableMapSet } from "immer";
 import { processCompanyMessage } from "../services/company-chat-service";
 import { useCompanyStore } from "../store/company-store";
+
+enableMapSet();
 
 describe("processCompanyMessage", () => {
   test("resets company state between requests to avoid prompt bloat", () => {
