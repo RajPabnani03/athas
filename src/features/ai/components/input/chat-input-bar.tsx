@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useAIChatStore } from "@/features/ai/store/store";
 import type { SlashCommand } from "@/features/ai/types/acp";
 import type { AIChatInputBarProps } from "@/features/ai/types/ai-chat";
+import { isAgentInputEnabled } from "@/features/ai/lib/agent-auth-policy";
 import { useEditorSettingsStore } from "@/features/editor/stores/settings-store";
 import Badge from "@/ui/badge";
 import { cn } from "@/utils/cn";
@@ -40,12 +41,9 @@ const AIChatInputBar = memo(function AIChatInputBar({
   const mentionState = useAIChatStore((state) => state.mentionState);
   const getCurrentAgentId = useAIChatStore((state) => state.getCurrentAgentId);
 
-  // Check if current agent is "custom" (only show model selector for custom agent)
+  // ACP agents handle auth themselves; HTTP/API agents require provider key availability.
   const currentAgentId = getCurrentAgentId();
-  const isCustomAgent = currentAgentId === "custom";
-
-  // ACP agents don't need API key (they handle their own auth)
-  const isInputEnabled = isCustomAgent ? hasApiKey : true;
+  const isInputEnabled = isAgentInputEnabled(currentAgentId, hasApiKey);
   const isStreaming = isTyping && !!streamingMessageId;
 
   // Memoize action selectors

@@ -11,6 +11,7 @@ import { getChatTitleFromSessionInfo } from "@/features/ai/lib/acp-session-info"
 import { parseDirectAcpUiAction } from "@/features/ai/lib/acp-ui-intents";
 import { parseMentionsAndLoadFiles } from "@/features/ai/lib/file-mentions";
 import { createToolCall, markToolCallComplete } from "@/features/ai/lib/tool-call-state";
+import { requiresProviderApiKey } from "@/features/ai/lib/agent-auth-policy";
 import { AcpStreamHandler } from "@/features/ai/services/acp-stream-handler";
 import { getChatCompletionStream, isAcpAgent } from "@/features/ai/services/ai-chat-service";
 import { useAIChatStore } from "@/features/ai/store/store";
@@ -248,9 +249,12 @@ const AIChat = memo(function AIChat({
   const processMessage = async (messageContent: string) => {
     const currentAgentId = chatActions.getCurrentAgentId();
     const isAcp = isAcpAgent(currentAgentId);
-    // For ACP agents (Claude Code, etc.), we don't need an API key
-    // For Custom API, we need an API key to be set
-    if (!messageContent.trim() || (!isAcp && !chatState.hasApiKey)) return;
+    if (
+      !messageContent.trim() ||
+      (requiresProviderApiKey(currentAgentId) && !chatState.hasApiKey)
+    ) {
+      return;
+    }
 
     // Agents are started automatically by AcpStreamHandler when needed
 
@@ -669,9 +673,12 @@ details: ${errorDetails || mainError}
   const sendMessage = useCallback(
     async (messageContent: string) => {
       const currentAgentId = chatActions.getCurrentAgentId();
-      const isAcp = isAcpAgent(currentAgentId);
-      // For ACP agents (Claude Code, etc.), we don't need an API key
-      if (!messageContent.trim() || (!isAcp && !chatState.hasApiKey)) return;
+      if (
+        !messageContent.trim() ||
+        (requiresProviderApiKey(currentAgentId) && !chatState.hasApiKey)
+      ) {
+        return;
+      }
 
       chatActions.setInput("");
 
