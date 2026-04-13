@@ -7,6 +7,7 @@ import { ContextMenu, type ContextMenuItem } from "@/ui/context-menu";
 import Dialog from "@/ui/dialog";
 import Input from "@/ui/input";
 import { paneHeaderClassName, paneTitleClassName } from "@/ui/pane";
+import { toast } from "@/ui/toast";
 import Tooltip from "@/ui/tooltip";
 import { cn } from "@/utils/cn";
 import { getFolderName, getRelativePath } from "@/utils/path-helpers";
@@ -104,10 +105,12 @@ const GitWorktreeManager = ({
 
     setActionLoading((prev) => new Set(prev).add(worktreePath));
     try {
-      const success = await removeWorktree(repoPath, worktreePath, true);
+      const success = await removeWorktree(repoPath, worktreePath);
       if (success) {
         await loadWorktrees();
         onRefresh?.();
+      } else {
+        toast.error("Unable to remove worktree. Commit or stash local changes and try again.");
       }
     } finally {
       setActionLoading((prev) => {
