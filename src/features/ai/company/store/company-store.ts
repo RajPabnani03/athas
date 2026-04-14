@@ -60,6 +60,28 @@ interface CompanyStoreActions {
 
 let logIdCounter = 0;
 
+function cloneTask(task: Task): Task {
+  return {
+    ...task,
+    subtasks: [...task.subtasks],
+    createdAt: new Date(task.createdAt),
+    updatedAt: new Date(task.updatedAt),
+    completedAt: task.completedAt ? new Date(task.completedAt) : null,
+  };
+}
+
+function cloneWorkflow(workflow: CompanyWorkflow): CompanyWorkflow {
+  return {
+    ...workflow,
+    steps: workflow.steps.map((step) => ({
+      ...step,
+      startedAt: new Date(step.startedAt),
+      completedAt: step.completedAt ? new Date(step.completedAt) : null,
+    })),
+    createdAt: new Date(workflow.createdAt),
+  };
+}
+
 const useCompanyStoreBase = create<CompanyStoreState & CompanyStoreActions>()(
   immer((set) => ({
     isActive: false,
@@ -91,7 +113,7 @@ const useCompanyStoreBase = create<CompanyStoreState & CompanyStoreActions>()(
 
       addTask: (task) =>
         set((state) => {
-          state.tasks.push(task);
+          state.tasks.push(cloneTask(task));
         }),
 
       updateTaskStatus: (taskId, status) =>
@@ -113,7 +135,7 @@ const useCompanyStoreBase = create<CompanyStoreState & CompanyStoreActions>()(
 
       addWorkflow: (workflow) =>
         set((state) => {
-          state.workflows.push(workflow);
+          state.workflows.push(cloneWorkflow(workflow));
         }),
 
       updateWorkflowStep: (workflowId, stepIndex, update) =>
