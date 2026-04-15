@@ -1,5 +1,6 @@
 import { Copy, GitBranch, GitCommit, GitFork, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "@/ui/toast";
 import { useContextMenu } from "@/hooks/use-context-menu";
 import Button from "@/ui/button";
 import Checkbox from "@/ui/checkbox";
@@ -104,10 +105,14 @@ const GitWorktreeManager = ({
 
     setActionLoading((prev) => new Set(prev).add(worktreePath));
     try {
-      const success = await removeWorktree(repoPath, worktreePath, true);
+      const success = await removeWorktree(repoPath, worktreePath);
       if (success) {
         await loadWorktrees();
         onRefresh?.();
+      } else {
+        toast.error(
+          "Unable to remove worktree. Commit or stash changes in that worktree, then try again.",
+        );
       }
     } finally {
       setActionLoading((prev) => {
