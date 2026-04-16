@@ -37,7 +37,12 @@ export const CompanyPanel = memo(function CompanyPanel() {
   if (!isActive) return null;
 
   return (
-    <div className="flex h-full flex-col border-t border-border bg-primary-bg">
+    <div
+      className={cn(
+        "flex shrink-0 flex-col border-t border-border bg-primary-bg",
+        isPanelExpanded ? "h-72" : "",
+      )}
+    >
       <button
         type="button"
         onClick={togglePanel}
