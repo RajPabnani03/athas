@@ -1,7 +1,7 @@
 import { useCompanyStore } from "../store/company-store";
 import { OrchestrationService } from "./orchestration-service";
 import { CEO_ID } from "../constants/org-chart";
-import type { DepartmentId, TaskPriority } from "../types/org";
+import type { CompanyWorkflow, DepartmentId, TaskPriority } from "../types/org";
 
 let orchestrationInstance: OrchestrationService | null = null;
 
@@ -35,6 +35,14 @@ function getOrchestration(): OrchestrationService {
   return orchestrationInstance;
 }
 
+function cloneWorkflowForStore(workflow: CompanyWorkflow): CompanyWorkflow {
+  return {
+    ...workflow,
+    steps: [...workflow.steps],
+    createdAt: new Date(workflow.createdAt),
+  };
+}
+
 export function processCompanyMessage(userMessage: string): string {
   const store = useCompanyStore.getState();
   const orch = getOrchestration();
@@ -44,7 +52,7 @@ export function processCompanyMessage(userMessage: string): string {
   store.actions.activate();
 
   const workflow = orch.startWorkflow(userMessage);
-  store.actions.addWorkflow(workflow);
+  store.actions.addWorkflow(cloneWorkflowForStore(workflow));
 
   store.actions.setMemberStatus(CEO_ID, "working");
   store.actions.addActivityLog(CEO_ID, `Received customer request: "${truncate(userMessage, 80)}"`);
