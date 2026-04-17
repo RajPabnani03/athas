@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
+import { enableMapSet } from "immer";
 import { useCompanyStore } from "../store/company-store";
 import { processCompanyMessage } from "./company-chat-service";
+
+enableMapSet();
 
 function countActiveTaskLines(context: string): number {
   return context.split("\n").filter((line) => line.startsWith("- [")).length;
