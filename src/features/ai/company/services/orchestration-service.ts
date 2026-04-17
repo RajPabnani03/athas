@@ -23,6 +23,16 @@ function nextWorkflowId(): string {
   return `workflow-${Date.now()}-${workflowIdCounter}`;
 }
 
+function cloneTask(task: Task): Task {
+  return {
+    ...task,
+    subtasks: [...task.subtasks],
+    createdAt: new Date(task.createdAt),
+    updatedAt: new Date(task.updatedAt),
+    completedAt: task.completedAt ? new Date(task.completedAt) : null,
+  };
+}
+
 export interface OrchestrationCallbacks {
   onMemberStatusChange: (memberId: string, status: OrgMember["status"]) => void;
   onTaskCreated: (task: Task) => void;
@@ -44,6 +54,11 @@ export class OrchestrationService {
 
   constructor(callbacks: OrchestrationCallbacks) {
     this.callbacks = callbacks;
+  }
+
+  resetState(): void {
+    this.workflows.clear();
+    this.tasks.clear();
   }
 
   getCeo(): OrgMember {
@@ -114,7 +129,7 @@ export class OrchestrationService {
     };
 
     this.tasks.set(task.id, task);
-    this.callbacks.onTaskCreated(task);
+    this.callbacks.onTaskCreated(cloneTask(task));
     this.callbacks.onActivityLog(assignedTo, `Task assigned: ${title}`);
 
     if (parentTaskId) {
