@@ -46,6 +46,11 @@ export class OrchestrationService {
     this.callbacks = callbacks;
   }
 
+  resetState(): void {
+    this.workflows.clear();
+    this.tasks.clear();
+  }
+
   getCeo(): OrgMember {
     return ORG_CHART.members.get(CEO_ID)!;
   }

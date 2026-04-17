@@ -36,9 +36,11 @@ function getOrchestration(): OrchestrationService {
 }
 
 export function processCompanyMessage(userMessage: string): string {
-  const orch = getOrchestration();
   const store = useCompanyStore.getState();
+  const orch = getOrchestration();
 
+  store.actions.reset();
+  orch.resetState();
   store.actions.activate();
 
   const workflow = orch.startWorkflow(userMessage);
