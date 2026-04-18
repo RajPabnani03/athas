@@ -16,6 +16,8 @@ interface UnifiedAgentSelectorProps {
   onOpenSettings?: () => void;
 }
 
+const ALWAYS_AVAILABLE_AGENT_IDS = new Set<string>(["custom", "company"]);
+
 export function UnifiedAgentSelector({
   variant = "header",
   onOpenSettings,
@@ -24,7 +26,9 @@ export function UnifiedAgentSelector({
   const [search, setSearch] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [availableAgents, setAvailableAgents] = useState<AgentConfig[]>([]);
-  const [installedAgents, setInstalledAgents] = useState<Set<string>>(new Set(["custom"]));
+  const [installedAgents, setInstalledAgents] = useState<Set<string>>(
+    new Set(ALWAYS_AVAILABLE_AGENT_IDS),
+  );
   const [installingAgentId, setInstallingAgentId] = useState<string | null>(null);
   const { showToast } = useToast();
   const getCurrentAgentId = useAIChatStore((state) => state.getCurrentAgentId);
@@ -46,7 +50,7 @@ export function UnifiedAgentSelector({
     try {
       const detectedAgents = await invoke<AgentConfig[]>("get_available_agents");
       setAvailableAgents(detectedAgents);
-      const installed = new Set<string>(["custom"]);
+      const installed = new Set<string>(ALWAYS_AVAILABLE_AGENT_IDS);
       for (const agent of detectedAgents) {
         if (agent.installed) {
           installed.add(agent.id);
@@ -64,7 +68,7 @@ export function UnifiedAgentSelector({
       try {
         const availableAgents = await invoke<AgentConfig[]>("get_available_agents");
         setAvailableAgents(availableAgents);
-        const installed = new Set<string>(["custom"]);
+        const installed = new Set<string>(ALWAYS_AVAILABLE_AGENT_IDS);
         for (const agent of availableAgents) {
           if (agent.installed) {
             installed.add(agent.id);
@@ -202,7 +206,7 @@ export function UnifiedAgentSelector({
           e.preventDefault();
           if (selectableItems[selectedIndex]) {
             const item = selectableItems[selectedIndex];
-            if (item.isInstalled || item.id === "custom") {
+            if (item.isInstalled || ALWAYS_AVAILABLE_AGENT_IDS.has(item.id)) {
               handleAgentChange(item.id as AgentType);
             } else {
               void handleInstallAgent(item.id);
@@ -279,7 +283,7 @@ export function UnifiedAgentSelector({
               const itemIndex = selectableIndex;
               const isSelected = itemIndex === selectedIndex;
               const isInstalling = installingAgentId === item.id;
-              const isUnavailable = !item.isInstalled && item.id !== "custom";
+              const isUnavailable = !item.isInstalled && !ALWAYS_AVAILABLE_AGENT_IDS.has(item.id);
 
               return (
                 <div
@@ -293,7 +297,7 @@ export function UnifiedAgentSelector({
                 >
                   <button
                     onClick={() =>
-                      item.isInstalled || item.id === "custom"
+                      item.isInstalled || ALWAYS_AVAILABLE_AGENT_IDS.has(item.id)
                         ? handleAgentChange(item.id as AgentType)
                         : handleInstallAgent(item.id)
                     }
