@@ -5,4 +5,3 @@ export const AUTO_REBALANCE_PRIMARY_SIZE = 40;
 export const DEFAULT_SPLIT_RATIO: [number, number] = [50, 50];
 
 export const ROOT_PANE_ID = "root-pane";
-export const BOTTOM_PANE_ID = "bottom-pane";

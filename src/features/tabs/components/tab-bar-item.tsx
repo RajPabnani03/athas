@@ -4,7 +4,6 @@ import {
   GitBranch,
   GitPullRequest,
   GlobeHemisphereWest as Globe,
-  MagnifyingGlass as Search,
   ChatCircleText as MessageSquare,
   Package,
   PushPin as Pin,
@@ -13,7 +12,6 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { memo, useCallback, useEffect, useState } from "react";
-import type { RefCallback } from "react";
 import { FileExplorerIcon } from "@/features/file-explorer/components/file-explorer-icon";
 import type { PaneContent } from "@/features/panes/types/pane-content";
 import { Button } from "@/ui/button";
@@ -29,12 +27,13 @@ interface TabBarItemProps {
   isActive: boolean;
   isPaneActive: boolean;
   isDraggedTab: boolean;
-  showDropIndicatorBefore?: boolean;
-  tabRef?: RefCallback<HTMLDivElement>;
-  onClick?: () => void;
-  onMouseDown?: (e: React.MouseEvent) => void;
+  showDropIndicatorBefore: boolean;
+  tabRef: (el: HTMLDivElement | null) => void;
+  onMouseDown: (e: React.MouseEvent) => void;
   onDoubleClick: (e: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragEnd: (e: React.DragEvent) => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
   handleTabClose: (id: string) => void;
   handleTabPin: (id: string) => void;
@@ -46,12 +45,13 @@ const TabBarItem = memo(function TabBarItem({
   isActive,
   isPaneActive,
   isDraggedTab,
-  showDropIndicatorBefore = false,
+  showDropIndicatorBefore,
   tabRef,
-  onClick,
   onMouseDown,
   onDoubleClick,
   onContextMenu,
+  onDragStart,
+  onDragEnd,
   onKeyDown,
   handleTabClose,
   handleTabPin,
@@ -86,23 +86,28 @@ const TabBarItem = memo(function TabBarItem({
   );
 
   return (
-    <div ref={tabRef} className="relative">
-      {showDropIndicatorBefore ? (
-        <div className="drop-indicator absolute top-1 bottom-1 left-0 z-20 w-0.5 bg-accent" />
-      ) : null}
+    <>
+      {showDropIndicatorBefore && (
+        <div className="relative">
+          <div className="drop-indicator absolute top-1 bottom-1 left-0 z-20 w-0.5 bg-accent" />
+        </div>
+      )}
       <Tab
+        ref={tabRef}
         role="tab"
         aria-selected={isActive}
         aria-label={`${buffer.name}${buffer.type === "editor" && buffer.isDirty ? " (unsaved)" : ""}${buffer.isPinned ? " (pinned)" : ""}${buffer.isPreview ? " (preview)" : ""}`}
         tabIndex={isActive ? 0 : -1}
         isActive={isActive}
         isDragged={isDraggedTab}
-        className={isActive ? "bg-hover/80" : undefined}
-        onClick={onClick}
+        className={isActive ? (isPaneActive ? "bg-hover/80" : "bg-hover/30") : undefined}
         onMouseDown={onMouseDown}
         onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
         onKeyDown={onKeyDown}
+        draggable
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
         onAuxClick={handleAuxClick}
         action={
           <Button
@@ -119,11 +124,10 @@ const TabBarItem = memo(function TabBarItem({
             }}
             className={cn(
               "-translate-y-1/2 absolute top-1/2 right-0.5 cursor-pointer select-none rounded-md text-text-lighter transition-opacity",
-              "hover:bg-error/12 hover:text-text",
+              "hover:bg-hover/80 hover:text-text",
               buffer.isPinned || isActive ? "opacity-100" : "opacity-0 group-hover/tab:opacity-100",
             )}
-            tooltip={buffer.isPinned ? "Unpin tab" : "Close"}
-            shortcut={buffer.isPinned ? undefined : "mod+w"}
+            title={buffer.isPinned ? "Unpin tab" : `Close ${buffer.name}`}
             tabIndex={-1}
             draggable={false}
           >
@@ -181,8 +185,6 @@ const TabBarItem = memo(function TabBarItem({
             )
           ) : buffer.type === "githubAction" ? (
             <Activity className="text-text-lighter" />
-          ) : buffer.type === "globalSearch" ? (
-            <Search className="text-text-lighter" />
           ) : (
             <FileExplorerIcon
               fileName={getDiffIconName() ?? buffer.name}
@@ -211,7 +213,7 @@ const TabBarItem = memo(function TabBarItem({
           />
         )}
       </Tab>
-    </div>
+    </>
   );
 });
 

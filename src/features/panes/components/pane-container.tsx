@@ -13,14 +13,8 @@ import { formatDiffBufferLabel } from "@/features/git/utils/diff-buffer-label";
 import { useSettingsStore } from "@/features/settings/store";
 import TabBar from "@/features/tabs/components/tab-bar";
 import { extractDroppedFilePaths } from "@/features/file-system/utils/file-system-dropped-paths";
-import {
-  clearInternalTabDragData,
-  getInternalTabDragData,
-  getInternalTabDragHover,
-} from "@/features/tabs/utils/internal-tab-drag";
 import { cn } from "@/utils/cn";
-import { EmptyEditorState } from "./empty-editor-state";
-import { BOTTOM_PANE_ID } from "../constants/pane";
+import { EmptyEditorState } from "../../layout/components/empty-editor-state";
 import { usePaneStore } from "../stores/pane-store";
 import type { PaneGroup } from "../types/pane";
 import { hasTextContent } from "../types/pane-content";
@@ -49,9 +43,6 @@ const ExternalEditorTerminal = lazy(() =>
   })),
 );
 const DiffViewer = lazy(() => import("@/features/git/components/diff/git-diff-viewer"));
-const GlobalSearchBuffer = lazy(
-  () => import("@/features/global-search/components/global-search-buffer"),
-);
 const PRViewer = lazy(() => import("@/features/github/components/pr-viewer"));
 const GitHubIssueViewer = lazy(() => import("@/features/github/components/github-issue-viewer"));
 const GitHubActionViewer = lazy(() => import("@/features/github/components/github-action-viewer"));
@@ -162,7 +153,7 @@ function PullRequestPreviewCard({ buffer }: { buffer: PullRequestContent }) {
           <div className="mt-0.5 size-4 shrink-0 rounded-[4px] bg-green-500/80" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-md border border-border bg-primary-bg/70 px-1.5 py-0.5 editor-font text-[11px] text-text-lighter">
+              <span className="rounded-md border border-border bg-primary-bg/70 px-1.5 py-0.5 font-mono text-[11px] text-text-lighter">
                 #{buffer.prNumber ?? "--"}
               </span>
               <div className="min-w-0 truncate font-medium text-sm text-text">{buffer.name}</div>
@@ -220,14 +211,13 @@ export function PaneContainer({ pane }: PaneContainerProps) {
     reorderPaneBuffers,
     splitPane,
   } = usePaneStore.use.actions();
-  const { closeBufferForce, openBuffer, openTerminalBuffer } = useBufferStore.use.actions();
+  const { closeBufferForce, openBuffer } = useBufferStore.use.actions();
   const rootFolderPath = useFileSystemStore.use.rootFolderPath?.();
   const handleFileOpen = useFileSystemStore.use.handleFileOpen?.();
   const horizontalBufferCarousel = useSettingsStore((state) => state.settings.horizontalTabScroll);
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [isTabDragOver, setIsTabDragOver] = useState(false);
-  const [internalHoverZone, setInternalHoverZone] = useState<DropZone>(null);
   const [carouselCardWidth, setCarouselCardWidth] = useState(DEFAULT_CAROUSEL_CARD_WIDTH);
   const [isCarouselResizing, setIsCarouselResizing] = useState(false);
   const [draggedCarouselBufferId, setDraggedCarouselBufferId] = useState<string | null>(null);
@@ -260,29 +250,6 @@ export function PaneContainer({ pane }: PaneContainerProps) {
       }
     }
   }, [isActivePane, pane.id, pane.activeBufferId, setActivePane]);
-
-  const handlePaneMouseDownCapture = useCallback(
-    (e: React.MouseEvent) => {
-      const target = e.target as HTMLElement;
-      const isEditorTextarea = target.classList.contains("editor-textarea");
-      const isTerminalTextarea = target.classList.contains("xterm-helper-textarea");
-      if (
-        !isEditorTextarea &&
-        !isTerminalTextarea &&
-        target.closest("button, input, textarea, [role='button'], [role='menu']")
-      ) {
-        return;
-      }
-
-      if (!isActivePane) {
-        setActivePane(pane.id);
-        if (pane.activeBufferId) {
-          useBufferStore.getState().actions.setActiveBuffer(pane.activeBufferId);
-        }
-      }
-    },
-    [isActivePane, pane.id, pane.activeBufferId, setActivePane],
-  );
 
   const handleTabClick = useCallback(
     (bufferId: string) => {
@@ -419,16 +386,6 @@ export function PaneContainer({ pane }: PaneContainerProps) {
 
   // Listen for file tree drops on this pane
   useEffect(() => {
-    const syncHover = () => {
-      const hover = getInternalTabDragHover();
-      setInternalHoverZone(hover.paneId === pane.id ? hover.zone : null);
-    };
-
-    window.addEventListener("athas-internal-tab-drag-hover", syncHover);
-    return () => window.removeEventListener("athas-internal-tab-drag-hover", syncHover);
-  }, [pane.id]);
-
-  useEffect(() => {
     const handleFileTreeDrop = async (e: CustomEvent) => {
       const { path, name, x, y } = e.detail;
       const container = containerRef.current;
@@ -494,8 +451,7 @@ export function PaneContainer({ pane }: PaneContainerProps) {
     e.preventDefault();
     e.stopPropagation();
 
-    const hasTabData =
-      e.dataTransfer.types.includes("application/tab-data") || !!getInternalTabDragData();
+    const hasTabData = e.dataTransfer.types.includes("application/tab-data");
     const hasFilePath = e.dataTransfer.types.includes("text/plain");
     const hasFileDragData = !!window.__fileDragData;
 
@@ -527,51 +483,22 @@ export function PaneContainer({ pane }: PaneContainerProps) {
       if (!zone) return;
 
       const tabDataString = e.dataTransfer.getData("application/tab-data");
-      const fallbackTabData = getInternalTabDragData();
-      if (!tabDataString && !fallbackTabData) return;
+      if (!tabDataString) return;
 
-      let bufferId: string | undefined;
-      let sourcePaneId: string | undefined;
-      let source: string | undefined;
-      let terminalId: string | undefined;
-      let terminalName: string | undefined;
-      let initialCommand: string | undefined;
-      let currentDirectory: string | undefined;
-      let remoteConnectionId: string | undefined;
+      let bufferId: string;
+      let sourcePaneId: string;
       try {
-        const tabData = tabDataString ? JSON.parse(tabDataString) : fallbackTabData;
+        const tabData = JSON.parse(tabDataString);
         bufferId = tabData.bufferId;
         sourcePaneId = tabData.paneId;
-        source = tabData.source;
-        terminalId = tabData.terminalId;
-        terminalName = tabData.name;
-        initialCommand = tabData.initialCommand;
-        currentDirectory = tabData.currentDirectory;
-        remoteConnectionId = tabData.remoteConnectionId;
       } catch {
         return;
-      } finally {
-        clearInternalTabDragData();
       }
 
       if (zone === "center") {
-        if (source === "terminal-panel" && terminalId) {
-          setActivePane(pane.id);
-          openTerminalBuffer({
-            sessionId: terminalId,
-            name: terminalName,
-            command: initialCommand,
-            workingDirectory: currentDirectory,
-            remoteConnectionId,
-          });
-          window.dispatchEvent(
-            new CustomEvent("terminal-detach-to-buffer", {
-              detail: { terminalId },
-            }),
-          );
-        } else if (sourcePaneId && sourcePaneId !== pane.id && bufferId) {
+        if (sourcePaneId && sourcePaneId !== pane.id) {
           moveBufferToPane(bufferId, sourcePaneId, pane.id);
-        } else if (!sourcePaneId && bufferId) {
+        } else if (!sourcePaneId) {
           addBufferToPane(pane.id, bufferId, true);
         }
         return;
@@ -584,27 +511,13 @@ export function PaneContainer({ pane }: PaneContainerProps) {
       if (!newPaneId) return;
 
       // Move the dragged buffer into the newly created pane.
-      if (source === "terminal-panel" && terminalId) {
-        setActivePane(newPaneId);
-        openTerminalBuffer({
-          sessionId: terminalId,
-          name: terminalName,
-          command: initialCommand,
-          workingDirectory: currentDirectory,
-          remoteConnectionId,
-        });
-        window.dispatchEvent(
-          new CustomEvent("terminal-detach-to-buffer", {
-            detail: { terminalId },
-          }),
-        );
-      } else if (sourcePaneId && sourcePaneId !== pane.id && bufferId) {
+      if (sourcePaneId && sourcePaneId !== pane.id) {
         moveBufferToPane(bufferId, sourcePaneId, newPaneId);
-      } else if (bufferId) {
+      } else {
         moveBufferToPane(bufferId, pane.id, newPaneId);
       }
     },
-    [pane.id, splitPane, moveBufferToPane, addBufferToPane, openTerminalBuffer, setActivePane],
+    [pane.id, splitPane, moveBufferToPane, addBufferToPane],
   );
 
   // Handle mouse up for file tree drag (which uses mouse events, not HTML5 drag API)
@@ -669,7 +582,7 @@ export function PaneContainer({ pane }: PaneContainerProps) {
       setActivePane(pane.id);
 
       // Tab drops are handled by SplitDropOverlay — skip here
-      if (e.dataTransfer.types.includes("application/tab-data") || getInternalTabDragData()) {
+      if (e.dataTransfer.types.includes("application/tab-data")) {
         return;
       }
 
@@ -839,9 +752,6 @@ export function PaneContainer({ pane }: PaneContainerProps) {
             />
           );
 
-        case "globalSearch":
-          return <GlobalSearchBuffer />;
-
         case "image":
           return <ImageViewer filePath={buffer.path} fileName={buffer.name} bufferId={buffer.id} />;
 
@@ -897,29 +807,20 @@ export function PaneContainer({ pane }: PaneContainerProps) {
       ref={containerRef}
       data-pane-container
       data-pane-id={pane.id}
-      className={`relative flex h-full w-full flex-col overflow-hidden bg-primary-bg ${
-        isActivePane ? "ring-1 ring-accent/30" : ""
-      } ${isDragOver || internalHoverZone ? "ring-2 ring-accent" : ""}`}
-      onMouseDownCapture={handlePaneMouseDownCapture}
+      className={`@container relative flex h-full w-full flex-col overflow-hidden bg-primary-bg transition-all duration-200 ${
+        isActivePane ? "ring-1 ring-border/40 ring-inset z-10" : "z-0"
+      } ${isDragOver ? "ring-2 ring-accent ring-inset z-20" : ""}`}
       onClick={handlePaneClick}
       onMouseUp={handleMouseUp}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {(isDragOver || internalHoverZone) && !isTabDragOver && !internalHoverZone && (
+      {isDragOver && !isTabDragOver && (
         <div className="pointer-events-none absolute inset-0 z-40 bg-accent/10" />
       )}
-      <SplitDropOverlay
-        visible={isTabDragOver || !!internalHoverZone}
-        onDrop={handleSplitDrop}
-        activeZoneOverride={internalHoverZone}
-      />
-      <TabBar
-        paneId={pane.id}
-        onTabClick={handleTabClick}
-        disablePaneActions={pane.id === BOTTOM_PANE_ID}
-      />
+      <SplitDropOverlay visible={isTabDragOver} onDrop={handleSplitDrop} />
+      <TabBar paneId={pane.id} onTabClick={handleTabClick} />
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {(!activeBuffer || activeBuffer.type === "newTab") && !shouldRenderCarousel && (
           <EmptyEditorState />
