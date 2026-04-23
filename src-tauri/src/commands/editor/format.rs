@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
    collections::HashMap,
+   fs,
    io::Write,
    process::{Command, Stdio},
 };
@@ -82,6 +83,9 @@ async fn format_with_generic(
    // Build command
    let mut cmd = Command::new(&command);
    cmd.args(&args);
+   if let Some(workspace) = workspace_folder {
+      cmd.current_dir(workspace);
+   }
 
    // Add environment variables if specified
    if let Some(env) = &config.env {
@@ -101,6 +105,24 @@ async fn format_with_generic(
    cmd.stderr(Stdio::piped());
 
    // Spawn the formatter process
+   if input_method == "file" {
+      let Some(path) = file_path else {
+         return Ok(FormatResponse {
+            formatted_content: content.to_string(),
+            success: false,
+            error: Some("File input method requires file_path".to_string()),
+         });
+      };
+
+      if let Err(e) = fs::write(path, content) {
+         return Ok(FormatResponse {
+            formatted_content: content.to_string(),
+            success: false,
+            error: Some(format!("Failed to write formatter input file: {}", e)),
+         });
+      }
+   }
+
    match cmd.spawn() {
       Ok(mut child) => {
          // Write content to stdin if using stdin input
@@ -122,8 +144,27 @@ async fn format_with_generic(
                   let formatted = if output_method == "stdout" {
                      String::from_utf8_lossy(&output.stdout).to_string()
                   } else {
-                     // For file output, read the file (TODO: implement file-based formatting)
-                     content.to_string()
+                     let Some(path) = file_path else {
+                        return Ok(FormatResponse {
+                           formatted_content: content.to_string(),
+                           success: false,
+                           error: Some("File output method requires file_path".to_string()),
+                        });
+                     };
+
+                     match fs::read_to_string(path) {
+                        Ok(file_content) => file_content,
+                        Err(e) => {
+                           return Ok(FormatResponse {
+                              formatted_content: content.to_string(),
+                              success: false,
+                              error: Some(format!(
+                                 "Failed to read formatter output file: {}",
+                                 e
+                              )),
+                           });
+                        }
+                     }
                   };
 
                   Ok(FormatResponse {
@@ -421,5 +462,47 @@ fn get_file_extension(language: &str) -> &str {
       "c" => "c",
       "cpp" | "c++" => "cpp",
       _ => "txt",
+   }
+}
+
+#[cfg(test)]
+mod tests {
+   use super::*;
+   use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+
+   fn unique_temp_file() -> String {
+      let nanos = SystemTime::now()
+         .duration_since(UNIX_EPOCH)
+         .expect("time went backwards")
+         .as_nanos();
+      std::env::temp_dir()
+         .join(format!("athas-format-test-{nanos}.txt"))
+         .to_string_lossy()
+         .to_string()
+   }
+
+   #[tokio::test]
+   async fn generic_formatter_reads_file_output() {
+      let file_path = unique_temp_file();
+
+      let config = FormatterConfig {
+         command: "sh".to_string(),
+         args: Some(vec![
+            "-c".to_string(),
+            "printf 'formatted content' > \"$1\"".to_string(),
+            "script".to_string(),
+            "${file}".to_string(),
+         ]),
+         env: None,
+         input_method: Some("file".to_string()),
+         output_method: Some("file".to_string()),
+      };
+
+      let response =
+         format_with_generic("original", &config, Some(&file_path), None).await.unwrap();
+      assert!(response.success, "expected formatter to succeed");
+      assert_eq!(response.formatted_content, "formatted content");
+
+      let _ = fs::remove_file(file_path);
    }
 }
