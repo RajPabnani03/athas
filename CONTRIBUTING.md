@@ -4,13 +4,13 @@ Thank you for contributing to Athas! Please check existing issues and pull reque
 
 ## Setup
 
-See [setup guides](docs/contributing/setup/) for your platform.
+Detailed setup and release notes live in [docs/contributing.mdx](docs/contributing.mdx).
 
 Prerequisites:
 
 - [Rust](https://rustup.rs)
 - [Bun](https://bun.sh)
-- [Node.js ≥ 18](https://nodejs.org)
+- [Node.js ≥ 22](https://nodejs.org)
 
 ```bash
 bun install
@@ -19,7 +19,7 @@ bun dev
 
 ## Before Submitting
 
-1. Code passes checks: `bun check`
+1. Code passes checks: `bun check:all`
 2. Auto-fix issues: `bun fix`
 3. Formatting only when needed: `bun format`
 4. App runs: `bun dev`
@@ -38,4 +38,5 @@ bun dev
 
 ## Documentation
 
+- [Development setup](docs/contributing.mdx)
 - [Releasing](docs/contributing/releasing.md)

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { extensionRegistry } from "@/extensions/registry/extension-registry";
+import { resolveWorkspaceRoot } from "@/features/file-system/controllers/workspace-root";
 import { logger } from "@/features/editor/utils/logger";
 
 export interface LintOptions {
@@ -51,8 +52,7 @@ export async function lintContent(options: LintOptions): Promise<LintResult> {
 
     const language = languageId || extensionRegistry.getLanguageId(filePath) || "unknown";
 
-    // Get workspace folder (if available)
-    const workspaceFolder = getWorkspaceFolder(filePath);
+    const workspaceFolder = await resolveWorkspaceRoot(filePath);
 
     try {
       const response = await invoke<{
@@ -122,20 +122,4 @@ export function isLintingAvailable(filePath: string, languageId?: string): boole
   }
 
   return false;
-}
-
-/**
- * Get workspace folder from file path
- *
- * This should ideally return the project root (where .git, package.json, Cargo.toml, etc. are)
- * For now, it returns the directory containing the file as a fallback
- *
- * TODO: Integrate with file system store to get actual workspace root
- */
-function getWorkspaceFolder(filePath: string): string | undefined {
-  const parts = filePath.split("/");
-  if (parts.length > 1) {
-    return parts.slice(0, -1).join("/");
-  }
-  return undefined;
 }
