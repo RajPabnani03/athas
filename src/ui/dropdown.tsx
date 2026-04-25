@@ -143,14 +143,17 @@ export function MenuItemsList({
           return <div key={item.id} className="my-0.5 border-border/70 border-t" />;
         }
 
-        selectableIdx++;
-        const isFocused = selectableIdx === focusIndex;
+        const isSelectable = !item.disabled;
+        if (isSelectable) {
+          selectableIdx++;
+        }
+        const isFocused = isSelectable && selectableIdx === focusIndex;
 
         return (
           <button
             key={item.id}
             ref={(el) => {
-              if (!item.disabled) {
+              if (isSelectable) {
                 itemRefs.current[selectableIdx] = el;
               }
             }}
@@ -602,15 +605,28 @@ export function Dropdown(props: DropdownProps) {
           />
         )}
         {hasSections &&
-          getFilteredSections().map((section, sectionIdx) => (
-            <div key={section.id}>
-              {sectionIdx > 0 && <div className="my-0.5 border-border/70 border-t" />}
-              {section.label && (
-                <div className={dropdownSectionLabelVariants()}>{section.label}</div>
-              )}
-              <MenuItemsList items={section.items} onItemSelect={onClose} />
-            </div>
-          ))}
+          (() => {
+            let runningOffset = 0;
+            return getFilteredSections().map((section, sectionIdx) => {
+              const sectionOffset = runningOffset;
+              runningOffset += section.items.filter(
+                (item) => !item.separator && !item.disabled,
+              ).length;
+              return (
+                <div key={section.id}>
+                  {sectionIdx > 0 && <div className="my-0.5 border-border/70 border-t" />}
+                  {section.label && (
+                    <div className={dropdownSectionLabelVariants()}>{section.label}</div>
+                  )}
+                  <MenuItemsList
+                    items={section.items}
+                    focusIndex={focusIndex >= 0 ? focusIndex - sectionOffset : -1}
+                    onItemSelect={onClose}
+                  />
+                </div>
+              );
+            });
+          })()}
       </div>
     </MenuPopover>
   );
