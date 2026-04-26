@@ -46,6 +46,11 @@ export class OrchestrationService {
     this.callbacks = callbacks;
   }
 
+  reset(): void {
+    this.workflows.clear();
+    this.tasks.clear();
+  }
+
   getCeo(): OrgMember {
     return ORG_CHART.members.get(CEO_ID)!;
   }
@@ -114,7 +119,7 @@ export class OrchestrationService {
     };
 
     this.tasks.set(task.id, task);
-    this.callbacks.onTaskCreated(task);
+    this.callbacks.onTaskCreated(this.toTaskSnapshot(task));
     this.callbacks.onActivityLog(assignedTo, `Task assigned: ${title}`);
 
     if (parentTaskId) {
@@ -180,7 +185,7 @@ export class OrchestrationService {
     };
 
     this.workflows.set(workflow.id, workflow);
-    return workflow;
+    return this.toWorkflowSnapshot(workflow);
   }
 
   addWorkflowStep(workflowId: string, memberId: string, action: string, input: string): number {
@@ -293,5 +298,27 @@ export class OrchestrationService {
         return `- [${t.status.toUpperCase()}] ${t.title} (assigned to ${assignee?.name || "unknown"})`;
       })
       .join("\n");
+  }
+
+  private toTaskSnapshot(task: Task): Task {
+    return {
+      ...task,
+      subtasks: [...task.subtasks],
+      createdAt: new Date(task.createdAt),
+      updatedAt: new Date(task.updatedAt),
+      completedAt: task.completedAt ? new Date(task.completedAt) : null,
+    };
+  }
+
+  private toWorkflowSnapshot(workflow: CompanyWorkflow): CompanyWorkflow {
+    return {
+      ...workflow,
+      steps: workflow.steps.map((step) => ({
+        ...step,
+        startedAt: new Date(step.startedAt),
+        completedAt: step.completedAt ? new Date(step.completedAt) : null,
+      })),
+      createdAt: new Date(workflow.createdAt),
+    };
   }
 }

@@ -39,6 +39,8 @@ export function processCompanyMessage(userMessage: string): string {
   const orch = getOrchestration();
   const store = useCompanyStore.getState();
 
+  orch.reset();
+  store.actions.reset();
   store.actions.activate();
 
   const workflow = orch.startWorkflow(userMessage);
