@@ -397,6 +397,13 @@ const TerminalContainer = ({
       if (pendingCommand && connectionId) {
         // Small delay to ensure shell prompt is ready
         setTimeout(() => {
+          const approved = window.confirm(
+            `Run this command in the new terminal?\n\n${pendingCommand.trim()}`,
+          );
+          if (!approved) {
+            pendingCommandsRef.current.delete(terminalId);
+            return;
+          }
           invoke("terminal_write", {
             id: connectionId,
             data: pendingCommand,
