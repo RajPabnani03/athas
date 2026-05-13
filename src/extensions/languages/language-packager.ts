@@ -9,7 +9,6 @@ import type {
   FormatterConfiguration,
   LinterConfiguration,
   LspConfiguration,
-  PlatformExecutable,
   ToolRuntime,
 } from "../types/extension-manifest";
 
@@ -80,10 +79,6 @@ function normalizeExtensions(extensions: string[]): string[] {
   return extensions.map((ext) => (ext.startsWith(".") ? ext : `.${ext}`));
 }
 
-function defaultCommand(name?: string): PlatformExecutable {
-  return { default: name || "" };
-}
-
 function isAbsoluteAssetUrl(value: string): boolean {
   return /^(?:[a-z]+:)?\/\//i.test(value) || value.startsWith("/");
 }
@@ -105,64 +100,22 @@ export function resolveLanguageAssetUrl(
   return `${BUNDLED_PARSER_BASE_URL}/${folder}/${normalized}`;
 }
 
-function createLspConfig(manifest: ExternalLanguageManifest): LspConfiguration | undefined {
-  const lsp = manifest.capabilities?.lsp;
-  const languages = manifest.languages || [];
-  if (!lsp?.name || languages.length === 0) return undefined;
-
-  const fileExtensions = languages.flatMap((lang) => normalizeExtensions(lang.extensions || []));
-  const languageIds = languages.map((lang) => lang.id);
-
-  return {
-    name: lsp.name,
-    runtime: lsp.runtime,
-    package: lsp.package,
-    downloadUrl: lsp.downloadUrl,
-    server: defaultCommand(lsp.name),
-    args: lsp.args || [],
-    env: lsp.env,
-    fileExtensions,
-    languageIds,
-  };
+function createLspConfig(_manifest: ExternalLanguageManifest): LspConfiguration | undefined {
+  // Security: language manifests are fetched from a remote CDN at runtime.
+  // Do not trust manifest-provided executable commands/args/env.
+  return undefined;
 }
 
 function createFormatterConfig(
-  manifest: ExternalLanguageManifest,
+  _manifest: ExternalLanguageManifest,
 ): FormatterConfiguration | undefined {
-  const formatter = manifest.capabilities?.formatter;
-  const languageIds = (manifest.languages || []).map((lang) => lang.id);
-  if (!formatter?.name || languageIds.length === 0) return undefined;
-
-  return {
-    name: formatter.name,
-    runtime: formatter.runtime,
-    package: formatter.package,
-    downloadUrl: formatter.downloadUrl,
-    command: defaultCommand(formatter.name),
-    args: formatter.args || [],
-    env: formatter.env,
-    inputMethod: "stdin",
-    outputMethod: "stdout",
-    languages: languageIds,
-  };
+  // Security: disable remotely sourced formatter command execution.
+  return undefined;
 }
 
-function createLinterConfig(manifest: ExternalLanguageManifest): LinterConfiguration | undefined {
-  const linter = manifest.capabilities?.linter;
-  const languageIds = (manifest.languages || []).map((lang) => lang.id);
-  if (!linter?.name || languageIds.length === 0) return undefined;
-
-  return {
-    name: linter.name,
-    runtime: linter.runtime,
-    package: linter.package,
-    downloadUrl: linter.downloadUrl,
-    command: defaultCommand(linter.name),
-    args: linter.args || [],
-    env: linter.env,
-    inputMethod: "stdin",
-    languages: languageIds,
-  };
+function createLinterConfig(_manifest: ExternalLanguageManifest): LinterConfiguration | undefined {
+  // Security: disable remotely sourced linter command execution.
+  return undefined;
 }
 
 function convertLanguageManifest(
