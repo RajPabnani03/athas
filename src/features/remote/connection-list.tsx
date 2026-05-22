@@ -12,6 +12,7 @@ import { Button } from "@/ui/button";
 import { ContextMenu, useContextMenu, type ContextMenuItem } from "@/ui/context-menu";
 import { LoadingIndicator } from "@/ui/loading";
 import { cn } from "@/utils/cn";
+import MobileLinkPanel from "./components/mobile-link-panel";
 import type { RemoteConnection } from "./types";
 
 interface ConnectionListProps {
@@ -224,6 +225,8 @@ const ConnectionList = ({
           </div>
         )}
       </div>
+
+      <MobileLinkPanel />
 
       <ContextMenu
         isOpen={contextMenu.isOpen}

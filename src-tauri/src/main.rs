@@ -178,6 +178,7 @@ fn main() {
          close_terminal,
          list_shells,
          // execute_shell,
+         mobile_link_create_pairing_session,
          // SSH commands
          ssh_connect,
          ssh_disconnect,

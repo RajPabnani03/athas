@@ -10,6 +10,7 @@ pub mod version_control;
 // Standalone modules (not domain-specific)
 pub mod extensions;
 pub mod fuzzy;
+pub mod mobile_link;
 
 // Re-export all commands from domain modules
 pub use ai::*;
@@ -19,6 +20,7 @@ pub use editor::*;
 // Re-export standalone modules
 pub use extensions::*;
 pub use fuzzy::*;
+pub use mobile_link::*;
 pub use project::*;
 pub use ui::*;
 pub use version_control::*;
