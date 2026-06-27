@@ -168,6 +168,26 @@ const CustomMenuBar = ({
             Format Selection
           </MenuItem>
           <MenuItem separator />
+          <MenuItem onClick={() => handleCommand("editor.sortLinesAscending")}>
+            Sort Lines Ascending
+          </MenuItem>
+          <MenuItem onClick={() => handleCommand("editor.sortLinesDescending")}>
+            Sort Lines Descending
+          </MenuItem>
+          <MenuItem onClick={() => handleCommand("editor.joinLines")}>Join Lines</MenuItem>
+          <MenuItem onClick={() => handleCommand("editor.transformToUppercase")}>
+            Transform to Uppercase
+          </MenuItem>
+          <MenuItem onClick={() => handleCommand("editor.transformToLowercase")}>
+            Transform to Lowercase
+          </MenuItem>
+          <MenuItem onClick={() => handleCommand("editor.transformToTitleCase")}>
+            Transform to Title Case
+          </MenuItem>
+          <MenuItem onClick={() => handleCommand("editor.trimTrailingWhitespace")}>
+            Trim Trailing Whitespace
+          </MenuItem>
+          <MenuItem separator />
           <MenuItem shortcut="mod+shift+p" onClick={() => handleClickEmit("menu_command_palette")}>
             Command Palette
           </MenuItem>

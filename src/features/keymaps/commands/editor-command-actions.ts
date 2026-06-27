@@ -343,6 +343,34 @@ export function copyActiveEditorLineDown(): void {
   editorAPI.copyLineDown();
 }
 
+export function sortActiveEditorLinesAscending(): void {
+  editorAPI.sortLines("asc");
+}
+
+export function sortActiveEditorLinesDescending(): void {
+  editorAPI.sortLines("desc");
+}
+
+export function transformActiveEditorToUppercase(): void {
+  editorAPI.transformCase("upper");
+}
+
+export function transformActiveEditorToLowercase(): void {
+  editorAPI.transformCase("lower");
+}
+
+export function transformActiveEditorToTitleCase(): void {
+  editorAPI.transformCase("title");
+}
+
+export function joinActiveEditorLines(): void {
+  editorAPI.joinLines();
+}
+
+export function trimActiveEditorTrailingWhitespace(): void {
+  editorAPI.trimTrailingWhitespace();
+}
+
 export function insertActiveEditorCursorAbove(): void {
   editorAPI.insertCursorAbove();
 }
