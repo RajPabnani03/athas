@@ -30,6 +30,7 @@ export const LANGUAGE_ALIASES: Record<string, string> = {
   hcl: "hcl",
   vue: "markup",
   svelte: "markup",
+  astro: "markup",
   html: "markup",
   xml: "markup",
   svg: "markup",

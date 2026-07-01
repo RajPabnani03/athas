@@ -43,6 +43,11 @@ describe("getLanguageIdFromPath", () => {
     expect(getLanguageDisplayName("dotenv")).toBe("Dotenv");
   });
 
+  it("detects astro files", () => {
+    expect(getLanguageIdFromPath("/tmp/src/pages/index.astro")).toBe("astro");
+    expect(getLanguageDisplayName("astro")).toBe("Astro");
+  });
+
   it("detects extension-backed highlight languages without registry data", () => {
     expect(getLanguageIdFromPath("/tmp/component.tsx")).toBe("typescriptreact");
     expect(getLanguageIdFromPath("/tmp/analysis.R")).toBe("r");

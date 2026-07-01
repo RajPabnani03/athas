@@ -699,6 +699,7 @@ export class LspClient {
       solidity: "Solidity",
       svelte: "Svelte",
       swift: "Swift",
+      astro: "Astro",
       terraform: "Terraform",
       toml: "TOML",
       typescriptreact: "TypeScript React",

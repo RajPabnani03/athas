@@ -95,6 +95,7 @@ const EXTENSION_TO_LANGUAGE: Record<string, string> = {
   zig: "zig",
   vue: "vue",
   svelte: "svelte",
+  astro: "astro",
   erb: "embedded_template",
   lock: "lockfile",
 };
@@ -187,6 +188,7 @@ export const LANGUAGE_DISPLAY_NAMES: Record<string, string> = {
   zig: "Zig",
   vue: "Vue",
   svelte: "Svelte",
+  astro: "Astro",
   embedded_template: "ERB",
   text: "Plain Text",
   dockerfile: "Dockerfile",
