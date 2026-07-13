@@ -1554,8 +1554,10 @@ export const useFileSystemStore = createSelectors(
         // Active path maybe is a file
         if (activePath) {
           try {
-            await extname(activePath);
-            effectiveRootPath = await dirname(activePath);
+            const ext = await extname(activePath);
+            if (ext) {
+              effectiveRootPath = await dirname(activePath);
+            }
           } catch {}
         }
 
@@ -1654,8 +1656,10 @@ export const useFileSystemStore = createSelectors(
         // Active path maybe is a file
         if (activePath) {
           try {
-            await extname(activePath);
-            effectiveRootPath = await dirname(activePath);
+            const ext = await extname(activePath);
+            if (ext) {
+              effectiveRootPath = await dirname(activePath);
+            }
           } catch {}
         }
 
