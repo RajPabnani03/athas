@@ -37,6 +37,15 @@ import {
   moveLineUp as moveLineUpOperation,
 } from "../utils/line-operations";
 import { resolveCursorPositionsAtLineEndsForSelection } from "../utils/multi-cursor";
+import {
+  type CaseTransform,
+  joinLines as joinLinesOperation,
+  type SelectionOperationResult,
+  sortLines as sortLinesOperation,
+  type SortDirection,
+  transformCase as transformCaseOperation,
+  trimTrailingWhitespace as trimTrailingWhitespaceOperation,
+} from "../utils/selection-operations";
 import { getLineSlice } from "../utils/large-file";
 import type {
   EditorAPI,
@@ -444,6 +453,26 @@ class EditorAPIImpl implements EditorAPI {
     this.applyLineOperation(copyLineDownOperation);
   }
 
+  sortLines(direction: SortDirection): void {
+    this.applySelectionOperation((content, start, end) =>
+      sortLinesOperation(content, start, end, direction),
+    );
+  }
+
+  transformCase(mode: CaseTransform): void {
+    this.applySelectionOperation((content, start, end) =>
+      transformCaseOperation(content, start, end, mode),
+    );
+  }
+
+  joinLines(): void {
+    this.applySelectionOperation(joinLinesOperation);
+  }
+
+  trimTrailingWhitespace(): void {
+    this.applySelectionOperation(trimTrailingWhitespaceOperation);
+  }
+
   private insertCursorVertical(direction: -1 | 1): void {
     const content = this.getContent();
     const editorState = useEditorStateStore.getState();
@@ -774,6 +803,37 @@ class EditorAPIImpl implements EditorAPI {
     const sourceOffset = textarea ? textarea.selectionStart : editorState.cursorPosition.offset;
     const result = operation(content, sourceOffset);
     if (!result || result.content === content) return;
+
+    this.applyContentEdit(
+      content,
+      result.content,
+      result.selectionStart,
+      result.selectionEnd,
+      editorState,
+    );
+  }
+
+  private applySelectionOperation(
+    operation: (content: string, start: number, end: number) => SelectionOperationResult,
+  ): void {
+    const content = this.getContent();
+    const editorState = useEditorStateStore.getState();
+    const textareaOwnsFullContent = this.textareaRef?.value === content;
+
+    const selectionStart =
+      textareaOwnsFullContent && this.textareaRef
+        ? this.textareaRef.selectionStart
+        : (editorState.selection?.start.offset ?? editorState.cursorPosition.offset);
+    const selectionEnd =
+      textareaOwnsFullContent && this.textareaRef
+        ? this.textareaRef.selectionEnd
+        : (editorState.selection?.end.offset ?? editorState.cursorPosition.offset);
+
+    const result = operation(
+      content,
+      Math.min(selectionStart, selectionEnd),
+      Math.max(selectionStart, selectionEnd),
+    );
 
     this.applyContentEdit(
       content,

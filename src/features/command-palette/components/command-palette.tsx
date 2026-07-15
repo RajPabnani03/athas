@@ -40,6 +40,7 @@ import Keybinding from "@/ui/keybinding";
 import { matchesSearchQuery } from "@/utils/search-match";
 import { createAdvancedActions } from "../constants/advanced-actions";
 import { createDatabaseActions } from "../constants/database-actions";
+import { createEditActions } from "../constants/edit-actions";
 import { createFileActions } from "../constants/file-actions";
 import { createGitActions } from "../constants/git-actions";
 import { createGitHubActions } from "../constants/github-actions";
@@ -207,6 +208,9 @@ const CommandPalette = () => {
       onClose,
     }),
     ...createPaneActions({
+      onClose,
+    }),
+    ...createEditActions({
       onClose,
     }),
     ...createFileActions({
