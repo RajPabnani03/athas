@@ -2,6 +2,8 @@ const LOCAL_HOSTNAMES = new Set(["localhost", "0.0.0.0", "[::1]", "::1"]);
 const SUPPORTED_PROTOCOLS = new Set(["http:", "https:", "about:"]);
 
 function stripControlCharacters(value: string) {
+  // Intentionally strip C0 controls and DEL from pasted/typed URLs.
+  // oxlint-disable-next-line no-control-regex -- deliberate control-char scrubbing
   return value.replace(/[\u0000-\u001F\u007F]/g, "").trim();
 }
 

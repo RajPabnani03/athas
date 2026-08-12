@@ -15,6 +15,7 @@ import Dialog from "@/ui/dialog";
 import Input from "@/ui/input";
 import { LoadingIndicator } from "@/ui/loading";
 import { primitiveConfirm } from "@/ui/primitive-dialog-service";
+import { toast } from "@/ui/toast";
 import { cn } from "@/utils/cn";
 import { getFolderName, getRelativePath } from "@/utils/path-helpers";
 import {
@@ -110,18 +111,27 @@ const GitWorktreeManager = ({
 
   const handleRemoveWorktree = async (worktreePath: string) => {
     if (!repoPath) return;
-    const confirmed = await primitiveConfirm(`Remove worktree at "${worktreePath}"?`, {
-      title: "Remove Worktree",
-      confirmLabel: "Remove",
-    });
+    const confirmed = await primitiveConfirm(
+      `Remove worktree at "${worktreePath}"?\n\nGit will refuse removal if the worktree has uncommitted changes. Commit or stash first.`,
+      {
+        title: "Remove Worktree",
+        confirmLabel: "Remove",
+      },
+    );
     if (!confirmed) return;
 
     setActionLoading((prev) => new Set(prev).add(worktreePath));
     try {
-      const success = await removeWorktree(repoPath, worktreePath, true);
+      // Never force-remove: --force discards uncommitted worktree changes.
+      const success = await removeWorktree(repoPath, worktreePath, false);
       if (success) {
         await loadWorktrees();
         onRefresh?.();
+      } else {
+        toast.error(
+          "Could not remove worktree",
+          "It may still have local changes. Commit or stash them, then try again.",
+        );
       }
     } finally {
       setActionLoading((prev) => {
