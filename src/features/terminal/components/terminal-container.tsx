@@ -20,6 +20,7 @@ import {
 } from "@/features/terminal/utils/terminal-profiles";
 import { useUIState } from "@/features/window/stores/ui-state-store";
 import { Button } from "@/ui/button";
+import { primitiveConfirm } from "@/ui/primitive-dialog-service";
 import Tooltip from "@/ui/tooltip";
 import { cn } from "@/utils/cn";
 import TerminalSession from "./terminal-session";
@@ -474,7 +475,26 @@ const TerminalContainer = ({
       const { terminalId, connectionId } = customEvent.detail;
 
       const pendingCommand = pendingCommandsRef.current.get(terminalId);
-      if (pendingCommand && connectionId) {
+      if (!pendingCommand || !connectionId) return;
+
+      // Require explicit approval before auto-running a command that may have
+      // been dispatched from untrusted renderer events.
+      void (async () => {
+        const displayCommand = pendingCommand.replace(/\n$/, "");
+        const approved = await primitiveConfirm(
+          `Run this command in the new terminal?\n\n${displayCommand}`,
+          {
+            title: "Run Terminal Command",
+            confirmLabel: "Run",
+            cancelLabel: "Cancel",
+          },
+        );
+
+        if (!approved) {
+          pendingCommandsRef.current.delete(terminalId);
+          return;
+        }
+
         // Small delay to ensure shell prompt is ready
         setTimeout(() => {
           invoke("terminal_write", {
@@ -483,7 +503,7 @@ const TerminalContainer = ({
           }).catch(() => {});
           pendingCommandsRef.current.delete(terminalId);
         }, 300);
-      }
+      })();
     };
 
     window.addEventListener("terminal-ready", handleTerminalReady);

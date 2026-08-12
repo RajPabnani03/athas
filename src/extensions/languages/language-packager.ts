@@ -9,7 +9,6 @@ import type {
   FormatterConfiguration,
   LinterConfiguration,
   LspConfiguration,
-  PlatformExecutable,
   ToolRuntime,
 } from "../types/extension-manifest";
 import { getManifestLanguageContributions } from "../types/extension-contributions";
@@ -95,10 +94,6 @@ function getExternalLanguages(manifest: ExternalLanguageManifest): ExternalLangu
   return [...(manifest.languages || []), ...(manifest.contributes?.languages || [])];
 }
 
-function defaultCommand(name?: string): PlatformExecutable {
-  return { default: name || "" };
-}
-
 function isAbsoluteAssetUrl(value: string): boolean {
   return /^(?:[a-z]+:)?\/\//i.test(value) || value.startsWith("/");
 }
@@ -120,67 +115,21 @@ export function resolveLanguageAssetUrl(
   return `${BUNDLED_PARSER_BASE_URL}/${folder}/${normalized}`;
 }
 
-function createLspConfig(manifest: ExternalLanguageManifest): LspConfiguration | undefined {
-  const lsp = manifest.capabilities?.lsp;
-  const languages = getExternalLanguages(manifest);
-  if (!lsp?.name || languages.length === 0) return undefined;
-
-  const fileExtensions = languages.flatMap((lang) => normalizeExtensions(lang.extensions || []));
-  const languageIds = languages.map((lang) => lang.id);
-
-  return {
-    name: lsp.name,
-    runtime: lsp.runtime,
-    package: lsp.package,
-    packages: lsp.packages,
-    downloadUrl: lsp.downloadUrl,
-    server: defaultCommand(lsp.name),
-    args: lsp.args || [],
-    env: lsp.env,
-    fileExtensions,
-    languageIds,
-  };
+/**
+ * CDN manifests are untrusted network data. Never promote remote lsp/formatter/linter
+ * tool configs into executable runtime settings — only grammar/parser metadata is safe.
+ * Executable tools are resolved later from installed/local extension packages.
+ */
+export function createLspConfig(): LspConfiguration | undefined {
+  return undefined;
 }
 
-function createFormatterConfig(
-  manifest: ExternalLanguageManifest,
-): FormatterConfiguration | undefined {
-  const formatter = manifest.capabilities?.formatter;
-  const languageIds = getExternalLanguages(manifest).map((lang) => lang.id);
-  if (!formatter?.name || languageIds.length === 0) return undefined;
-
-  return {
-    name: formatter.name,
-    runtime: formatter.runtime,
-    package: formatter.package,
-    packages: formatter.packages,
-    downloadUrl: formatter.downloadUrl,
-    command: defaultCommand(formatter.name),
-    args: formatter.args || [],
-    env: formatter.env,
-    inputMethod: "stdin",
-    outputMethod: "stdout",
-    languages: languageIds,
-  };
+export function createFormatterConfig(): FormatterConfiguration | undefined {
+  return undefined;
 }
 
-function createLinterConfig(manifest: ExternalLanguageManifest): LinterConfiguration | undefined {
-  const linter = manifest.capabilities?.linter;
-  const languageIds = getExternalLanguages(manifest).map((lang) => lang.id);
-  if (!linter?.name || languageIds.length === 0) return undefined;
-
-  return {
-    name: linter.name,
-    runtime: linter.runtime,
-    package: linter.package,
-    packages: linter.packages,
-    downloadUrl: linter.downloadUrl,
-    command: defaultCommand(linter.name),
-    args: linter.args || [],
-    env: linter.env,
-    inputMethod: "stdin",
-    languages: languageIds,
-  };
+export function createLinterConfig(): LinterConfiguration | undefined {
+  return undefined;
 }
 
 function convertLanguageManifest(
@@ -235,9 +184,10 @@ function convertLanguageManifest(
       scopeName: manifest.capabilities?.grammar?.scopeName || `source.${primaryLanguageId}`,
       languageId: primaryLanguageId,
     },
-    lsp: createLspConfig(manifest),
-    formatter: createFormatterConfig(manifest),
-    linter: createLinterConfig(manifest),
+    // Intentionally omit tool configs from CDN manifests (RCE trust boundary).
+    lsp: createLspConfig(),
+    formatter: createFormatterConfig(),
+    linter: createLinterConfig(),
     activationEvents: languages.map((lang) => `onLanguage:${lang.id}`),
     installation: {
       downloadUrl: wasmUrl,

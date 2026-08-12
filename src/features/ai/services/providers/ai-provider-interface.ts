@@ -38,9 +38,7 @@ export abstract class AIProvider {
   buildUrl?(request: StreamRequest): string;
 
   // Optional: Allows providers to fetch available models dynamically
-  async getModels?(apiKey?: string): Promise<ProviderModel[]> {
-    return [];
-  }
+  getModels?(apiKey?: string): Promise<ProviderModel[]>;
 
   get id(): string {
     return this.config.id;
