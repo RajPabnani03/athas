@@ -15,9 +15,9 @@ describe("removeWorktree", () => {
   });
 
   it("defaults force to false so local changes are not discarded", async () => {
-    const success = await removeWorktree("/repo", "/repo/.worktrees/feature");
+    const result = await removeWorktree("/repo", "/repo/.worktrees/feature");
 
-    expect(success).toBe(true);
+    expect(result).toEqual({ success: true });
     expect(mockInvoke).toHaveBeenCalledWith("git_remove_worktree", {
       repoPath: "/repo",
       path: "/repo/.worktrees/feature",
@@ -35,11 +35,14 @@ describe("removeWorktree", () => {
     });
   });
 
-  it("returns false when the backend refuses removal", async () => {
+  it("returns the backend error when removal is refused", async () => {
     mockInvoke.mockRejectedValue(new Error("worktree contains modified or untracked files"));
 
-    const success = await removeWorktree("/repo", "/repo/.worktrees/feature", false);
+    const result = await removeWorktree("/repo", "/repo/.worktrees/feature", false);
 
-    expect(success).toBe(false);
+    expect(result).toEqual({
+      success: false,
+      error: "worktree contains modified or untracked files",
+    });
   });
 });

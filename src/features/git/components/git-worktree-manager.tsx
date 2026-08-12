@@ -123,15 +123,12 @@ const GitWorktreeManager = ({
     setActionLoading((prev) => new Set(prev).add(worktreePath));
     try {
       // Never force-remove: --force discards uncommitted worktree changes.
-      const success = await removeWorktree(repoPath, worktreePath, false);
-      if (success) {
+      const result = await removeWorktree(repoPath, worktreePath, false);
+      if (result.success) {
         await loadWorktrees();
         onRefresh?.();
       } else {
-        toast.error(
-          "Could not remove worktree",
-          "It may still have local changes. Commit or stash them, then try again.",
-        );
+        toast.error("Could not remove worktree", result.error);
       }
     } finally {
       setActionLoading((prev) => {

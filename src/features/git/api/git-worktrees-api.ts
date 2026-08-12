@@ -25,17 +25,20 @@ export const addWorktree = async (
   }
 };
 
+export type RemoveWorktreeResult = { success: true } | { success: false; error: string };
+
 export const removeWorktree = async (
   repoPath: string,
   path: string,
   force: boolean = false,
-): Promise<boolean> => {
+): Promise<RemoveWorktreeResult> => {
   try {
     await tauriInvoke("git_remove_worktree", { repoPath, path, force });
-    return true;
+    return { success: true };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error("Failed to remove worktree:", error);
-    return false;
+    return { success: false, error: message };
   }
 };
 
