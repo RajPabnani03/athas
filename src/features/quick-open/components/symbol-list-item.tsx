@@ -1,32 +1,32 @@
 import {
-  SquaresFour as Blocks,
-  Cube as Box,
-  BracketsCurly as Braces,
-  Code as Code2,
-  Hash,
-  Stack as Layers,
-  TextT as LetterText,
-  PuzzlePiece as Puzzle,
-  Function as Variable,
+  SquaresFourIcon as Blocks,
+  CubeIcon as Box,
+  BracketsCurlyIcon as Braces,
+  CodeIcon as Code2,
+  HashIcon as Hash,
+  StackIcon as Layers,
+  TextTIcon as LetterText,
+  PuzzlePieceIcon as Puzzle,
+  FunctionIcon as Variable,
 } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { CommandItem } from "@/ui/command";
 import type { SymbolItem } from "../hooks/use-symbol-search";
 
 const SYMBOL_ICONS: Record<string, ReactNode> = {
-  function: <Code2 size={14} className="text-purple-400" />,
-  method: <Code2 size={14} className="text-purple-400" />,
-  constructor: <Code2 size={14} className="text-purple-400" />,
-  class: <Blocks size={14} className="text-yellow-400" />,
-  interface: <Puzzle size={14} className="text-cyan-400" />,
-  struct: <Box size={14} className="text-yellow-400" />,
-  enum: <Layers size={14} className="text-orange-400" />,
-  "enum-member": <Hash size={14} className="text-orange-400" />,
-  variable: <Variable size={14} className="text-blue-400" />,
-  constant: <Variable size={14} className="text-blue-400" />,
-  property: <Braces size={14} className="text-green-400" />,
-  field: <Braces size={14} className="text-green-400" />,
-  "type-parameter": <LetterText size={14} className="text-teal-400" />,
+  function: <Code2 size={14} className="text-symbol-function" />,
+  method: <Code2 size={14} className="text-symbol-function" />,
+  constructor: <Code2 size={14} className="text-symbol-function" />,
+  class: <Blocks size={14} className="text-symbol-type" />,
+  interface: <Puzzle size={14} className="text-symbol-interface" />,
+  struct: <Box size={14} className="text-symbol-type" />,
+  enum: <Layers size={14} className="text-symbol-enum" />,
+  "enum-member": <Hash size={14} className="text-symbol-enum" />,
+  variable: <Variable size={14} className="text-symbol-variable" />,
+  constant: <Variable size={14} className="text-symbol-variable" />,
+  property: <Braces size={14} className="text-symbol-property" />,
+  field: <Braces size={14} className="text-symbol-property" />,
+  "type-parameter": <LetterText size={14} className="text-symbol-type-parameter" />,
 };
 
 interface SymbolListItemProps {

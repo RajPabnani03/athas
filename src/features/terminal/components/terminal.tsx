@@ -1,13 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ISearchOptions } from "@xterm/addon-search";
 import { Terminal } from "@xterm/xterm";
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { connectionStore } from "@/features/remote/services/remote-connection-store";
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type DragEvent,
+} from "react";
+import { connectionStore } from "@/features/remote/stores/remote-connection.store";
 import { parseRemotePath } from "@/features/remote/utils/remote-path";
-import { useSettingsStore } from "@/features/settings/store";
-import { useZoomStore } from "@/features/window/stores/zoom-store";
-import { useProjectStore } from "@/features/window/stores/project-store";
-import { primitiveConfirm } from "@/ui/primitive-dialog-service";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { useZoomStore } from "@/features/window/stores/zoom.store";
+import { useProjectStore } from "@/features/window/stores/project.store";
+import { extractDroppedFilePaths } from "@/features/file-system/utils/file-system-dropped-paths";
+import { showConfirmDialog } from "@/features/dialogs/services/dialog-service";
 import {
   createTerminalAddons,
   injectLinkStyles,
@@ -17,7 +25,8 @@ import {
 } from "../hooks/use-terminal-addons";
 import { useTerminalConnection } from "../hooks/use-terminal-connection";
 import { useTerminalTheme } from "../hooks/use-terminal-theme";
-import { useTerminalStore } from "../stores/terminal-store";
+import { useTerminalStore } from "../stores/terminal.store";
+import { formatDroppedPathsForTerminal } from "../utils/terminal-file-drop";
 import { resolveTerminalFont } from "../utils/resolve-font";
 import { TerminalSearch, type TerminalSearchOptions } from "./terminal-search";
 import "@xterm/xterm/css/xterm.css";
@@ -38,7 +47,7 @@ interface XtermTerminalProps {
   remoteConnectionId?: string;
 }
 
-export const XtermTerminal: React.FC<XtermTerminalProps> = ({
+export const XtermTerminal = ({
   sessionId,
   isActive,
   isVisible = true,
@@ -48,7 +57,7 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({
   initialCommand,
   workingDirectory,
   remoteConnectionId,
-}) => {
+}: XtermTerminalProps) => {
   const terminalContainerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const addonsRef = useRef<TerminalAddons | null>(null);
@@ -134,6 +143,27 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({
     updateSession,
   });
 
+  const handleTerminalFileDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      const paths = extractDroppedFilePaths(event.dataTransfer);
+      const text = formatDroppedPathsForTerminal(paths);
+      if (!text) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      writeBuffered(text);
+      requestAnimationFrame(() => xtermRef.current?.focus());
+    },
+    [writeBuffered],
+  );
+
+  const handleTerminalDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+  }, []);
+
   const initializeTerminal = useCallback(async () => {
     const container = terminalContainerRef.current;
     if (!container || isInitialized || isInitializingRef.current) return;
@@ -174,6 +204,23 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({
 
       terminal.open(terminalContainerRef.current);
       terminal.attachCustomKeyEventHandler((event) => {
+        if (
+          event.type === "keydown" &&
+          event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          !event.shiftKey &&
+          (event.key === "PageUp" || event.key === "PageDown")
+        ) {
+          event.preventDefault();
+          window.dispatchEvent(
+            new CustomEvent("terminal-switch-tab", {
+              detail: event.key === "PageDown" ? "next" : "prev",
+            }),
+          );
+          return false;
+        }
+
         if (event.ctrlKey && !event.metaKey) return true;
         if (
           event.metaKey &&
@@ -211,7 +258,7 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({
             if (requiresConfirmation) {
               event.preventDefault();
               event.stopImmediatePropagation();
-              void primitiveConfirm(
+              void showConfirmDialog(
                 `Paste ${lineCount} lines into the terminal? This may execute multiple commands.`,
                 { title: "Paste Into Terminal", confirmLabel: "Paste" },
               ).then((confirmed) => {
@@ -687,7 +734,7 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({
     xtermRef.current?.focus();
   }, [clearSearch]);
 
-  React.useImperativeHandle(
+  useImperativeHandle(
     getSession(sessionId)?.ref,
     () => ({
       terminal: xtermRef.current,
@@ -711,7 +758,7 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({
   );
 
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-primary-bg">
+    <div className="relative flex size-full min-w-0 flex-col overflow-hidden bg-primary-bg">
       <TerminalSearch
         isVisible={isSearchVisible}
         onSearch={handleSearch}
@@ -721,11 +768,15 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({
         currentMatch={searchResults.current}
         totalMatches={searchResults.total}
       />
-      <div className="flex min-h-0 flex-1 flex-col pl-[16px]">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col pl-[16px]">
         <div
           ref={terminalContainerRef}
           id={`terminal-${sessionId}`}
-          className={`xterm-container flex h-full min-h-0 flex-1 text-text ${!isActive ? "opacity-60" : ""}`}
+          data-terminal-drop-target
+          data-terminal-session-id={sessionId}
+          className={`xterm-container flex h-full min-h-0 min-w-0 flex-1 text-text ${!isActive ? "opacity-60" : ""}`}
+          onDragOver={handleTerminalDragOver}
+          onDrop={handleTerminalFileDrop}
           onMouseDown={() => {
             requestAnimationFrame(() => xtermRef.current?.focus());
           }}

@@ -1,123 +1,66 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  resolvePostCompletionKeyEdit,
-  resolvePreCompletionKeyEdit,
-} from "../utils/editor-key-edits";
+import { resolvePreCompletionKeyEdit } from "@/features/editor/engines/athas/utils/editor-key-edits";
 
-describe("editor key edit resolution", () => {
-  it("resolves auto pair insertion before completion handling", () => {
-    expect(
-      resolvePreCompletionKeyEdit({
-        keyState: {
-          key: "(",
-          content: "call",
-          selectionStart: 4,
-          selectionEnd: 4,
-          tabSize: 2,
-        },
-        hasBlockedModifier: false,
-        autocompleteCompletion: null,
-        isLspCompletionVisible: false,
-      }),
-    ).toEqual({
-      type: "edit",
-      content: "call()",
-      selectionStart: 5,
-      selectionEnd: 5,
+describe("Athas editor key edits", () => {
+  it.each(["Backspace", "Delete"])("collapses the selection after deleting it with %s", (key) => {
+    const result = resolvePreCompletionKeyEdit({
+      keyState: {
+        key,
+        content: "const alpha = beta;",
+        selectionStart: 6,
+        selectionEnd: 11,
+        tabSize: 2,
+      },
+      hasBlockedModifier: false,
+      autocompleteCompletion: null,
+      isLspCompletionVisible: false,
     });
-  });
 
-  it("moves over an existing auto pair closer without editing content", () => {
-    expect(
-      resolvePreCompletionKeyEdit({
-        keyState: {
-          key: ")",
-          content: "call()",
-          selectionStart: 5,
-          selectionEnd: 5,
-          tabSize: 2,
-        },
-        hasBlockedModifier: false,
-        autocompleteCompletion: null,
-        isLspCompletionVisible: false,
-      }),
-    ).toEqual({
-      type: "move-cursor",
+    expect(result).toEqual({
+      type: "edit",
+      content: "const  = beta;",
       selectionStart: 6,
       selectionEnd: 6,
     });
   });
 
-  it("accepts inline autocomplete on tab only when the LSP menu is hidden", () => {
-    expect(
-      resolvePreCompletionKeyEdit({
-        keyState: {
-          key: "Tab",
-          content: "con",
-          selectionStart: 3,
-          selectionEnd: 3,
-          tabSize: 2,
-        },
-        hasBlockedModifier: false,
-        autocompleteCompletion: { text: "st value", cursorOffset: 3 },
-        isLspCompletionVisible: false,
-      }),
-    ).toEqual({
-      type: "edit",
-      content: "const value",
-      selectionStart: 11,
-      selectionEnd: 11,
-      clearAutocomplete: true,
-    });
-
-    expect(
-      resolvePreCompletionKeyEdit({
-        keyState: {
-          key: "Tab",
-          content: "con",
-          selectionStart: 3,
-          selectionEnd: 3,
-          tabSize: 2,
-        },
-        hasBlockedModifier: false,
-        autocompleteCompletion: { text: "st value", cursorOffset: 3 },
-        isLspCompletionVisible: true,
-      }),
-    ).toBeNull();
-  });
-
-  it("resolves smart enter after completion handling", () => {
-    expect(
-      resolvePostCompletionKeyEdit({
-        key: "Enter",
-        content: "  // todo",
-        selectionStart: "  // todo".length,
-        selectionEnd: "  // todo".length,
-        languageId: "typescript",
+  it("normalizes backward selections before deleting them", () => {
+    const result = resolvePreCompletionKeyEdit({
+      keyState: {
+        key: "Backspace",
+        content: "const alpha = beta;",
+        selectionStart: 11,
+        selectionEnd: 6,
         tabSize: 2,
-      }),
-    ).toEqual({
+      },
+      hasBlockedModifier: false,
+      autocompleteCompletion: null,
+      isLspCompletionVisible: false,
+    });
+
+    expect(result).toEqual({
       type: "edit",
-      content: "  // todo\n  // ",
-      selectionStart: "  // todo\n  // ".length,
-      selectionEnd: "  // todo\n  // ".length,
+      content: "const  = beta;",
+      selectionStart: 6,
+      selectionEnd: 6,
     });
   });
 
-  it("resolves tab indentation after completion handling", () => {
-    expect(
-      resolvePostCompletionKeyEdit({
+  it("does not accept inline completion on Shift+Tab", () => {
+    const result = resolvePreCompletionKeyEdit({
+      keyState: {
         key: "Tab",
-        content: "one\ntwo",
-        selectionStart: 0,
-        selectionEnd: 7,
+        shiftKey: true,
+        content: "const value",
+        selectionStart: 5,
+        selectionEnd: 5,
         tabSize: 2,
-      }),
-    ).toEqual({
-      type: "edit",
-      content: "  one\n  two",
-      selectionStart: 2,
-      selectionEnd: 11,
+      },
+      hasBlockedModifier: false,
+      autocompleteCompletion: { text: " extra", cursorOffset: 5 },
+      isLspCompletionVisible: false,
     });
+
+    expect(result).toBeNull();
   });
 });

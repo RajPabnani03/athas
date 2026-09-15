@@ -1,10 +1,11 @@
-import { getProviderById } from "@/features/ai/types/providers";
+import { getProviderById } from "@/features/ai/types/providers.types";
 import { isKeybindingPreset } from "@/features/keymaps/defaults/keybinding-presets";
 import { normalizeFileTreeDensity } from "@/features/file-explorer/lib/file-tree-density";
 import {
   DEFAULT_AI_AUTOCOMPLETE_MODEL_ID,
   DEFAULT_AI_MODEL_ID,
   DEFAULT_AI_PROVIDER_ID,
+  defaultSettings,
 } from "@/features/settings/config/default-settings";
 import {
   DEFAULT_MONO_FONT_FAMILY,
@@ -19,32 +20,82 @@ import {
   normalizeItemOrder,
 } from "@/features/layout/config/item-order";
 import { normalizeUiFontSize } from "@/features/settings/lib/ui-font-size";
-import type { Settings } from "@/features/settings/types/settings";
+import type { Settings, SettingsSection } from "@/features/settings/types/settings.types";
 
 const AI_MODEL_MIGRATIONS: Record<string, Record<string, string>> = {
   anthropic: {
+    "claude-opus-4-7": "claude-opus-4-8",
+    "claude-opus-4-6": "claude-opus-4-8",
     "claude-sonnet-4-5": "claude-sonnet-4-6",
+  },
+  deepseek: {
+    "deepseek-chat": "deepseek-v4-flash",
+    "deepseek-reasoner": "deepseek-v4-pro",
   },
   gemini: {
     "gemini-3-pro-preview": "gemini-3.1-pro-preview",
     "gemini-2.5-pro": "gemini-3.1-pro-preview",
-    "gemini-2.5-flash": "gemini-3-flash-preview",
-    "gemini-2.5-flash-lite": "gemini-3-flash-preview",
-    "gemini-2.0-flash": "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite",
+    "gemini-2.5-flash": "gemini-3.5-flash",
+    "gemini-2.5-flash-lite": "gemini-3.1-flash-lite",
+    "gemini-2.0-flash": "gemini-3.5-flash",
+  },
+  grok: {
+    "grok-4.20-reasoning": "grok-4.3",
+    "grok-4.20-non-reasoning": "grok-4.3",
+    "grok-4.20-multi-agent": "grok-4.3",
+    "grok-4-1-fast-reasoning": "grok-4.3",
+    "grok-4-1-fast-non-reasoning": "grok-4.3",
+    "grok-4-fast-reasoning": "grok-4.3",
+    "grok-4-fast-non-reasoning": "grok-4.3",
+    "grok-4": "grok-4.3",
+    "grok-code-fast-1": "grok-build-0.1",
+  },
+  mistral: {
+    "mistral-large-3-25-12": "mistral-large-2512",
+    "mistral-large-2512": "mistral-large-2512",
+    "mistral-medium-3-1-25-08": "mistral-medium-2604",
+    "mistral-medium-2508": "mistral-medium-2604",
+    "mistral-medium-2505": "mistral-medium-2604",
+    "mistral-small-4-0-26-03": "mistral-small-2603",
+    "mistral-small-2506": "mistral-small-2603",
+    "codestral-25-08": "codestral-2508",
+    "devstral-2-25-12": "mistral-medium-2604",
   },
   openai: {
-    "o1-mini": "o3-mini",
+    "gpt-5.2": "gpt-5.5",
+    "gpt-5.2-pro": "gpt-5.5-pro",
+    "gpt-5.1": "gpt-5.5",
+    "gpt-5": "gpt-5.5",
+    "gpt-5-pro": "gpt-5.5-pro",
+    "gpt-5-mini": "gpt-5.4-mini",
+    "gpt-5-nano": "gpt-5.4-nano",
+    "gpt-4.1": "gpt-5.4",
+    "gpt-4.1-mini": "gpt-5.4-mini",
+    "gpt-4.1-nano": "gpt-5.4-nano",
+    "gpt-4o": "gpt-5.4",
+    "gpt-4o-mini": "gpt-5.4-mini",
+    o1: "gpt-5.4",
+    "o1-mini": "gpt-5.4-mini",
+    o3: "gpt-5.4",
+    "o3-mini": "gpt-5.4-mini",
+    "o4-mini": "gpt-5.4-mini",
   },
   openrouter: {
     "anthropic/claude-sonnet-4.5": "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-opus-4.7": "anthropic/claude-opus-4.8",
     "google/gemini-3-pro-preview": "google/gemini-3.1-pro-preview",
     "google/gemini-2.5-pro": "google/gemini-3.1-pro-preview",
-    "google/gemini-2.5-flash": "google/gemini-3-flash-preview",
+    "google/gemini-2.5-flash": "google/gemini-3.5-flash",
+    "google/gemini-2.5-flash-lite": "google/gemini-3.1-flash-lite",
+  },
+  qwen: {
+    "qwen3.6-plus": "qwen3-max",
   },
 };
 
 const AI_AUTOCOMPLETE_MODEL_MIGRATIONS: Record<string, string> = {
-  "google/gemini-2.5-flash-lite": "google/gemini-3-flash-preview",
+  "google/gemini-2.5-flash-lite": "google/gemini-3.1-flash-lite",
 };
 
 const LEGACY_TERMINAL_LINE_HEIGHT_DEFAULT = 1.2;
@@ -58,6 +109,31 @@ const RENDER_WHITESPACE_MODES = new Set<Settings["renderWhitespace"]>([
   "boundary",
   "trailing",
   "all",
+]);
+const EDITOR_ENGINES = new Set<Settings["editorEngine"]>(["monaco"]);
+const EXTERNAL_EDITOR_MODES = new Set<Settings["externalEditor"]>([
+  "none",
+  "nvim",
+  "helix",
+  "vim",
+  "custom",
+]);
+const SETTINGS_SECTIONS = new Set<SettingsSection>([
+  "account",
+  "general",
+  "editor",
+  "git",
+  "appearance",
+  "databases",
+  "extensions",
+  "ai",
+  "keyboard",
+  "features",
+  "collaboration",
+  "enterprise",
+  "advanced",
+  "terminal",
+  "file-explorer",
 ]);
 
 function normalizeEditorLineHeight(value: number): number {
@@ -94,6 +170,37 @@ function normalizeRenderWhitespace(value: unknown): Settings["renderWhitespace"]
   }
 
   return "none";
+}
+
+function normalizeEditorEngine(value: unknown): Settings["editorEngine"] {
+  if (!EDITOR_ENGINES.has(value as Settings["editorEngine"])) {
+    return "monaco";
+  }
+
+  return value as Settings["editorEngine"];
+}
+
+function normalizeExternalEditor(
+  value: unknown,
+  customEditorCommand: string | undefined,
+): Settings["externalEditor"] {
+  if (!EXTERNAL_EDITOR_MODES.has(value as Settings["externalEditor"])) {
+    return "none";
+  }
+
+  if (value === "custom" && !customEditorCommand?.trim()) {
+    return "none";
+  }
+
+  return value as Settings["externalEditor"];
+}
+
+function normalizeSettingsSection(value: unknown): SettingsSection {
+  if (typeof value === "string" && SETTINGS_SECTIONS.has(value as SettingsSection)) {
+    return value as SettingsSection;
+  }
+
+  return "general";
 }
 
 const MAX_SYNCED_AI_SKILLS = 200;
@@ -220,11 +327,22 @@ export function normalizeSettings(settings: Settings): Settings {
   const persistedGitPanelMode = (normalizedSettings as { gitLastPanelMode?: string })
     .gitLastPanelMode;
 
+  normalizedSettings.coreFeatures = {
+    ...defaultSettings.coreFeatures,
+    ...normalizedSettings.coreFeatures,
+  };
+
   if (
     persistedGitPanelMode === "none" ||
-    (persistedGitPanelMode && !["changes", "history", "worktrees"].includes(persistedGitPanelMode))
+    (persistedGitPanelMode && !["changes", "history"].includes(persistedGitPanelMode))
   ) {
     normalizedSettings.gitLastPanelMode = "changes";
+  }
+  normalizedSettings.gitSidebarTabOrder = normalizedSettings.gitSidebarTabOrder.filter(
+    (item): item is "changes" | "history" => item === "changes" || item === "history",
+  );
+  if (normalizedSettings.gitSidebarTabOrder.length === 0) {
+    normalizedSettings.gitSidebarTabOrder = ["changes", "history"];
   }
 
   normalizedSettings.uiFontSize = normalizeUiFontSize(normalizedSettings.uiFontSize);
@@ -249,10 +367,20 @@ export function normalizeSettings(settings: Settings): Settings {
   normalizedSettings.renderWhitespace = normalizeRenderWhitespace(
     (normalizedSettings as { renderWhitespace?: unknown }).renderWhitespace,
   );
+  normalizedSettings.externalEditor = normalizeExternalEditor(
+    (normalizedSettings as { externalEditor?: unknown }).externalEditor,
+    normalizedSettings.customEditorCommand,
+  );
+  normalizedSettings.editorEngine = normalizeEditorEngine(
+    (normalizedSettings as { editorEngine?: unknown }).editorEngine,
+  );
   normalizedSettings.fileTreeIndentSize = normalizeFileTreeIndentSize(
     normalizedSettings.fileTreeIndentSize,
   );
   normalizedSettings.fileTreeDensity = normalizeFileTreeDensity(normalizedSettings.fileTreeDensity);
+  normalizedSettings.lastSettingsTab = normalizeSettingsSection(
+    (normalizedSettings as { lastSettingsTab?: unknown }).lastSettingsTab,
+  );
 
   if (!isKeybindingPreset(normalizedSettings.keybindingPreset)) {
     normalizedSettings.keybindingPreset = "none";
@@ -262,7 +390,7 @@ export function normalizeSettings(settings: Settings): Settings {
     normalizedSettings.iconTheme === "colorful-material" ||
     normalizedSettings.iconTheme === "seti"
   ) {
-    normalizedSettings.iconTheme = "material";
+    normalizedSettings.iconTheme = "symbols";
   }
 
   normalizedSettings.headerTrailingItemsOrder = normalizeItemOrder(
@@ -317,6 +445,10 @@ export function normalizeSettingValue<K extends keyof Settings>(
     return normalizeRenderWhitespace(value) as Settings[K];
   }
 
+  if (key === "editorEngine") {
+    return normalizeEditorEngine(value) as Settings[K];
+  }
+
   if (key === "fileTreeIndentSize") {
     return normalizeFileTreeIndentSize(value as number) as Settings[K];
   }
@@ -325,8 +457,12 @@ export function normalizeSettingValue<K extends keyof Settings>(
     return normalizeFileTreeDensity(value as string) as Settings[K];
   }
 
+  if (key === "lastSettingsTab") {
+    return normalizeSettingsSection(value) as Settings[K];
+  }
+
   if (key === "iconTheme" && (value === "colorful-material" || value === "seti")) {
-    return "material" as Settings[K];
+    return "symbols" as Settings[K];
   }
 
   if (key === "keybindingPreset" && !isKeybindingPreset(value as string)) {

@@ -12,37 +12,35 @@ import {
 import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  ArrowLeft,
-  ArrowRight,
-  ArrowsOut as Maximize2,
-  ArrowsIn as Minimize2,
-  Lock,
-  LockOpen,
-  SidebarSimple as PanelLeftClose,
-  SplitHorizontal as SplitSquareHorizontal,
+  ArrowLeftIcon as ArrowLeft,
+  ArrowRightIcon as ArrowRight,
+  ArrowsOutIcon as Maximize2,
+  ArrowsInIcon as Minimize2,
+  PlusIcon as Plus,
+  SidebarSimpleIcon as PanelLeftClose,
 } from "@phosphor-icons/react";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
-import { useJumpListStore } from "@/features/editor/stores/jump-list-store";
-import { useEditorStateStore } from "@/features/editor/stores/state-store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { useJumpListStore } from "@/features/editor/stores/jump-list.store";
+import { useEditorStateStore } from "@/features/editor/stores/state.store";
 import { navigateToJumpEntry } from "@/features/editor/utils/jump-navigation";
-import { useFileSystemStore } from "@/features/file-system/controllers/store";
+import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
 import { formatDiffBufferLabel } from "@/features/git/utils/diff-buffer-label";
+import { writeClipboardText } from "@/utils/clipboard";
 import { BOTTOM_PANE_ID } from "@/features/panes/constants/pane";
-import { usePaneStore } from "@/features/panes/stores/pane-store";
+import { usePaneStore } from "@/features/panes/stores/pane.store";
 import { activateBufferInPaneAndSync } from "@/features/panes/utils/pane-activation";
 import { splitEditorGroup } from "@/features/panes/utils/pane-command-actions";
 import { moveBufferToPaneDropTarget } from "@/features/panes/utils/pane-drop-actions";
 import { findPaneGroup } from "@/features/panes/utils/pane-tree";
-import { useSettingsStore } from "@/features/settings/store";
-import type { PaneContent } from "@/features/panes/types/pane-content";
-import { useEditorAppStore } from "@/features/editor/stores/editor-app-store";
-import { useSidebarStore } from "@/features/layout/stores/sidebar-store";
-import { useTerminalStore } from "@/features/terminal/stores/terminal-store";
-import { useWebViewerNavigationStore } from "@/features/web-viewer/stores/web-viewer-navigation-store";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import type { PaneContent } from "@/features/panes/types/pane-content.types";
+import { useEditorAppStore } from "@/features/editor/stores/editor-app.store";
+import { useSidebarStore } from "@/features/layout/stores/sidebar.store";
+import { useTerminalStore } from "@/features/terminal/stores/terminal.store";
+import { useWebViewerNavigationStore } from "@/features/web-viewer/stores/web-viewer-navigation.store";
 import UnsavedChangesDialog from "@/features/window/components/unsaved-changes-dialog";
-import { useUIState } from "@/features/window/stores/ui-state-store";
+import { useUIState } from "@/features/window/stores/ui-state.store";
 import { Button } from "@/ui/button";
 import { getRelativePath } from "@/utils/path-helpers";
 import { calculateDisplayNames } from "../utils/path-shortener";
@@ -52,21 +50,18 @@ import {
   setInternalTabDragHover,
   setInternalTabDragData,
 } from "../utils/internal-tab-drag";
-import { NewTabMenu } from "./new-tab-menu";
 import TabBarItem from "./tab-bar-item";
 import TabContextMenu from "./tab-context-menu";
 
 interface TabBarProps {
   paneId?: string;
   onTabClick?: (bufferId: string) => void;
-  onNewTabClose?: () => void;
   disablePaneActions?: boolean;
 }
 
 const TabBar = ({
   paneId,
   onTabClick: externalTabClick,
-  onNewTabClose,
   disablePaneActions = false,
 }: TabBarProps) => {
   // Get everything from stores
@@ -76,7 +71,8 @@ const TabBar = ({
   const paneRoot = usePaneStore.use.root();
   const bottomRoot = usePaneStore.use.bottomRoot();
   const fullscreenPaneId = usePaneStore.use.fullscreenPaneId();
-  const { closePane, togglePaneFullscreen, setPaneLocked } = usePaneStore.use.actions();
+  const { closePane, setActivePane, togglePaneFullscreen, setPaneLocked } =
+    usePaneStore.use.actions();
 
   // Filter buffers by paneId if provided
   const pane = paneId
@@ -84,8 +80,14 @@ const TabBar = ({
       ? findPaneGroup(bottomRoot, BOTTOM_PANE_ID)
       : findPaneGroup(paneRoot, paneId)
     : null;
-  const buffers = pane ? allBuffers.filter((b) => pane.bufferIds.includes(b.id)) : allBuffers;
-  const activeBufferId = pane ? pane.activeBufferId : globalActiveBufferId;
+  const buffers = (
+    pane ? allBuffers.filter((b) => pane.bufferIds.includes(b.id)) : allBuffers
+  ).filter((buffer) => buffer.type !== "newTab");
+  const activeBufferCandidate = pane ? pane.activeBufferId : globalActiveBufferId;
+  const activeBufferId =
+    activeBufferCandidate && buffers.some((buffer) => buffer.id === activeBufferCandidate)
+      ? activeBufferCandidate
+      : null;
   const {
     handleTabClick,
     handleTabClose,
@@ -97,6 +99,7 @@ const TabBar = ({
     confirmCloseWithoutSaving,
     cancelPendingClose,
     convertPreviewToDefinite,
+    showNewTabView,
   } = useBufferStore.use.actions();
   const { handleSave } = useEditorAppStore.use.actions();
   const { settings } = useSettingsStore();
@@ -219,10 +222,11 @@ const TabBar = ({
     }
   }, [activeWebViewerNavigation, jumpListActions, usesWebViewerNavigation]);
 
-  const handleSplitActivePane = useCallback(() => {
+  const handleShowNewTab = useCallback(() => {
     if (!paneId) return;
-    splitEditorGroup(paneId, "horizontal", activeBufferId);
-  }, [activeBufferId, paneId]);
+    setActivePane(paneId);
+    showNewTabView();
+  }, [paneId, setActivePane, showNewTabView]);
 
   const handleTogglePaneFullscreen = useCallback(() => {
     if (!paneId) return;
@@ -387,24 +391,21 @@ const TabBar = ({
     });
   }, []);
 
-  const handleCopyPath = useCallback(
-    async (path: string) => {
-      await writeText(path);
-    },
-    [writeText],
-  );
+  const handleCopyPath = useCallback(async (path: string) => {
+    await writeClipboardText(path);
+  }, []);
 
   const handleCopyRelativePath = useCallback(
     async (path: string) => {
       if (!rootFolderPath) {
         // If no project is open, copy the full path
-        await writeText(path);
+        await writeClipboardText(path);
         return;
       }
 
-      await writeText(getRelativePath(path, rootFolderPath));
+      await writeClipboardText(getRelativePath(path, rootFolderPath));
     },
-    [rootFolderPath, writeText],
+    [rootFolderPath],
   );
 
   const closeContextMenu = () => {
@@ -434,14 +435,10 @@ const TabBar = ({
 
   const closeTab = useCallback(
     (bufferId: string) => {
-      const buffer = buffers.find((item) => item.id === bufferId);
-      if (buffer?.type === "newTab") {
-        onNewTabClose?.();
-      }
       handleTabClose(bufferId);
       clearPositionCache(bufferId);
     },
-    [buffers, clearPositionCache, handleTabClose, onNewTabClose],
+    [clearPositionCache, handleTabClose],
   );
 
   const handleTabSelect = useCallback(
@@ -751,6 +748,20 @@ const TabBar = ({
           </SortableContext>
 
           <div className="flex shrink-0 items-center gap-1 pl-0.5">
+            {paneId && !isBottomPane && (
+              <Button
+                type="button"
+                onClick={handleShowNewTab}
+                variant="ghost"
+                compact
+                className="h-5 min-w-5 shrink-0 rounded-md px-1 text-text-lighter"
+                tooltip="New Tab"
+                tooltipSide="bottom"
+                aria-label="New tab"
+              >
+                <Plus weight="bold" />
+              </Button>
+            )}
             {paneId && !disablePaneActions && !isBottomPane && isInSplit && (
               <Button
                 type="button"
@@ -763,38 +774,6 @@ const TabBar = ({
                 aria-label="Close split pane"
               >
                 <PanelLeftClose />
-              </Button>
-            )}
-            {paneId && !disablePaneActions && !isBottomPane && activeBufferId && (
-              <Button
-                type="button"
-                onClick={handleSplitActivePane}
-                variant="ghost"
-                className="h-5 min-w-5 shrink-0 rounded-md px-1 text-text-lighter"
-                tooltip="Split Editor"
-                tooltipSide="bottom"
-                aria-label="Split editor"
-                compact
-              >
-                <SplitSquareHorizontal />
-              </Button>
-            )}
-            {paneId && !disablePaneActions && !isBottomPane && (
-              <Button
-                type="button"
-                onClick={handleTogglePaneLocked}
-                variant="ghost"
-                className={
-                  isPaneLocked
-                    ? "h-5 min-w-5 shrink-0 rounded-md px-1 text-accent"
-                    : "h-5 min-w-5 shrink-0 rounded-md px-1 text-text-lighter"
-                }
-                tooltip={isPaneLocked ? "Unlock Editor Group" : "Lock Editor Group"}
-                tooltipSide="bottom"
-                aria-label={isPaneLocked ? "Unlock editor group" : "Lock editor group"}
-                compact
-              >
-                {isPaneLocked ? <Lock /> : <LockOpen />}
               </Button>
             )}
             {paneId && !disablePaneActions && !isBottomPane && (
@@ -811,15 +790,12 @@ const TabBar = ({
                 {isPaneFullscreen ? <Minimize2 /> : <Maximize2 />}
               </Button>
             )}
-            <div className="flex shrink-0 items-center">
-              <NewTabMenu />
-            </div>
           </div>
         </div>
 
         <DragOverlay dropAnimation={null}>
           {draggedBuffer ? (
-            <div className="tab-drag-preview ui-font flex items-center gap-1.5 rounded-lg border border-border/70 bg-primary-bg/95 px-2 py-1 ui-text-xs opacity-95 shadow-sm">
+            <div className="tab-drag-preview ui-font flex items-center gap-1.5 rounded-lg border border-border/70 bg-primary-bg/95 px-2 py-1 ui-text-xs opacity-95">
               <span className="max-w-[200px] truncate text-text">{draggedBuffer.name}</span>
             </div>
           ) : null}
@@ -842,6 +818,10 @@ const TabBar = ({
         onCloseOthers={handleCloseOtherTabs}
         onCloseAll={handleCloseAllTabs}
         onCloseToRight={handleCloseTabsToRight}
+        isPaneLocked={isPaneLocked}
+        onTogglePaneLocked={
+          paneId && !disablePaneActions && !isBottomPane ? handleTogglePaneLocked : undefined
+        }
         onCopyPath={handleCopyPath}
         onCopyRelativePath={handleCopyRelativePath}
         onReload={(bufferId: string) => {

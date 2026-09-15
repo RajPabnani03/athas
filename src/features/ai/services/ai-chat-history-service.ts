@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentType, Chat, Message, ToolCall } from "@/features/ai/types/ai-chat";
+import type { AgentType, Chat, Message, ToolCall } from "@/features/ai/types/ai-chat.types";
 
 /**
  * Chat History Database Utilities
@@ -199,7 +199,9 @@ export const loadChatFromDb = async (chatId: string): Promise<Chat> => {
     const data = (await invoke("load_chat", { chatId })) as ChatWithMessages;
     return dataToChat(data);
   } catch (error) {
-    console.error(`Error loading chat ${chatId} from database:`, error);
+    if (!String(error).includes("Query returned no rows")) {
+      console.error(`Error loading chat ${chatId} from database:`, error);
+    }
     throw error;
   }
 };

@@ -35,7 +35,14 @@ const LANGUAGE_INJECTIONS: Record<string, InjectionRule[]> = {
     { parentType: "*", contentType: "attribute_js_expr", language: "typescript" },
     { parentType: "*", contentType: "permissible_text", language: "typescript" },
   ],
-  markdown: [{ parentType: "*", contentType: "html_block", language: "html" }],
+  markdown: [
+    { parentType: "*", contentType: "html_block", language: "html" },
+    { parentType: "fenced_code_block", contentType: "code_fence_content", language: "text" },
+  ],
+  rmarkdown: [
+    { parentType: "*", contentType: "html_block", language: "html" },
+    { parentType: "fenced_code_block", contentType: "code_fence_content", language: "r" },
+  ],
 };
 
 export function getInjectionRules(languageId: string): InjectionRule[] | undefined {
@@ -78,6 +85,42 @@ export function resolveInjectedLanguage(
   node: Node,
   parentNode: Node | null,
 ): string {
+  if (rule.parentType === "fenced_code_block" && parentNode) {
+    const openingFence = source.slice(parentNode.startIndex, node.startIndex);
+    const info =
+      openingFence
+        .match(/```+\s*([^\n\r`]*)/)?.[1]
+        ?.trim()
+        .toLowerCase() ?? "";
+    const chunkLanguage = info.match(/^\{\s*([a-z0-9_-]+)/)?.[1] ?? info.split(/\s+/)[0] ?? "";
+
+    if (chunkLanguage === "r" || chunkLanguage === "rscript") {
+      return "r";
+    }
+
+    if (chunkLanguage === "python" || chunkLanguage === "py") {
+      return "python";
+    }
+
+    if (chunkLanguage === "sql") {
+      return "sql";
+    }
+
+    if (chunkLanguage === "bash" || chunkLanguage === "sh") {
+      return "bash";
+    }
+
+    if (chunkLanguage === "javascript" || chunkLanguage === "js") {
+      return "javascript";
+    }
+
+    if (chunkLanguage === "typescript" || chunkLanguage === "ts") {
+      return "typescript";
+    }
+
+    return rule.language;
+  }
+
   if (rule.parentType !== "script_element" || !parentNode) {
     return rule.language;
   }

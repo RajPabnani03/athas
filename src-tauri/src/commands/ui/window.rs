@@ -18,6 +18,8 @@ use window_vibrancy::{NSVisualEffectMaterial, apply_vibrancy, clear_vibrancy};
 
 #[cfg(target_os = "macos")]
 const ATHAS_WINDOW_MATERIAL: NSVisualEffectMaterial = NSVisualEffectMaterial::Menu;
+#[cfg(target_os = "macos")]
+const EMBEDDED_WEBVIEW_CORNER_RADIUS: f64 = 7.0;
 
 // Counter for generating unique web viewer labels
 static WEB_VIEWER_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -158,10 +160,14 @@ pub fn configure_app_window(window: &tauri::WebviewWindow<AthasRuntime>) {
    #[cfg(target_os = "macos")]
    {
       let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
-
       if let Err(error) = apply_vibrancy(window, ATHAS_WINDOW_MATERIAL, None, None) {
          log::warn!("Failed to initialize macOS window vibrancy: {error}");
       }
+   }
+
+   #[cfg(not(target_os = "macos"))]
+   {
+      let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 255)));
    }
 
    #[cfg(target_os = "windows")]
@@ -203,9 +209,41 @@ fn set_ns_appearance(target: *mut std::ffi::c_void, appearance_name: &str) -> Re
 }
 
 #[cfg(target_os = "macos")]
+fn apply_embedded_webview_corner_radius(
+   webview: &tauri::Webview<AthasRuntime>,
+) -> Result<(), String> {
+   webview
+      .with_webview(|platform_webview| unsafe {
+         use objc::{
+            msg_send,
+            runtime::{BOOL, Object, YES},
+            sel, sel_impl,
+         };
+
+         let view = platform_webview.inner().cast::<Object>();
+         if view.is_null() {
+            return;
+         }
+
+         let _: () = msg_send![view, setWantsLayer: YES];
+         let layer: *mut Object = msg_send![view, layer];
+         if layer.is_null() {
+            return;
+         }
+
+         let _: () = msg_send![layer, setCornerRadius: EMBEDDED_WEBVIEW_CORNER_RADIUS];
+         let _: () = msg_send![layer, setMasksToBounds: YES];
+         let _: () = msg_send![layer, setAllowsEdgeAntialiasing: YES as BOOL];
+         let _: () = msg_send![layer, setEdgeAntialiasingMask: 15usize];
+      })
+      .map_err(|e| format!("Failed to apply embedded webview corner radius: {e}"))
+}
+
+#[cfg(target_os = "macos")]
 fn sync_macos_window_appearance(
    window: &tauri::WebviewWindow<AthasRuntime>,
    theme_type: &str,
+   transparency_enabled: bool,
 ) -> Result<(), String> {
    let appearance_name = match theme_type {
       "light" => "NSAppearanceNameAqua",
@@ -223,9 +261,14 @@ fn sync_macos_window_appearance(
       .map_err(|e| format!("Failed to access macOS webview: {e}"))?;
    set_ns_appearance(ns_view, appearance_name)?;
 
-   if let Ok(true) = clear_vibrancy(window) {
+   if transparency_enabled {
+      let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
+      let _ = clear_vibrancy(window);
       apply_vibrancy(window, ATHAS_WINDOW_MATERIAL, None, None)
          .map_err(|e| format!("Failed to refresh macOS vibrancy: {e}"))?;
+   } else {
+      let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 255)));
+      let _ = clear_vibrancy(window);
    }
 
    Ok(())
@@ -240,16 +283,46 @@ pub fn uses_native_window_chrome() -> bool {
 pub fn set_macos_window_appearance(
    window: tauri::WebviewWindow<AthasRuntime>,
    theme_type: String,
+   transparency_enabled: Option<bool>,
 ) -> Result<(), String> {
    #[cfg(target_os = "macos")]
    {
-      sync_macos_window_appearance(&window, &theme_type)?;
+      sync_macos_window_appearance(&window, &theme_type, transparency_enabled.unwrap_or(true))?;
    }
 
    #[cfg(not(target_os = "macos"))]
    {
       let _ = window;
       let _ = theme_type;
+      let _ = transparency_enabled;
+   }
+
+   Ok(())
+}
+
+#[command]
+pub fn set_window_transparency_enabled(
+   window: tauri::WebviewWindow<AthasRuntime>,
+   enabled: bool,
+) -> Result<(), String> {
+   #[cfg(target_os = "macos")]
+   {
+      if enabled {
+         let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
+         let _ = clear_vibrancy(&window);
+         if let Err(error) = apply_vibrancy(&window, ATHAS_WINDOW_MATERIAL, None, None) {
+            log::warn!("Failed to apply macOS window vibrancy: {error}");
+         }
+      } else {
+         let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 255)));
+         let _ = clear_vibrancy(&window);
+      }
+   }
+
+   #[cfg(not(target_os = "macos"))]
+   {
+      let _ = window;
+      let _ = enabled;
    }
 
    Ok(())
@@ -268,6 +341,7 @@ fn create_labeled_app_window_internal(
       .min_inner_size(400.0, 400.0)
       .center()
       .decorations(true)
+      .transparent(cfg!(target_os = "macos"))
       .resizable(true)
       .shadow(true);
 
@@ -280,8 +354,7 @@ fn create_labeled_app_window_internal(
    #[cfg(target_os = "macos")]
    let builder = builder
       .hidden_title(true)
-      .title_bar_style(TitleBarStyle::Overlay)
-      .transparent(true);
+      .title_bar_style(TitleBarStyle::Overlay);
 
    let window = builder
       .build()
@@ -586,6 +659,9 @@ pub async fn create_embedded_webview(
       .set_auto_resize(false)
       .map_err(|e| format!("Failed to set auto resize: {e}"))?;
 
+   #[cfg(target_os = "macos")]
+   apply_embedded_webview_corner_radius(&webview)?;
+
    if let Ok(mut labels) = EMBEDDED_WEBVIEW_LABELS.lock() {
       labels.insert(webview_label.clone());
    }
@@ -719,6 +795,9 @@ pub async fn set_webview_visible(
          webview
             .hide()
             .map_err(|e| format!("Failed to hide webview: {e}"))?;
+         if let Some(main_webview) = app.get_webview_window("main") {
+            let _ = main_webview.set_focus();
+         }
       }
    } else {
       return Err(format!("Webview not found: {webview_label}"));

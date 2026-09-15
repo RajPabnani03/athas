@@ -1,29 +1,30 @@
 import {
-  WarningCircle as AlertCircle,
-  CaretRight as ChevronRight,
-  Cloud,
-  Code as Code2,
-  GitBranch,
-  Hash,
-  Info,
-  ListBullets,
-  Translate as Languages,
-  Lightbulb,
-  ChatCircleText as MessageSquare,
-  Palette,
-  FloppyDisk as Save,
-  MagnifyingGlass as Search,
-  GearSix as Settings,
-  Sparkle as Sparkles,
-  TerminalWindow as Terminal,
-  TextAlignJustify as WrapText,
+  WarningCircleIcon as AlertCircle,
+  CaretRightIcon as ChevronRight,
+  CloudIcon as Cloud,
+  CodeIcon as Code2,
+  GitBranchIcon as GitBranch,
+  HashIcon as Hash,
+  InfoIcon as Info,
+  ListBulletsIcon as ListBullets,
+  TranslateIcon as Languages,
+  LightbulbIcon as Lightbulb,
+  ChatCircleTextIcon as MessageSquare,
+  PaletteIcon as Palette,
+  FloppyDiskIcon as Save,
+  MagnifyingGlassIcon as Search,
+  GearSixIcon as Settings,
+  SparkleIcon as Sparkles,
+  TerminalWindowIcon as Terminal,
+  TextAlignJustifyIcon as WrapText,
 } from "@phosphor-icons/react";
 import { settingsSearchIndex } from "@/features/settings/config/search-index";
-import type { Settings as AppSettings } from "@/features/settings/store";
-import type { SettingsTab } from "@/features/window/stores/ui-state-store";
+import type { Settings as AppSettings } from "@/features/settings/stores/settings.store";
+import type { SettingsTab } from "@/features/window/stores/ui-state.store";
+import { writeClipboardText } from "@/utils/clipboard";
 import { scoreSearchQuery } from "@/utils/search-match";
-import type { Action } from "../models/action.types";
-import type { CommandPaletteViewId } from "../models/view.types";
+import type { Action } from "../types/action.types";
+import type { CommandPaletteViewId } from "../types/view.types";
 
 interface SettingsActionsParams {
   query: string;
@@ -68,6 +69,7 @@ function getMatchingSettingsRecords(query: string) {
   if (trimmedQuery.length < 2) return [];
 
   return settingsSearchIndex
+    .filter((record) => record.id !== "editor-vim-mode")
     .map((record) => {
       const score = scoreSearchQuery(trimmedQuery, [
         { value: record.label, weight: 11 },
@@ -165,12 +167,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
 
           const text = `Environment\n\n- App: Athas ${version}\n- OS: ${osSummary}\n\nProblem\n\nDescribe the issue here. Steps to reproduce, expected vs actual.\n`;
 
-          try {
-            const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
-            await writeText(text);
-          } catch {
-            await navigator.clipboard.writeText(text);
-          }
+          await writeClipboardText(text);
 
           const { openUrl } = await import("@tauri-apps/plugin-opener");
           await openUrl("https://github.com/athasdev/athas/issues/new?template=01-bug.yml");
@@ -239,8 +236,8 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
     },
     {
       id: "toggle-vim-mode",
-      label: settings.vimMode ? "Vim: Disable Vim Mode" : "Vim: Enable Vim keybindings",
-      description: settings.vimMode ? "Switch to normal editing mode" : "Enable Vim keybindings",
+      label: "Vim Mode: Toggle",
+      description: settings.vimMode ? "Currently enabled" : "Currently disabled",
       icon: <Terminal />,
       category: "Vim",
       action: () => {
@@ -285,7 +282,11 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       icon: <Hash />,
       category: "Editor",
       action: () => {
-        updateSetting("vimRelativeLineNumbers", !settings.vimRelativeLineNumbers);
+        const nextEnabled = !settings.vimRelativeLineNumbers;
+        if (nextEnabled && !settings.lineNumbers) {
+          updateSetting("lineNumbers", true);
+        }
+        updateSetting("vimRelativeLineNumbers", nextEnabled);
         onClose();
       },
     },
@@ -533,24 +534,6 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
         updateSetting("coreFeatures", {
           ...settings.coreFeatures,
           aiChat: !settings.coreFeatures.aiChat,
-        });
-        onClose();
-      },
-    },
-    {
-      id: "toggle-multi-agents-feature",
-      label: settings.coreFeatures.multiAgents
-        ? "Features: Disable Multi Agents"
-        : "Features: Enable Multi Agents",
-      description: settings.coreFeatures.multiAgents
-        ? "Disable multi-agent sidebar"
-        : "Enable multi-agent sidebar",
-      icon: <Sparkles />,
-      category: "Features",
-      action: () => {
-        updateSetting("coreFeatures", {
-          ...settings.coreFeatures,
-          multiAgents: !settings.coreFeatures.multiAgents,
         });
         onClose();
       },

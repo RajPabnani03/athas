@@ -1,8 +1,7 @@
-import { CaretLeft, Palette } from "@phosphor-icons/react";
+import { CaretLeftIcon as CaretLeft, PaletteIcon as Palette } from "@phosphor-icons/react";
 import type React from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { iconThemeRegistry } from "@/extensions/icon-themes/icon-theme-registry";
-import type { IconThemeDefinition } from "@/extensions/icon-themes/types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRegisteredIconThemes } from "@/extensions/icon-themes/use-registered-icon-themes";
 import { Button } from "@/ui/button";
 import { CommandEmpty, CommandHeader, CommandInput, CommandItem, CommandList } from "@/ui/command";
 import Badge from "@/ui/badge";
@@ -34,33 +33,22 @@ export const IconThemeSelectorContent = ({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [initialTheme, setInitialTheme] = useState(currentTheme);
   const [previewTheme, setPreviewTheme] = useState<string | null>(null);
-  const [themes, setThemes] = useState<IconThemeInfo[]>([]);
+  const registeredThemes = useRegisteredIconThemes();
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const activeThemeSnapshotRef = useRef<string | undefined>(undefined);
   const didCommitRef = useRef(false);
 
-  // Load icon themes from icon theme registry
-  useEffect(() => {
-    const loadThemes = () => {
-      const registryThemes = iconThemeRegistry.getAllThemes();
-      const themeInfos: IconThemeInfo[] = registryThemes.map(
-        (theme: IconThemeDefinition): IconThemeInfo => ({
-          id: theme.id,
-          name: theme.name,
-          description: theme.description,
-          icon: <Palette />,
-        }),
-      );
-      setThemes(themeInfos);
-    };
-
-    loadThemes();
-
-    // Listen for icon theme registry changes
-    const unsubscribe = iconThemeRegistry.onRegistryChange(loadThemes);
-    return unsubscribe;
-  }, []);
+  const themes = useMemo<IconThemeInfo[]>(
+    () =>
+      registeredThemes.map((theme) => ({
+        id: theme.id,
+        name: theme.name,
+        description: theme.description,
+        icon: <Palette />,
+      })),
+    [registeredThemes],
+  );
 
   // Filter themes based on query
   const filteredThemes = themes.filter(
@@ -101,7 +89,7 @@ export const IconThemeSelectorContent = ({
   }, [onThemeChange]);
 
   const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (!filteredThemes.length) return;
 
       let nextIndex = selectedIndex;
@@ -111,6 +99,12 @@ export const IconThemeSelectorContent = ({
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         nextIndex = (selectedIndex - 1 + filteredThemes.length) % filteredThemes.length;
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        nextIndex = 0;
+      } else if (e.key === "End") {
+        e.preventDefault();
+        nextIndex = filteredThemes.length - 1;
       } else if (e.key === "Enter") {
         e.preventDefault();
         didCommitRef.current = true;
@@ -138,14 +132,6 @@ export const IconThemeSelectorContent = ({
     },
     [selectedIndex, filteredThemes, onThemeChange, onClose, initialTheme],
   );
-
-  // Reset state when visibility changes
-  useEffect(() => {
-    if (isActive) {
-      document.addEventListener("keydown", handleKeyDown);
-      return () => document.removeEventListener("keydown", handleKeyDown);
-    }
-  }, [isActive, handleKeyDown]);
 
   // Update selected index when query changes
   useEffect(() => {
@@ -192,6 +178,7 @@ export const IconThemeSelectorContent = ({
             ref={inputRef}
             value={query}
             onChange={setQuery}
+            onKeyDown={handleKeyDown}
             placeholder="Search icon themes..."
             className="flex-1"
           />

@@ -1,22 +1,28 @@
 import {
-  ArrowLeft,
-  Database,
-  FilePlus,
-  FolderOpen,
-  MagnifyingGlass,
-  PlugsConnected,
-  Plus,
-  Trash,
+  ArrowLeftIcon as ArrowLeft,
+  DatabaseIcon as Database,
+  FilePlusIcon as FilePlus,
+  FolderOpenIcon as FolderOpen,
+  MagnifyingGlassIcon as MagnifyingGlass,
+  PlugsConnectedIcon as PlugsConnected,
+  PlusIcon as Plus,
+  TrashIcon as Trash,
 } from "@phosphor-icons/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
-import { useFileSystemStore } from "@/features/file-system/controllers/store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
 import { extractDroppedFilePaths } from "@/features/file-system/utils/file-system-dropped-paths";
-import { useUIState } from "@/features/window/stores/ui-state-store";
+import { useUIState } from "@/features/window/stores/ui-state.store";
 import { Button } from "@/ui/button";
 import Checkbox from "@/ui/checkbox";
-import { CommandFooter, CommandInput, CommandItem, CommandList } from "@/ui/command";
+import {
+  CommandFooter,
+  CommandFooterAction,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/ui/command";
 import Input from "@/ui/input";
 import { LoadingIndicator } from "@/ui/loading";
 import {
@@ -24,13 +30,13 @@ import {
   SidebarEmptyState,
   SidebarHeader,
   SidebarHeaderIconButton,
-  SidebarHeaderSearch,
+  SidebarSearchFilterRow,
 } from "@/ui/sidebar";
 import { cn } from "@/utils/cn";
 import { normalizeDatabaseError } from "../lib/database-errors";
-import type { DatabaseType } from "../models/provider.types";
+import type { DatabaseType } from "../types/provider.types";
 import { PROVIDER_REGISTRY } from "../providers/provider-registry";
-import { type SavedConnection, useConnectionStore } from "../stores/connection-store";
+import { type SavedConnection, useConnectionStore } from "../stores/connection.store";
 import {
   DATABASE_SIDEBAR_FILES_DROPPED_EVENT,
   getDatabaseTypeForFilePath,
@@ -404,16 +410,25 @@ export function DatabaseSidebar() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
     >
-      <SidebarHeader>
-        {mode === "list" ? (
-          <SidebarHeaderSearch
-            value={query}
-            onChange={setQuery}
-            leftIcon={MagnifyingGlass}
-            placeholder="Search"
-            aria-label="Search databases"
-          />
-        ) : (
+      {mode === "list" ? (
+        <SidebarSearchFilterRow
+          value={query}
+          onChange={setQuery}
+          searchIcon={MagnifyingGlass}
+          placeholder="Search"
+          searchAriaLabel="Search databases"
+          actions={
+            <SidebarHeaderIconButton
+              tooltip="Add Database"
+              tooltipSide="bottom"
+              onClick={showProviderStep}
+            >
+              <Plus />
+            </SidebarHeaderIconButton>
+          }
+        />
+      ) : (
+        <SidebarHeader>
           <Button
             type="button"
             variant="ghost"
@@ -424,15 +439,15 @@ export function DatabaseSidebar() {
             <ArrowLeft />
             <span className="ui-font truncate ui-text-xs">Databases</span>
           </Button>
-        )}
-        <SidebarHeaderIconButton
-          tooltip="Add Database"
-          tooltipSide="bottom"
-          onClick={showProviderStep}
-        >
-          <Plus />
-        </SidebarHeaderIconButton>
-      </SidebarHeader>
+          <SidebarHeaderIconButton
+            tooltip="Add Database"
+            tooltipSide="bottom"
+            onClick={showProviderStep}
+          >
+            <Plus />
+          </SidebarHeaderIconButton>
+        </SidebarHeader>
+      )}
 
       <div className="custom-scrollbar-thin min-h-0 flex-1 overflow-y-auto p-1">
         {mode === "choose-provider" ? (
@@ -613,17 +628,16 @@ export function DatabaseSidebar() {
 
       {mode === "network-provider" ? (
         <CommandFooter>
-          <Button
+          <CommandFooterAction
             type="button"
             variant="default"
-            compact
-            className="w-full gap-1.5"
+            className="w-full justify-center gap-1.5"
             disabled={busyConnectionId !== null}
             onClick={() => void saveNetworkConnection()}
           >
             <FilePlus />
             Add Database
-          </Button>
+          </CommandFooterAction>
         </CommandFooter>
       ) : null}
 

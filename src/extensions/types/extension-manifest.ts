@@ -12,7 +12,18 @@ export type PlatformArch =
   | "linux-arm64"
   | "win32-x64";
 
-export type ToolRuntime = "bun" | "node" | "python" | "go" | "rust" | "binary";
+export type ToolRuntime =
+  | "bun"
+  | "node"
+  | "python"
+  | "go"
+  | "rust"
+  | "ruby"
+  | "r"
+  // Uses a system executable from PATH or known toolchain locations.
+  | "system"
+  // Uses a system executable when present, otherwise an Athas-managed binary.
+  | "binary";
 export type ExtensionKind = "ui" | "workspace" | "web";
 
 export interface ExtensionManifest {
@@ -38,6 +49,7 @@ export interface ExtensionManifest {
   languages?: LanguageContribution[];
 
   // Database provider sidecars
+  databases?: DatabaseProviderContribution[];
   databaseProviders?: DatabaseProviderContribution[];
 
   // ACP agent contributions
@@ -47,6 +59,7 @@ export interface ExtensionManifest {
   themes?: ThemeContribution[];
 
   // File icon theme contributions
+  icons?: IconThemeContribution[];
   iconThemes?: IconThemeContribution[];
 
   // LSP configuration
@@ -446,11 +459,13 @@ export interface PlatformPackage {
 
 export interface UIContributions {
   languages?: LanguageContribution[];
+  databases?: DatabaseProviderContribution[];
   databaseProviders?: DatabaseProviderContribution[];
   agents?: AgentContribution[];
   grammars?: GrammarConfiguration[];
   snippets?: SnippetContribution[];
   themes?: ThemeContribution[];
+  icons?: IconThemeContribution[];
   iconThemes?: IconThemeContribution[];
   keybindings?: KeybindingContribution[];
   commands?: CommandContribution[];

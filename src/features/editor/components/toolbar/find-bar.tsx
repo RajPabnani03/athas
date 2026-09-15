@@ -1,11 +1,11 @@
 import type React from "react";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
-import { useEditorStateStore } from "@/features/editor/stores/state-store";
-import { useEditorUIStore } from "@/features/editor/stores/ui-store";
-import { hasTextContent } from "@/features/panes/types/pane-content";
-import { useUIState } from "@/features/window/stores/ui-state-store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { useEditorStateStore } from "@/features/editor/stores/state.store";
+import { useEditorUIStore } from "@/features/editor/stores/ui.store";
+import { hasTextContent } from "@/features/panes/types/pane-content.types";
+import { useUIState } from "@/features/window/stores/ui-state.store";
 import {
   SEARCH_TOGGLE_ICONS,
   SearchPopover,
@@ -51,22 +51,14 @@ const FindBar = () => {
   } = useEditorUIStore.use.actions();
 
   const isVisible = isFindVisible;
-  const onClose = () => {
+  const onClose = useCallback(() => {
     setIsFindVisible(false);
     const { editorRef } = useEditorStateStore.getState();
-    const largeEditorSurface = editorRef?.current?.querySelector<HTMLElement>(
-      "[data-large-editor-scroll]",
-    );
-    if (largeEditorSurface) {
-      largeEditorSurface.focus();
-      return;
-    }
-
-    const textarea = editorRef?.current?.querySelector("textarea");
+    const textarea = editorRef?.current?.querySelector("[data-monaco-editor-scroll] textarea");
     if (textarea instanceof HTMLTextAreaElement) {
       textarea.focus();
     }
-  };
+  }, [setIsFindVisible]);
   const currentMatch = currentMatchIndex + 1;
   const totalMatches = searchMatches.length;
   const hasNoResults = Boolean(searchQuery) && totalMatches === 0;

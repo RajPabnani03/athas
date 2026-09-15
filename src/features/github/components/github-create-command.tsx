@@ -1,16 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Check, Plus, Sparkle } from "@phosphor-icons/react";
+import {
+  CheckIcon as Check,
+  PlusIcon as Plus,
+  SparkleIcon as Sparkle,
+} from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { getBranches } from "@/features/git/api/git-branches-api";
 import { getRefDiff } from "@/features/git/api/git-diff-api";
 import { getGitStatus } from "@/features/git/api/git-status-api";
 import { requestInlineEdit } from "@/features/editor/services/editor-inline-edit-service";
-import { useSettingsStore } from "@/features/settings/store";
-import { useAuthStore } from "@/features/window/stores/auth-store";
-import { Button } from "@/ui/button";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { useAuthStore } from "@/features/window/stores/auth.store";
 import Command, {
   CommandEmpty,
   CommandFooter,
+  CommandFooterAction,
   CommandHeader,
   CommandInput,
   CommandItem,
@@ -20,7 +24,7 @@ import { LoadingIndicator } from "@/ui/loading";
 import Textarea from "@/ui/textarea";
 import { toast } from "@/ui/toast";
 import { cn } from "@/utils/cn";
-import type { IssueListItem, Label, PullRequest, WorkflowListItem } from "../types/github";
+import type { IssueListItem, Label, PullRequest, WorkflowListItem } from "../types/github.types";
 
 export type GitHubCreateKind = "pull-request" | "issue" | "action";
 
@@ -99,6 +103,42 @@ export function GitHubCreateCommand({
   onWorkflowDispatched,
 }: GitHubCreateCommandProps) {
   const isVisible = Boolean(kind && repoPath);
+
+  if (!isVisible || !kind || !repoPath) {
+    return null;
+  }
+
+  return (
+    <GitHubCreateCommandContent
+      key={`${kind}:${repoPath}:${defaultHead ?? ""}`}
+      kind={kind}
+      repoPath={repoPath}
+      defaultHead={defaultHead}
+      onClose={onClose}
+      onIssueCreated={onIssueCreated}
+      onPullRequestCreated={onPullRequestCreated}
+      onWorkflowDispatched={onWorkflowDispatched}
+    />
+  );
+}
+
+interface GitHubCreateCommandContentProps extends Omit<
+  GitHubCreateCommandProps,
+  "kind" | "repoPath"
+> {
+  kind: GitHubCreateKind;
+  repoPath: string;
+}
+
+function GitHubCreateCommandContent({
+  kind,
+  repoPath,
+  defaultHead,
+  onClose,
+  onIssueCreated,
+  onPullRequestCreated,
+  onWorkflowDispatched,
+}: GitHubCreateCommandContentProps) {
   const [mode, setMode] = useState<PickerMode>("form");
   const [query, setQuery] = useState("");
   const [title, setTitle] = useState("");
@@ -113,7 +153,7 @@ export function GitHubCreateCommand({
   const [workflows, setWorkflows] = useState<WorkflowListItem[]>([]);
   const [workflowId, setWorkflowId] = useState("");
   const [workflowRef, setWorkflowRef] = useState(defaultHead || "master");
-  const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
+  const [isLoadingMetadata, setIsLoadingMetadata] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,29 +161,7 @@ export function GitHubCreateCommand({
   const subscription = useAuthStore((state) => state.subscription);
 
   useEffect(() => {
-    if (!isVisible) {
-      setMode("form");
-      setQuery("");
-      setTitle("");
-      setBody("");
-      setHead(defaultHead ?? "");
-      setBase("master");
-      setDraft(false);
-      setAssignees("");
-      setSelectedLabels(new Set());
-      setWorkflowId("");
-      setWorkflowRef(defaultHead || "master");
-      setIsGenerating(false);
-      setError(null);
-    }
-  }, [defaultHead, isVisible]);
-
-  useEffect(() => {
-    if (!isVisible || !repoPath) return;
-
     let cancelled = false;
-    setIsLoadingMetadata(true);
-    setError(null);
 
     Promise.all([
       getBranches(repoPath),
@@ -164,9 +182,11 @@ export function GitHubCreateCommand({
           setHead(cleanBranches[0]);
           setWorkflowRef(cleanBranches[0]);
         }
-        if (!cleanBranches.includes(base) && cleanBranches.includes("main")) {
-          setBase("main");
-        }
+        setBase((currentBase) =>
+          !cleanBranches.includes(currentBase) && cleanBranches.includes("main")
+            ? "main"
+            : currentBase,
+        );
       })
       .catch((nextError) => {
         if (!cancelled) {
@@ -182,7 +202,7 @@ export function GitHubCreateCommand({
     return () => {
       cancelled = true;
     };
-  }, [base, defaultHead, isVisible, kind, repoPath]);
+  }, [defaultHead, kind, repoPath]);
 
   const selectedWorkflow = workflows.find((workflow) => workflow.id.toString() === workflowId);
   const selectedLabelNames = Array.from(selectedLabels);
@@ -354,12 +374,7 @@ ${statusSummary}`;
   };
 
   return (
-    <Command
-      isVisible={isVisible}
-      onClose={onClose}
-      title={kind ? titleByKind[kind] : "GitHub"}
-      className="max-h-[540px]"
-    >
+    <Command isVisible onClose={onClose} title={titleByKind[kind]} className="max-h-[540px]">
       <CommandHeader onClose={mode === "form" ? onClose : closePicker}>
         {mode === "form" && kind === "action" ? (
           <span className="min-w-0 flex-1 truncate ui-font ui-text-sm text-text">Run workflow</span>
@@ -558,29 +573,33 @@ ${statusSummary}`;
 
       <CommandFooter>
         {mode === "labels" ? (
-          <Button type="button" compact className="ml-auto" onClick={closePicker}>
+          <CommandFooterAction
+            type="button"
+            variant="default"
+            className="ml-auto"
+            onClick={closePicker}
+          >
             Done
-          </Button>
+          </CommandFooterAction>
         ) : (
           <>
             <span className="min-w-0 flex-1 truncate px-1 ui-text-xs text-text-lighter">
-              {mode === "form" ? (repoPath ?? "") : titleByKind[kind ?? "issue"]}
+              {mode === "form" ? repoPath : titleByKind[kind]}
             </span>
             {kind !== "action" ? (
-              <Button
+              <CommandFooterAction
                 type="button"
-                compact
                 variant="ghost"
                 disabled={mode !== "form" || isGenerating || isSubmitting}
                 onClick={handleGenerateDraft}
               >
                 {isGenerating ? <LoadingIndicator label="Generating" compact /> : <Sparkle />}
                 Generate
-              </Button>
+              </CommandFooterAction>
             ) : null}
-            <Button
+            <CommandFooterAction
               type="button"
-              compact
+              variant="default"
               disabled={mode !== "form" || !canSubmit || isSubmitting}
               onClick={handleSubmit}
             >
@@ -590,7 +609,7 @@ ${statusSummary}`;
                 <Plus />
               )}
               {kind === "action" ? "Run" : "Create"}
-            </Button>
+            </CommandFooterAction>
           </>
         )}
       </CommandFooter>

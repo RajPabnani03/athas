@@ -1,8 +1,8 @@
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EDITOR_CONSTANTS } from "@/features/editor/config/constants";
 import { useEditorLayout } from "@/features/editor/hooks/use-layout";
-import { useEditorStateStore } from "@/features/editor/stores/state-store";
-import { useEditorUIStore } from "@/features/editor/stores/ui-store";
+import { useEditorStateStore } from "@/features/editor/stores/state.store";
+import { useEditorUIStore } from "@/features/editor/stores/ui.store";
 import { extensionRegistry } from "@/extensions/registry/extension-registry";
 import type { EditorModelPositionResolver } from "../view-model/view-layout";
 import { LspClient } from "./lsp-client";
@@ -248,7 +248,7 @@ export const SignatureHelpTooltip = ({
 
   return (
     <div
-      className="absolute z-50 max-w-md rounded-md border border-border/70 bg-secondary-bg px-2.5 py-1.5 shadow-lg"
+      className="absolute z-50 max-w-md rounded-md border border-border/70 bg-secondary-bg px-2.5 py-1.5 shadow-[var(--shadow-popover)]"
       style={{
         top: `${Math.max(4, position.top)}px`,
         left: `${Math.max(EDITOR_CONSTANTS.EDITOR_PADDING_LEFT, position.left)}px`,

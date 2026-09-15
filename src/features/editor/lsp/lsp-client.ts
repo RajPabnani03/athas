@@ -8,17 +8,17 @@ import type {
 import {
   convertLSPDiagnostic,
   useDiagnosticsStore,
-} from "@/features/diagnostics/stores/diagnostics-store";
+} from "@/features/diagnostics/stores/diagnostics.store";
 import type {
   ApplyDiagnosticCodeActionResult,
   Diagnostic,
   DiagnosticCodeAction,
-} from "@/features/diagnostics/types/diagnostics";
+} from "@/features/diagnostics/types/diagnostics.types";
 import type { BackendLanguageToolConfigSet } from "@/extensions/registry/extension-store-runtime";
-import { hasTextContent } from "@/features/panes/types/pane-content";
-import { useBufferStore } from "../stores/buffer-store";
+import { hasTextContent } from "@/features/panes/types/pane-content.types";
+import { useBufferStore } from "../stores/buffer.store";
 import { logger } from "../utils/logger";
-import { useLspStore } from "./lsp-store";
+import { useLspStore } from "./stores/lsp.store";
 import {
   applyWorkspaceEdit,
   applyTextEditsToContent,
@@ -103,6 +103,11 @@ function isBenignHoverError(error: unknown): boolean {
     message.includes("column is beyond end of file") ||
     message.includes("no lsp client for this file")
   );
+}
+
+function isCanceledLspRequest(error: unknown): boolean {
+  const message = stringifyLspError(error).toLowerCase();
+  return message === "canceled" || message.includes("canceled: canceled");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -523,8 +528,7 @@ export class LspClient {
       for (const server of serversToRemove) {
         this.activeLanguageServers.delete(server);
         this.activeServerFiles.delete(server);
-        // Extract language from server key and remove from active languages
-        const language = server.split(":")[1];
+        const { languageId: language } = this.parseServerKey(server);
         if (language) {
           const displayName = this.getLanguageDisplayName(language);
           this.activeLanguages.delete(displayName);
@@ -788,17 +792,13 @@ export class LspClient {
 
   async restartAllTrackedServers(): Promise<void> {
     const serverKeys = this.getActiveServerEntries().map((entry) => entry.key);
-    for (const serverKey of serverKeys) {
-      await this.restartTrackedServer(serverKey);
-    }
+    await Promise.all(serverKeys.map((serverKey) => this.restartTrackedServer(serverKey)));
   }
 
   async stopAll(): Promise<void> {
-    // Get unique workspace paths from all active language servers
     const workspaces = new Set<string>();
     for (const key of this.activeLanguageServers) {
-      const workspace = key.split(":")[0];
-      workspaces.add(workspace);
+      workspaces.add(this.parseServerKey(key).workspacePath);
     }
     await Promise.all(Array.from(workspaces).map((ws) => this.stop(ws)));
   }
@@ -918,12 +918,14 @@ export class LspClient {
       startChar: number;
       length: number;
       tokenType: number;
+      tokenTypeName?: string;
       tokenModifiers: number;
     }[]
   > {
     try {
       return await invoke("lsp_get_semantic_tokens", { filePath });
     } catch (error) {
+      if (isCanceledLspRequest(error)) return [];
       logger.error("LSPClient", "LSP semantic tokens error:", error);
       return [];
     }
@@ -940,6 +942,7 @@ export class LspClient {
     try {
       return await invoke("lsp_get_code_lens", { filePath });
     } catch (error) {
+      if (isCanceledLspRequest(error)) return [];
       logger.error("LSPClient", "LSP code lens error:", error);
       return [];
     }
@@ -966,6 +969,7 @@ export class LspClient {
         endLine,
       });
     } catch (error) {
+      if (isCanceledLspRequest(error)) return [];
       logger.error("LSPClient", "LSP inlay hints error:", error);
       return [];
     }

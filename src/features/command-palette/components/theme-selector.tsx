@@ -1,17 +1,17 @@
 import {
-  CaretLeft,
-  Monitor,
-  Moon,
-  Palette,
-  GearSix as Settings,
-  Sun,
-  Upload,
+  CaretLeftIcon as CaretLeft,
+  MonitorIcon as Monitor,
+  MoonIcon as Moon,
+  PaletteIcon as Palette,
+  GearSixIcon as Settings,
+  SunIcon as Sun,
+  UploadIcon as Upload,
 } from "@phosphor-icons/react";
 import type React from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { themeRegistry } from "@/extensions/themes/theme-registry";
-import type { ThemeDefinition } from "@/extensions/themes/types";
-import { useUIState } from "@/features/window/stores/ui-state-store";
+import { useRegisteredThemes } from "@/extensions/themes/use-registered-themes";
+import { useUIState } from "@/features/window/stores/ui-state.store";
 import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { CommandEmpty, CommandHeader, CommandInput, CommandItem, CommandList } from "@/ui/command";
@@ -61,34 +61,23 @@ export const ThemeSelectorContent = ({
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [initialTheme, setInitialTheme] = useState(currentTheme);
-  const [themes, setThemes] = useState<ThemeInfo[]>([]);
+  const registeredThemes = useRegisteredThemes();
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const activeThemeSnapshotRef = useRef<string | undefined>(undefined);
   const didCommitRef = useRef(false);
 
-  // Load themes from theme registry
-  useEffect(() => {
-    const loadThemes = () => {
-      const registryThemes = themeRegistry.getAllThemes();
-      const themeInfos: ThemeInfo[] = registryThemes.map(
-        (theme: ThemeDefinition): ThemeInfo => ({
-          id: theme.id,
-          name: theme.name,
-          description: theme.description,
-          category: theme.category,
-          icon: getThemeIcon(theme.category),
-        }),
-      );
-      setThemes(themeInfos);
-    };
-
-    loadThemes();
-
-    // Listen for theme registry changes
-    const unsubscribe = themeRegistry.onRegistryChange(loadThemes);
-    return unsubscribe;
-  }, []);
+  const themes = useMemo<ThemeInfo[]>(
+    () =>
+      registeredThemes.map((theme) => ({
+        id: theme.id,
+        name: theme.name,
+        description: theme.description,
+        category: theme.category,
+        icon: getThemeIcon(theme.category),
+      })),
+    [registeredThemes],
+  );
 
   // Filter themes based on query
   const filteredThemes = themes.filter(
@@ -135,7 +124,7 @@ export const ThemeSelectorContent = ({
   }, [applyPreviewTheme]);
 
   const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (!filteredThemes.length) return;
 
       let nextIndex = selectedIndex;
@@ -145,6 +134,12 @@ export const ThemeSelectorContent = ({
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         nextIndex = (selectedIndex - 1 + filteredThemes.length) % filteredThemes.length;
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        nextIndex = 0;
+      } else if (e.key === "End") {
+        e.preventDefault();
+        nextIndex = filteredThemes.length - 1;
       } else if (e.key === "Enter") {
         e.preventDefault();
         const selectedTheme = filteredThemes[selectedIndex];
@@ -172,14 +167,6 @@ export const ThemeSelectorContent = ({
     },
     [selectedIndex, filteredThemes, onThemeChange, onClose, initialTheme, applyPreviewTheme],
   );
-
-  // Reset state when visibility changes
-  useEffect(() => {
-    if (isActive) {
-      document.addEventListener("keydown", handleKeyDown);
-      return () => document.removeEventListener("keydown", handleKeyDown);
-    }
-  }, [isActive, handleKeyDown]);
 
   // Update selected index when query changes
   useEffect(() => {
@@ -256,6 +243,7 @@ export const ThemeSelectorContent = ({
             ref={inputRef}
             value={query}
             onChange={setQuery}
+            onKeyDown={handleKeyDown}
             placeholder="Search themes..."
             className="flex-1"
           />

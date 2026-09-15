@@ -1,20 +1,21 @@
 import {
-  FileText,
-  FolderOpen,
-  GlobeHemisphereWest as Globe,
-  Pencil,
-  Plus,
-  Sparkle as Sparkles,
-  TerminalWindow as Terminal,
-  Trash as Trash2,
+  FileTextIcon as FileText,
+  FolderOpenIcon as FolderOpen,
+  GlobeHemisphereWestIcon as Globe,
+  PencilIcon as Pencil,
+  PlusIcon as Plus,
+  SparkleIcon as Sparkles,
+  TerminalWindowIcon as Terminal,
+  TrashIcon as Trash2,
 } from "@phosphor-icons/react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { readFileContent } from "@/features/file-system/controllers/file-operations";
 import { openFile } from "@/features/file-system/controllers/platform";
-import { useFileSystemStore } from "@/features/file-system/controllers/store";
-import { useCustomActionsStore } from "@/features/terminal/stores/custom-actions-store";
+import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { useCustomActionsStore } from "@/features/terminal/stores/custom-actions.store";
 import { Button } from "@/ui/button";
 import { ContextMenu, useContextMenu, type ContextMenuItem } from "@/ui/context-menu";
 import Input from "@/ui/input";
@@ -34,6 +35,7 @@ export function EmptyEditorState() {
     useBufferStore.use.actions();
   const handleOpenFolder = useFileSystemStore.use.handleOpenFolder();
   const rootFolderPath = useFileSystemStore((state) => state.rootFolderPath);
+  const webViewerEnabled = useSettingsStore((state) => state.settings.coreFeatures.webViewer);
 
   const allCustomActions = useCustomActionsStore.use.actions();
   const { addAction, updateAction, deleteAction, getActionsForWorkspace } =
@@ -166,12 +168,16 @@ export function EmptyEditorState() {
         icon: <Sparkles />,
         onClick: handleOpenAgent,
       },
-      {
-        id: "open-url",
-        label: "Open URL",
-        icon: <Globe />,
-        onClick: handleOpenWebViewer,
-      },
+      ...(webViewerEnabled
+        ? [
+            {
+              id: "open-url",
+              label: "Open URL",
+              icon: <Globe />,
+              onClick: handleOpenWebViewer,
+            },
+          ]
+        : []),
     ];
   }, [
     handleNewFile,
@@ -180,6 +186,7 @@ export function EmptyEditorState() {
     handleOpenTerminal,
     handleOpenAgent,
     handleOpenWebViewer,
+    webViewerEnabled,
   ]);
 
   const actions: ActionItem[] = [
@@ -213,12 +220,16 @@ export function EmptyEditorState() {
       icon: <Sparkles className="text-text-light" />,
       action: handleOpenAgent,
     },
-    {
-      id: "web",
-      label: "Open URL",
-      icon: <Globe className="text-text-light" />,
-      action: handleOpenWebViewer,
-    },
+    ...(webViewerEnabled
+      ? [
+          {
+            id: "web",
+            label: "Open URL",
+            icon: <Globe className="text-text-light" />,
+            action: handleOpenWebViewer,
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -267,7 +278,7 @@ export function EmptyEditorState() {
                     }
                     variant="ghost"
                     compact
-                    className="h-auto min-w-0 flex-1 justify-start gap-3 px-0 py-0 hover:bg-transparent"
+                    className="h-auto min-w-0 flex-1 justify-start gap-3 p-0 hover:bg-transparent"
                   >
                     <Terminal className="shrink-0 text-text-light" />
                     <span className="truncate text-text ui-text-xs">{action.name}</span>

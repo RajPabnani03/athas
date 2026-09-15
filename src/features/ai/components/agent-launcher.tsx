@@ -1,15 +1,17 @@
-import { Microphone as Mic, PaperPlaneTilt as Send } from "@phosphor-icons/react";
+import { MicrophoneIcon as Mic, PaperPlaneTiltIcon as Send } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ContextSelector } from "@/features/ai/components/selectors/context-selector";
 import { AgentSelector } from "@/features/ai/components/selectors/agent-selector";
-import { useAIChatStore } from "@/features/ai/store/store";
-import type { AgentType } from "@/features/ai/types/ai-chat";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
+import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
+import type { AgentType } from "@/features/ai/types/ai-chat.types";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { Button } from "@/ui/button";
 import Command from "@/ui/command";
 import { cn } from "@/utils/cn";
-import { useUIState } from "@/features/window/stores/ui-state-store";
+import { useUIState } from "@/features/window/stores/ui-state.store";
 import { isMac } from "@/utils/platform";
+import { CLAUDE_CODE_TERMINAL_AGENT_ID } from "@/features/ai/lib/claude-code";
+import { openClaudeCodeTerminal } from "@/features/ai/lib/claude-code-terminal";
 
 export function AgentLauncher() {
   const launcherRef = useRef<HTMLDivElement>(null);
@@ -129,6 +131,12 @@ export function AgentLauncher() {
 
   const submit = useCallback(() => {
     const nextPrompt = prompt.trim();
+    if (selectedAgentId === CLAUDE_CODE_TERMINAL_AGENT_ID) {
+      openClaudeCodeTerminal();
+      close();
+      return;
+    }
+
     if (!nextPrompt) return;
 
     const chatId = createNewChat(selectedAgentId);
@@ -173,7 +181,6 @@ export function AgentLauncher() {
           <ContextSelector
             buffers={selectableBuffers}
             selectedBufferIds={selectedBufferIds}
-            selectedFilesPaths={selectedFilesPaths}
             onToggleBuffer={(bufferId) =>
               setLocalSelectedBufferIds((current) => {
                 const next = new Set(current);
@@ -262,7 +269,7 @@ export function AgentLauncher() {
           <Button
             type="button"
             onClick={submit}
-            disabled={!prompt.trim()}
+            disabled={selectedAgentId !== CLAUDE_CODE_TERMINAL_AGENT_ID && !prompt.trim()}
             variant="default"
             className="rounded-full px-2.5"
             tooltip="Launch agent"

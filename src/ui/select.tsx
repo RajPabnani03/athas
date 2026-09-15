@@ -1,5 +1,9 @@
 import { cva } from "class-variance-authority";
-import { Check, CaretDown as ChevronDown, MagnifyingGlass as Search } from "@phosphor-icons/react";
+import {
+  CheckIcon as Check,
+  CaretDownIcon as ChevronDown,
+  MagnifyingGlassIcon as Search,
+} from "@phosphor-icons/react";
 import type {
   AriaAttributes,
   ComponentType,
@@ -31,6 +35,8 @@ export interface SelectProps {
   className?: string;
   triggerClassName?: string;
   menuClassName?: string;
+  menuMinWidth?: number;
+  menuAnimated?: boolean;
   disabled?: boolean;
   size?: "xs" | "sm" | "md";
   variant?: "default" | "ghost";
@@ -70,11 +76,11 @@ const selectTriggerVariants = cva(
 );
 
 const selectContentVariants = cva(
-  "z-[10040] max-h-96 min-w-0 overflow-hidden rounded-xl border border-border bg-secondary-bg/95 p-1 shadow-[0_14px_30px_-24px_rgba(0,0,0,0.45)] transition-[opacity,transform] duration-150 ease-out",
+  "z-[10040] max-h-96 min-w-0 overflow-hidden rounded-xl border border-border bg-secondary-bg/95 p-1 shadow-[var(--shadow-popover)] transition-[opacity,transform,filter] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)]",
 );
 
 const selectItemVariants = cva(
-  "ui-font ui-text-sm flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-text outline-none transition-colors hover:bg-hover",
+  "ui-font ui-text-sm flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-text outline-none transition-[transform,background-color,color] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] hover:bg-hover active:scale-[var(--app-press-scale)]",
 );
 
 const selectSearchInputVariants = cva(
@@ -226,6 +232,8 @@ export default function Select({
   className = "",
   triggerClassName = "",
   menuClassName = "",
+  menuMinWidth = 0,
+  menuAnimated = true,
   disabled = false,
   size = "sm",
   variant = "ghost",
@@ -260,20 +268,11 @@ export default function Select({
     onOpenChange?.(nextOpen);
   };
 
-  useEffect(() => {
-    if (open && searchable && searchableTrigger === "menu") {
-      window.requestAnimationFrame(() => searchInputRef.current?.focus());
-      return;
-    }
-
-    if (!open) {
-      setSearchQuery("");
-      setHoveredIndex(0);
-    }
-  }, [open, searchable, searchableTrigger]);
-
   const selectedOption = options.find((option) => option.value === value);
-  const filteredOptions = getFilteredOptions(options, searchable, searchQuery);
+  const filteredOptions = useMemo(
+    () => getFilteredOptions(options, searchable, searchQuery),
+    [options, searchable, searchQuery],
+  );
   const triggerIcon = renderTriggerIcon(leftIcon, size);
   const triggerText = useMemo(
     () => getInputTriggerText(open, searchableTrigger, searchQuery, selectedOption, value),
@@ -287,8 +286,25 @@ export default function Select({
   );
 
   useEffect(() => {
-    setHoveredIndex(0);
-  }, [searchQuery]);
+    if (open && searchable && searchableTrigger === "menu") {
+      window.requestAnimationFrame(() => searchInputRef.current?.focus());
+      return;
+    }
+
+    if (!open) {
+      setSearchQuery("");
+      setHoveredIndex(0);
+    }
+  }, [open, searchable, searchableTrigger]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const selectedIndex =
+      searchQuery.length === 0 ? filteredOptions.findIndex((option) => option.value === value) : -1;
+
+    setHoveredIndex(selectedIndex >= 0 ? selectedIndex : 0);
+  }, [filteredOptions, open, searchQuery, value]);
 
   useEffect(() => {
     if (!open || hoveredIndex < 0) return;
@@ -338,7 +354,9 @@ export default function Select({
               return;
             }
 
-            handleOpenChange(!open);
+            if (!open) {
+              handleOpenChange(true);
+            }
           }}
           onChange={(event) => {
             setSearchQuery(event.target.value);
@@ -356,7 +374,10 @@ export default function Select({
               return;
             }
 
-            if (!open && (event.key === "ArrowDown" || event.key === "Enter")) {
+            if (
+              !open &&
+              (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ")
+            ) {
               event.preventDefault();
               handleOpenChange(true);
               return;
@@ -372,6 +393,14 @@ export default function Select({
               case "ArrowUp":
                 event.preventDefault();
                 setHoveredIndex((prev) => Math.max(prev - 1, 0));
+                break;
+              case "Home":
+                event.preventDefault();
+                setHoveredIndex(0);
+                break;
+              case "End":
+                event.preventDefault();
+                setHoveredIndex(filteredOptions.length - 1);
                 break;
               case "Enter":
                 event.preventDefault();
@@ -409,7 +438,8 @@ export default function Select({
           onClose={() => handleOpenChange(false)}
           className={cn("min-w-0 overflow-hidden rounded-xl p-0", menuClassName)}
           menuClassName="flex min-h-0 flex-1 flex-col overflow-hidden"
-          style={{ width: getAnchorWidth(searchInputRef.current) }}
+          style={{ width: getAnchorWidth(searchInputRef.current, menuMinWidth) }}
+          animated={menuAnimated}
         >
           <div
             ref={listboxRef}
@@ -545,7 +575,8 @@ export default function Select({
         onClose={() => handleOpenChange(false)}
         className={cn(selectContentVariants(), menuClassName)}
         menuClassName="flex min-h-0 flex-1 flex-col overflow-hidden"
-        style={{ width: getAnchorWidth(triggerRef.current) }}
+        style={{ width: getAnchorWidth(triggerRef.current, menuMinWidth) }}
+        animated={menuAnimated}
       >
         {searchable && (
           <SelectSearchField

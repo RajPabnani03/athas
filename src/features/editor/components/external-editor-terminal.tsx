@@ -6,11 +6,11 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import { useCallback, useEffect, useRef } from "react";
-import { useEditorSettingsStore } from "@/features/editor/stores/settings-store";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
-import { useSettingsStore } from "@/features/settings/store";
+import { useEditorSettingsStore } from "@/features/editor/stores/settings.store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { useTerminalTheme } from "@/features/terminal/hooks/use-terminal-theme";
-import { useProjectStore } from "@/features/window/stores/project-store";
+import { useProjectStore } from "@/features/window/stores/project.store";
 import { cn } from "@/utils/cn";
 import "@xterm/xterm/css/xterm.css";
 import "@/features/terminal/styles/terminal.css";
@@ -83,40 +83,28 @@ export const ExternalEditorTerminal = ({
     (path: string): string => {
       const relativePath = rootFolderPath ? path.replace(rootFolderPath, ".") : path;
 
-      switch (settings.externalEditor) {
+      switch (settings.editorEngine) {
         case "nvim":
           return `nvim "${relativePath}"`;
         case "helix":
           return `hx "${relativePath}"`;
         case "vim":
           return `vim "${relativePath}"`;
-        case "nano":
-          return `nano "${relativePath}"`;
-        case "emacs":
-          return `emacs -nw "${relativePath}"`;
         case "custom":
           return settings.customEditorCommand.replace("$FILE", `"${relativePath}"`);
         default:
           return `nvim "${relativePath}"`;
       }
     },
-    [settings.externalEditor, settings.customEditorCommand, rootFolderPath],
+    [settings.editorEngine, settings.customEditorCommand, rootFolderPath],
   );
 
   const initializeTerminal = useCallback(() => {
-    console.log("initializeTerminal called", {
-      terminalRef: terminalRef.current,
-      hasXterm: !!xtermRef.current,
-      isInitializing: isInitializingRef.current,
-    });
-
     if (!terminalRef.current || xtermRef.current || isInitializingRef.current) {
-      console.log("initializeTerminal: skipping initialization");
       return;
     }
 
     isInitializingRef.current = true;
-    console.log("initializeTerminal: creating terminal");
 
     const terminal = new Terminal({
       cursorBlink: true,
@@ -141,9 +129,7 @@ export const ExternalEditorTerminal = ({
 
     terminal.unicode.activeVersion = "11";
 
-    console.log("initializeTerminal: opening terminal in DOM");
     terminal.open(terminalRef.current);
-    console.log("initializeTerminal: terminal opened");
 
     if (initFitTimeoutRef.current) {
       clearTimeout(initFitTimeoutRef.current);
@@ -151,7 +137,6 @@ export const ExternalEditorTerminal = ({
     initFitTimeoutRef.current = setTimeout(() => {
       if (fitAddon && terminalRef.current) {
         fitAddon.fit();
-        console.log("initializeTerminal: terminal fitted");
       }
       initFitTimeoutRef.current = null;
     }, 150);
@@ -214,8 +199,6 @@ export const ExternalEditorTerminal = ({
         const closedEventName = `pty-closed-${terminalConnectionId}`;
         const errorEventName = `pty-error-${terminalConnectionId}`;
 
-        console.log("setupListeners: setting up listener for", outputEventName);
-
         const unlisten = await listen<{ data: string }>(outputEventName, (event) => {
           terminal.write(event.payload.data);
         });
@@ -244,22 +227,16 @@ export const ExternalEditorTerminal = ({
     setupListeners();
 
     isInitializingRef.current = false;
-    console.log("initializeTerminal: initialization complete");
 
     terminal.focus();
 
     if (!hasExecutedCommandRef.current) {
       hasExecutedCommandRef.current = true;
       const command = getEditorCommand(filePath);
-      console.log("initializeTerminal: executing command:", command);
       setTimeout(() => {
-        invoke("terminal_write", { id: terminalConnectionId, data: `${command}\n` })
-          .then(() => {
-            console.log("initializeTerminal: command sent successfully");
-          })
-          .catch((e) => {
-            console.error("Failed to execute editor command:", e);
-          });
+        invoke("terminal_write", { id: terminalConnectionId, data: `${command}\n` }).catch((e) => {
+          console.error("Failed to execute editor command:", e);
+        });
       }, 200);
     }
   }, [
@@ -275,11 +252,9 @@ export const ExternalEditorTerminal = ({
   ]);
 
   useEffect(() => {
-    console.log("ExternalEditorTerminal: useEffect running", { filePath, terminalConnectionId });
     initializeTerminal();
 
     return () => {
-      console.log("ExternalEditorTerminal: cleanup running");
       if (initFitTimeoutRef.current) {
         clearTimeout(initFitTimeoutRef.current);
       }
@@ -327,12 +302,20 @@ export const ExternalEditorTerminal = ({
         clearTimeout(themeRefreshTimeoutRef.current);
       }
 
-      themeRefreshTimeoutRef.current = setTimeout(() => {
+      const themeRefreshTimeout = setTimeout(() => {
         if (xtermRef.current) {
           xtermRef.current.options.theme = getTerminalTheme();
         }
         themeRefreshTimeoutRef.current = null;
       }, 50);
+      themeRefreshTimeoutRef.current = themeRefreshTimeout;
+
+      return () => {
+        if (themeRefreshTimeoutRef.current === themeRefreshTimeout) {
+          clearTimeout(themeRefreshTimeout);
+          themeRefreshTimeoutRef.current = null;
+        }
+      };
     }
   }, [settings.theme, getTerminalTheme]);
 

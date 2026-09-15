@@ -1,12 +1,12 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { MagnifyingGlass as Search } from "@phosphor-icons/react";
+import { MagnifyingGlassIcon as Search } from "@phosphor-icons/react";
 import {
-  ArrowLeft,
-  CirclesThree,
-  Cube,
-  DownloadSimple,
-  Sliders,
-  User,
+  ArrowLeftIcon as ArrowLeft,
+  CirclesThreeIcon as CirclesThree,
+  CubeIcon as Cube,
+  DownloadSimpleIcon as DownloadSimple,
+  SlidersIcon as Sliders,
+  UserIcon as User,
 } from "@phosphor-icons/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
@@ -21,15 +21,15 @@ import {
   getKeybindingPresetDiffReport,
   keybindingPresetOptions,
 } from "@/features/keymaps/defaults/keybinding-presets";
-import { useKeymapStore } from "@/features/keymaps/stores/store";
-import type { Keybinding } from "@/features/keymaps/types";
+import { useKeymapStore } from "@/features/keymaps/stores/keymaps.store";
+import type { Keybinding } from "@/features/keymaps/types/keymaps.types";
 import { getEffectiveKeybindingForCommand } from "@/features/keymaps/utils/effective-keymaps";
 import {
   createKeybindingsExportPayload,
   getExportableUserKeybindings,
   parseKeybindingsImportJson,
 } from "@/features/keymaps/utils/keybinding-import-export";
-import { getDefaultSetting, useSettingsStore } from "@/features/settings/store";
+import { getDefaultSetting, useSettingsStore } from "@/features/settings/stores/settings.store";
 import { keymapRegistry } from "@/features/keymaps/utils/registry";
 import { useToast } from "@/features/layout/contexts/toast-context";
 import { Button } from "@/ui/button";
@@ -38,6 +38,7 @@ import { SegmentedControl } from "@/ui/segmented-control";
 import Select from "@/ui/select";
 import Switch from "@/ui/switch";
 import { TableHeadCell, TableHeader } from "@/ui/table";
+import { motionDuration, motionEase } from "@/ui/motion";
 import { matchesSearchQuery } from "@/utils/search-match";
 import { TypedConfirmAction } from "../typed-confirm-action";
 import { SettingRow } from "../settings-section";
@@ -48,14 +49,14 @@ const editorStepTransition = {
   initial: { opacity: 0, x: 14 },
   animate: { opacity: 1, x: 0 },
   exit: { opacity: 0, x: -14 },
-  transition: { duration: 0.16, ease: "easeOut" as const },
+  transition: { duration: motionDuration.fast, ease: motionEase.smooth },
 };
 
 const summaryStepTransition = {
   initial: { opacity: 0, x: -14 },
   animate: { opacity: 1, x: 0 },
   exit: { opacity: 0, x: 14 },
-  transition: { duration: 0.16, ease: "easeOut" as const },
+  transition: { duration: motionDuration.fast, ease: motionEase.smooth },
 };
 
 export const KeyboardSettings = () => {
@@ -310,7 +311,7 @@ export const KeyboardSettings = () => {
                   </TableHeader>
 
                   {filteredCommands.length === 0 ? (
-                    <div className="ui-font ui-text-md flex items-center justify-center py-12 text-text-lighter">
+                    <div className="ui-font ui-text-base flex items-center justify-center py-12 text-text-lighter">
                       No keybindings found
                     </div>
                   ) : (

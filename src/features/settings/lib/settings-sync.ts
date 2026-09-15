@@ -1,9 +1,9 @@
-import type { Settings } from "@/features/settings/types/settings";
-import { useSettingsStore } from "@/features/settings/store";
+import type { Settings } from "@/features/settings/types/settings.types";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import {
   useSettingsSyncStore,
   type SettingsSyncSource,
-} from "@/features/settings/stores/settings-sync-store";
+} from "@/features/settings/stores/settings-sync.store";
 import {
   fetchSettingsSyncSnapshot,
   isAuthInvalidError,
@@ -20,6 +20,7 @@ type SyncableSettingsKey =
   | "sidebarPosition"
   | "quickOpenPreview"
   | "fontFamily"
+  | "editorEngine"
   | "fontSize"
   | "editorLineHeight"
   | "tabSize"
@@ -45,6 +46,7 @@ type SyncableSettingsKey =
   | "autoThemeLight"
   | "autoThemeDark"
   | "compactMenuBar"
+  | "windowTransparency"
   | "sidebarTabsPosition"
   | "titleBarProjectMode"
   | "headerTrailingItemsOrder"
@@ -80,7 +82,7 @@ type SyncableSettingsKey =
   | "lintOnSave"
   | "autoCompletion"
   | "parameterHints"
-  | "externalEditor"
+  | "customEditorCommand"
   | "coreFeatures"
   | "extensionsActiveTab"
   | "maxOpenTabs"
@@ -110,6 +112,7 @@ const SYNCABLE_SETTINGS_KEYS: SyncableSettingsKey[] = [
   "sidebarPosition",
   "quickOpenPreview",
   "fontFamily",
+  "editorEngine",
   "fontSize",
   "editorLineHeight",
   "tabSize",
@@ -135,6 +138,7 @@ const SYNCABLE_SETTINGS_KEYS: SyncableSettingsKey[] = [
   "autoThemeLight",
   "autoThemeDark",
   "compactMenuBar",
+  "windowTransparency",
   "sidebarTabsPosition",
   "titleBarProjectMode",
   "headerTrailingItemsOrder",
@@ -170,7 +174,7 @@ const SYNCABLE_SETTINGS_KEYS: SyncableSettingsKey[] = [
   "lintOnSave",
   "autoCompletion",
   "parameterHints",
-  "externalEditor",
+  "customEditorCommand",
   "coreFeatures",
   "extensionsActiveTab",
   "maxOpenTabs",

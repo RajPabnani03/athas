@@ -1,12 +1,12 @@
 import * as React from "react";
-import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import { useCommandShortcut } from "@/features/keymaps/hooks/use-command-shortcut";
+import { Slot } from "@/ui/slot";
 import Tooltip from "@/ui/tooltip";
 import { cn } from "@/utils/cn";
 
 export const buttonVariants = cva(
-  "ui-font inline-flex h-[var(--app-ui-button-height,2rem)] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent text-[length:var(--app-ui-control-font-size)] leading-none transition-all duration-150 select-none outline-none focus:outline-none focus-visible:border-accent/45 focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-50 [&_svg:not([class*='size-'])]:size-[length:var(--app-ui-control-icon-size)] [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  "ui-font inline-flex h-[var(--app-ui-button-height,2rem)] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent text-[length:var(--app-ui-control-font-size)] leading-none transition-[transform,background-color,border-color,color,box-shadow,opacity] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] select-none outline-none active:scale-[var(--app-press-scale)] focus:outline-none focus-visible:border-accent/45 focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-50 disabled:active:scale-100 [&_svg:not([class*='size-'])]:size-[length:var(--app-ui-control-icon-size)] [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {

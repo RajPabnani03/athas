@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { getAllLanguages } from "@/features/editor/utils/language-id";
-import { getDefaultSetting, useSettingsStore } from "@/features/settings/store";
-import Input from "@/ui/input";
+import { getDefaultSetting, useSettingsStore } from "@/features/settings/stores/settings.store";
 import NumberInput from "@/ui/number-input";
 import Section, { SETTINGS_CONTROL_WIDTHS, SettingRow } from "../settings-section";
 import Select from "@/ui/select";
@@ -26,7 +25,6 @@ export const EditorSettings = () => {
     { value: "trailing", label: "Trailing" },
     { value: "all", label: "All" },
   ];
-
   return (
     <div className="space-y-4">
       <Section title="Editor">
@@ -320,57 +318,6 @@ export const EditorSettings = () => {
             size="sm"
           />
         </SettingRow>
-
-        <SettingRow
-          label="Default Editor"
-          description="Open files in an external terminal editor instead of the built-in editor"
-          onReset={() => updateSetting("externalEditor", getDefaultSetting("externalEditor"))}
-          canReset={settings.externalEditor !== getDefaultSetting("externalEditor")}
-        >
-          <Select
-            value={settings.externalEditor}
-            options={[
-              { value: "none", label: "None (Use Built-in)" },
-              { value: "nvim", label: "Neovim" },
-              { value: "helix", label: "Helix" },
-              { value: "vim", label: "Vim" },
-              { value: "nano", label: "Nano" },
-              { value: "emacs", label: "Emacs" },
-              { value: "custom", label: "Custom Command" },
-            ]}
-            onChange={(value) =>
-              updateSetting(
-                "externalEditor",
-                value as "none" | "nvim" | "helix" | "vim" | "nano" | "emacs" | "custom",
-              )
-            }
-            className={SETTINGS_CONTROL_WIDTHS.text}
-            size="xs"
-            variant="default"
-            searchable
-            searchableTrigger="input"
-          />
-        </SettingRow>
-
-        {settings.externalEditor === "custom" && (
-          <SettingRow
-            label="Custom Command"
-            description="Command to run (use $FILE for the file path, e.g., 'micro $FILE')"
-            onReset={() =>
-              updateSetting("customEditorCommand", getDefaultSetting("customEditorCommand"))
-            }
-            canReset={settings.customEditorCommand !== getDefaultSetting("customEditorCommand")}
-          >
-            <Input
-              type="text"
-              value={settings.customEditorCommand}
-              onChange={(e) => updateSetting("customEditorCommand", e.target.value)}
-              placeholder="micro $FILE"
-              className={SETTINGS_CONTROL_WIDTHS.text}
-              size="xs"
-            />
-          </SettingRow>
-        )}
       </Section>
     </div>
   );

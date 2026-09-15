@@ -11,20 +11,21 @@ import { EDITOR_CONSTANTS } from "@/features/editor/config/constants";
 import { useEditorLayout } from "@/features/editor/hooks/use-layout";
 import { useSnippetCompletion } from "@/features/editor/hooks/use-snippet-completion";
 import { LspClient } from "@/features/editor/lsp/lsp-client";
-import { useLspStore } from "@/features/editor/lsp/lsp-store";
+import { useLspStore } from "@/features/editor/lsp/stores/lsp.store";
 import { useDefinitionLink } from "@/features/editor/lsp/use-definition-link";
 import { useGoToDefinition } from "@/features/editor/lsp/use-go-to-definition";
 import { useHover } from "@/features/editor/lsp/use-hover";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
-import { useEditorStateStore } from "@/features/editor/stores/state-store";
-import { useEditorUIStore } from "@/features/editor/stores/ui-store";
-import { useFileSystemStore } from "@/features/file-system/controllers/store";
-import { hasTextContent } from "@/features/panes/types/pane-content";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { useEditorStateStore } from "@/features/editor/stores/state.store";
+import { useEditorUIStore } from "@/features/editor/stores/ui.store";
+import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
+import { hasTextContent } from "@/features/panes/types/pane-content.types";
 import { logger } from "../utils/logger";
 import type { EditorCoordinateResolver } from "../view-model/view-layout";
 
 interface UseLspIntegrationOptions {
   enabled?: boolean;
+  enableCompletions?: boolean;
   filePath: string | undefined;
   value: string;
   editorRef: RefObject<HTMLDivElement | null> | RefObject<HTMLTextAreaElement>;
@@ -47,6 +48,7 @@ const DOCUMENT_CHANGE_DEBOUNCE_MS = 75;
  */
 export const useLspIntegration = ({
   enabled = true,
+  enableCompletions = enabled,
   filePath,
   value,
   editorRef,
@@ -132,11 +134,11 @@ export const useLspIntegration = ({
 
   // Set up LSP completion handlers
   useEffect(() => {
-    if (!enabled) return;
+    if (!enableCompletions) return;
     lspActions.setCompletionHandlers(lspClient.getCompletions.bind(lspClient), (fp: string) =>
       isFileSupported(fp),
     );
-  }, [enabled, lspClient, lspActions]);
+  }, [enableCompletions, lspClient, lspActions]);
 
   // Set up hover functionality
   const hoverHandlers = useHover({
@@ -291,7 +293,7 @@ export const useLspIntegration = ({
 
   // Handle completion triggers - only when user types (not on cursor movement)
   useEffect(() => {
-    if (!enabled) return;
+    if (!enableCompletions) return;
 
     const unsubscribe = useEditorUIStore.subscribe((state) => {
       const lastInputTimestamp = state.lastInputTimestamp;
@@ -356,10 +358,10 @@ export const useLspIntegration = ({
         completionTimerRef.current = undefined;
       }
     };
-  }, [enabled, filePath, lspActions, isLspSupported, editorRef]);
+  }, [enableCompletions, filePath, lspActions, isLspSupported, editorRef]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enableCompletions) return;
 
     const handleTriggerSuggest = () => {
       if (
@@ -388,7 +390,7 @@ export const useLspIntegration = ({
 
     window.addEventListener("editor-trigger-suggest", handleTriggerSuggest);
     return () => window.removeEventListener("editor-trigger-suggest", handleTriggerSuggest);
-  }, [enabled, filePath, lspActions, isLspSupported, editorRef]);
+  }, [enableCompletions, filePath, lspActions, isLspSupported, editorRef]);
 
   const prevInputTimestampRef = useRef<number>(0);
 

@@ -1,28 +1,28 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
-  WarningCircle as AlertCircle,
-  CheckCircle,
-  Cloud,
-  ArrowSquareOut as ExternalLink,
-  GlobeHemisphereWest as Globe,
-  Key,
-  Laptop,
-  ArrowClockwise as RefreshCw,
-  ArrowCounterClockwise as RotateCcw,
-  Trash as Trash2,
+  WarningCircleIcon as AlertCircle,
+  CheckCircleIcon as CheckCircle,
+  CloudIcon as Cloud,
+  ArrowSquareOutIcon as ExternalLink,
+  GlobeHemisphereWestIcon as Globe,
+  KeyIcon as Key,
+  LaptopIcon as Laptop,
+  ArrowClockwiseIcon as RefreshCw,
+  ArrowCounterClockwiseIcon as RotateCcw,
+  TrashIcon as Trash2,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ProviderApiKeyCommand } from "@/features/ai/components/provider-api-key-command";
 import { ModelSelector } from "@/features/ai/components/selectors/model-selector";
 import { ProviderSelector } from "@/features/ai/components/selectors/provider-selector";
-import { useAIChatStore } from "@/features/ai/store/store";
-import type { AgentConfig, SessionConfigOption } from "@/features/ai/types/acp";
-import { getAvailableProviders } from "@/features/ai/types/providers";
+import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
+import type { AgentConfig, SessionConfigOption } from "@/features/ai/types/acp.types";
+import { getAvailableProviders } from "@/features/ai/types/providers.types";
 import { useToast } from "@/features/layout/contexts/toast-context";
 import { TypedConfirmAction } from "@/features/settings/components/typed-confirm-action";
 import { LoadingIndicator } from "@/ui/loading";
-import { getDefaultSetting, useSettingsStore } from "@/features/settings/store";
-import { useAuthStore } from "@/features/window/stores/auth-store";
+import { getDefaultSetting, useSettingsStore } from "@/features/settings/stores/settings.store";
+import { useAuthStore } from "@/features/window/stores/auth.store";
 import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
 import Input from "@/ui/input";
@@ -31,6 +31,10 @@ import Section, { SETTINGS_CONTROL_WIDTHS, SettingRow } from "../settings-sectio
 import Select from "@/ui/select";
 import Switch from "@/ui/switch";
 import { fetchAutocompleteModels } from "@/features/editor/services/editor-autocomplete-service";
+import {
+  CUSTOM_AUTOCOMPLETE_PROVIDER_ID,
+  CUSTOM_CHAT_PROVIDER_ID,
+} from "@/features/ai/lib/custom-provider-config";
 import { cn } from "@/utils/cn";
 import {
   setCustomProviderBaseUrl,
@@ -49,8 +53,6 @@ import {
   storeProviderApiToken,
 } from "@/features/ai/services/ai-token-service";
 const DEFAULT_AUTOCOMPLETE_MODEL_ID = "mistralai/devstral-small";
-const CUSTOM_AUTOCOMPLETE_PROVIDER_ID = "autocomplete-custom";
-const CUSTOM_CHAT_PROVIDER_ID = "custom";
 
 function resolveAutocompleteDefaultModelId(models: Array<{ id: string; name: string }>): string {
   if (models.some((model) => model.id === DEFAULT_AUTOCOMPLETE_MODEL_ID)) {
@@ -84,7 +86,6 @@ export const AISettings = () => {
   const [customAutocompleteApiKeyInput, setCustomAutocompleteApiKeyInput] = useState("");
   const [hasCustomAutocompleteApiKey, setHasCustomAutocompleteApiKey] = useState(false);
   const [isSavingCustomAutocompleteApiKey, setIsSavingCustomAutocompleteApiKey] = useState(false);
-  const [customChatModelInput, setCustomChatModelInput] = useState(settings.aiCustomModelId);
   const [customChatBaseUrlInput, setCustomChatBaseUrlInput] = useState(settings.aiCustomBaseUrl);
   const [customChatApiKeyInput, setCustomChatApiKeyInput] = useState("");
   const [hasCustomChatApiKey, setHasCustomChatApiKey] = useState(false);
@@ -213,7 +214,7 @@ export const AISettings = () => {
     const provider = providers.find((p) => p.id === newProviderId);
     updateSetting("aiProviderId", newProviderId);
     if (newProviderId === CUSTOM_CHAT_PROVIDER_ID) {
-      updateSetting("aiModelId", settings.aiCustomModelId);
+      updateSetting("aiModelId", settings.aiCustomModelId || settings.aiAutocompleteCustomModelId);
       return;
     }
     if (provider && provider.models.length > 0) {
@@ -255,10 +256,6 @@ export const AISettings = () => {
   useEffect(() => {
     setCustomAutocompleteBaseUrlInput(settings.aiAutocompleteCustomBaseUrl);
   }, [settings.aiAutocompleteCustomBaseUrl]);
-
-  useEffect(() => {
-    setCustomChatModelInput(settings.aiCustomModelId);
-  }, [settings.aiCustomModelId]);
 
   useEffect(() => {
     setCustomChatBaseUrlInput(settings.aiCustomBaseUrl);
@@ -335,13 +332,6 @@ export const AISettings = () => {
     }
   };
 
-  const commitCustomChatModel = () => {
-    updateSetting("aiCustomModelId", customChatModelInput);
-    if (settings.aiProviderId === CUSTOM_CHAT_PROVIDER_ID) {
-      updateSetting("aiModelId", customChatModelInput);
-    }
-  };
-
   const commitCustomChatBaseUrl = () => {
     updateSetting("aiCustomBaseUrl", customChatBaseUrlInput);
     setCustomProviderBaseUrl(customChatBaseUrlInput);
@@ -408,19 +398,13 @@ export const AISettings = () => {
           }
         >
           {isCustomProviderSelected ? (
-            <Input
-              value={customChatModelInput}
-              onChange={(event) => setCustomChatModelInput(event.currentTarget.value)}
-              onBlur={commitCustomChatModel}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.currentTarget.blur();
-                }
+            <ModelSelector
+              providerId={settings.aiProviderId}
+              modelId={settings.aiModelId || settings.aiCustomModelId}
+              onChange={(id) => {
+                updateSetting("aiCustomModelId", id);
+                updateSetting("aiModelId", id);
               }}
-              placeholder="qwen2.5-coder:7b"
-              size="xs"
-              className={SETTINGS_CONTROL_WIDTHS.xwide}
-              spellCheck={false}
             />
           ) : (
             <ModelSelector

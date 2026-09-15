@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { Button } from "@/ui/button";
 import { cn } from "@/utils/cn";
 
 const DRAG_THRESHOLD = 4;
@@ -287,7 +286,7 @@ export function ReorderableItemStrip<T extends string>({
               itemRefs.current[itemId] = element;
             }}
             className={cn(
-              "group/item flex items-center transition-opacity duration-150",
+              "group/item flex items-center transition-opacity duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)]",
               isDragged && "opacity-60",
               previewOrder.length > 1 && "cursor-grab active:cursor-grabbing",
               itemClassName,

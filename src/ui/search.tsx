@@ -1,16 +1,17 @@
 import { cva } from "class-variance-authority";
 import {
-  TextAa as CaseSensitive,
-  CaretDown as ChevronDown,
-  CaretRight as ChevronRight,
-  CaretUp as ChevronUp,
-  BracketsCurly as Regex,
-  ArrowsLeftRight as Replace,
-  MagnifyingGlass as Search,
-  TextT as WholeWord,
-  X,
+  TextAaIcon as CaseSensitive,
+  CaretDownIcon as ChevronDown,
+  CaretRightIcon as ChevronRight,
+  CaretUpIcon as ChevronUp,
+  BracketsCurlyIcon as Regex,
+  ArrowsLeftRightIcon as Replace,
+  MagnifyingGlassIcon as Search,
+  TextTIcon as WholeWord,
+  XIcon as X,
+  type Icon as PhosphorIcon,
 } from "@phosphor-icons/react";
-import type { ReactNode, RefObject } from "react";
+import { forwardRef, type ComponentProps, type ReactNode, type RefObject } from "react";
 import { Button } from "@/ui/button";
 import Input from "@/ui/input";
 import { cn } from "@/utils/cn";
@@ -42,12 +43,36 @@ interface SearchPopoverProps {
   className?: string;
 }
 
+export const SearchField = forwardRef<
+  HTMLInputElement,
+  Omit<ComponentProps<typeof Input>, "onChange" | "value" | "leftIcon"> & {
+    value: string;
+    onChange: (value: string) => void;
+    leftIcon?: PhosphorIcon;
+  }
+>(function SearchField(
+  { value, onChange, leftIcon = Search, placeholder = "Search", ...props },
+  ref,
+) {
+  return (
+    <Input
+      ref={ref}
+      type="text"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      leftIcon={leftIcon}
+      placeholder={placeholder}
+      {...props}
+    />
+  );
+});
+
 const searchSurfaceVariants = cva(
-  "w-[320px] rounded-xl border border-border/70 bg-primary-bg/95 p-1.5 shadow-[0_16px_36px_-28px_rgba(0,0,0,0.55)] backdrop-blur-sm",
+  "w-[320px] rounded-xl border border-border/70 bg-primary-bg/95 p-1.5 shadow-[var(--shadow-popover)] backdrop-blur-sm",
 );
 
 const searchIconButtonVariants = cva(
-  "flex size-6 items-center justify-center rounded-lg border border-transparent text-text-lighter transition-colors hover:border-border/70 hover:bg-hover hover:text-text",
+  "flex size-6 items-center justify-center rounded-lg border border-transparent text-text-lighter transition-[transform,background-color,border-color,color] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] hover:border-border/70 hover:bg-hover hover:text-text active:scale-[var(--app-press-scale)]",
   {
     variants: {
       disabled: {
@@ -62,7 +87,7 @@ const searchIconButtonVariants = cva(
 );
 
 const searchToggleButtonVariants = cva(
-  "flex size-6 items-center justify-center rounded-lg border border-transparent transition-colors hover:border-border/70 hover:bg-hover",
+  "flex size-6 items-center justify-center rounded-lg border border-transparent transition-[transform,background-color,border-color,color] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] hover:border-border/70 hover:bg-hover active:scale-[var(--app-press-scale)]",
   {
     variants: {
       active: {
@@ -77,7 +102,7 @@ const searchToggleButtonVariants = cva(
 );
 
 const searchActionButtonVariants = cva(
-  "ui-font ui-text-sm flex h-8 items-center justify-center rounded-lg border border-transparent px-2.5 text-text-lighter transition-colors hover:border-border/70 hover:bg-hover hover:text-text",
+  "ui-font ui-text-sm flex h-8 items-center justify-center rounded-lg border border-transparent px-2.5 text-text-lighter transition-[transform,background-color,border-color,color] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] hover:border-border/70 hover:bg-hover hover:text-text active:scale-[var(--app-press-scale)]",
   {
     variants: {
       disabled: {
@@ -143,7 +168,7 @@ export function SearchPopover({
           <span
             className={cn(
               "ui-font ui-text-sm shrink-0",
-              matchTone === "warning" ? "text-amber-400" : "text-text-lighter",
+              matchTone === "warning" ? "text-warning" : "text-text-lighter",
             )}
           >
             {matchLabel}
@@ -279,7 +304,7 @@ export function SearchReplaceRow({
 }) {
   return (
     <div className="flex items-center gap-1.5 border-border/60 border-t pt-1.5">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-primary-bg text-text-lighter">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-primary-bg text-text-lighter">
         <Replace />
       </span>
 
@@ -403,5 +428,5 @@ export const SEARCH_TOGGLE_ICONS = {
   caseSensitive: <CaseSensitive />,
   wholeWord: <WholeWord />,
   regex: <Regex />,
-  preserveCase: <span className="ui-font ui-text-[11px] font-semibold">Aa</span>,
+  preserveCase: <span className="ui-font ui-text-xs font-semibold">Aa</span>,
 };

@@ -1,6 +1,6 @@
 /**
  * Syntax tokenization hook backed by a dedicated worker.
- * This keeps Tree-sitter parsing and query execution off the UI thread.
+ * This keeps Tree-sitter parsing and query execution off the UI thread for non-Monaco surfaces.
  */
 
 import { useCallback, useRef, useState } from "react";
@@ -8,12 +8,22 @@ import { EDITOR_CONSTANTS } from "@/features/editor/config/constants";
 import { logger } from "@/features/editor/utils/logger";
 import { getLanguageAssetConfig } from "../lib/wasm-parser/extension-assets";
 import { tokenizerWorkerClient } from "../lib/wasm-parser/tokenizer-worker-client";
-import type { HighlightToken } from "../lib/wasm-parser/types";
+import type { HighlightToken } from "../types/wasm-parser/wasm-parser.types";
 import { buildLineOffsetMap, normalizeLineEndings, type Token } from "../utils/html";
 import { getLanguageIdFromPath } from "../utils/language-id";
+import {
+  hasLineBasedSyntaxFallback,
+  hasLineBasedSyntaxHighlighter,
+  tokenizeLineBasedSyntax,
+} from "../utils/line-based-syntax";
 import { calculateEdit, isSimpleEdit } from "../utils/tree-sitter-edit";
 import { usePerformanceMonitor } from "./use-performance";
-import type { ViewportRange } from "./use-viewport-lines";
+
+export interface ViewportRange {
+  startLine: number;
+  endLine: number;
+  totalLines: number;
+}
 
 interface TokenizerOptions {
   filePath: string | undefined;
@@ -285,10 +295,22 @@ export function useTokenizer({
         setTokenState({ bufferId, tokens: [] });
         return;
       }
-      const languageAssets = getLanguageAssetConfig(languageId);
 
       const requestVersion = ++requestVersionRef.current;
       const normalizedText = normalizeLineEndings(text);
+
+      if (hasLineBasedSyntaxHighlighter(languageId)) {
+        const newTokens = tokenizeLineBasedSyntax(normalizedText, languageId);
+        setTokenState({ bufferId, tokens: newTokens });
+        setTokenizedContent(normalizedText);
+        cacheRef.current = {
+          fullTokens: newTokens,
+          previousContent: normalizedText,
+        };
+        return;
+      }
+
+      const languageAssets = getLanguageAssetConfig(languageId);
 
       retargetCachedTokens(normalizedText);
       setLoading(true);
@@ -316,6 +338,16 @@ export function useTokenizer({
       } catch (error) {
         if (requestVersion !== requestVersionRef.current) return;
         logger.warn("Editor", "[Tokenizer] Full tokenization failed:", error);
+        if (hasLineBasedSyntaxFallback(languageId)) {
+          const fallbackTokens = tokenizeLineBasedSyntax(normalizedText, languageId);
+          setTokenState({ bufferId, tokens: fallbackTokens });
+          setTokenizedContent(normalizedText);
+          cacheRef.current = {
+            fullTokens: fallbackTokens,
+            previousContent: normalizedText,
+          };
+          return;
+        }
         setTokenState({ bufferId, tokens: [] });
         setTokenizedContent("");
       } finally {
@@ -342,7 +374,6 @@ export function useTokenizer({
 
       const languageId = languageIdOverride || getLanguageId(filePath);
       if (!languageId) return;
-      const languageAssets = getLanguageAssetConfig(languageId);
 
       const requestVersion = ++requestVersionRef.current;
       const { normalizedText, lineOffsets, lineCount } = getTextMetrics(text);
@@ -353,9 +384,33 @@ export function useTokenizer({
       retargetCachedTokens(normalizedText);
       setLoading(true);
       startMeasure("tokenizeRangeInternal");
+      const tokenizationRange = expandTokenizationViewportRange(viewportRange, lineCount);
 
       try {
-        const tokenizationRange = expandTokenizationViewportRange(viewportRange, lineCount);
+        if (hasLineBasedSyntaxHighlighter(languageId)) {
+          const rangeTokens = tokenizeLineBasedSyntax(normalizedText, languageId, {
+            startLine: tokenizationRange.startLine,
+            endLine: tokenizationRange.endLine,
+          });
+          const rangeStartOffset = lineOffsets[tokenizationRange.startLine] ?? 0;
+          const rangeEndOffset =
+            lineOffsets[tokenizationRange.endLine + 1] ?? normalizedText.length;
+          const mergedTokens = mergeTokenizedRange({
+            cachedTokens: cacheRef.current.fullTokens,
+            rangeTokens,
+            rangeStartOffset,
+            rangeEndOffset,
+            retainOutsideRange: lineCount < LARGE_FILE_LINE_THRESHOLD,
+          });
+
+          setTokenState({ bufferId, tokens: mergedTokens });
+          setTokenizedContent(normalizedText);
+          cacheRef.current.fullTokens = mergedTokens;
+          cacheRef.current.previousContent = normalizedText;
+          return;
+        }
+
+        const languageAssets = getLanguageAssetConfig(languageId);
 
         const result = await tokenizerWorkerClient.tokenize({
           bufferId,
@@ -413,6 +468,27 @@ export function useTokenizer({
       } catch (error) {
         if (requestVersion !== requestVersionRef.current) return;
         logger.warn("Editor", "[Tokenizer] Range tokenization failed:", error);
+        if (hasLineBasedSyntaxFallback(languageId)) {
+          const fallbackTokens = tokenizeLineBasedSyntax(normalizedText, languageId, {
+            startLine: tokenizationRange.startLine,
+            endLine: tokenizationRange.endLine,
+          });
+          const rangeStartOffset = lineOffsets[tokenizationRange.startLine] ?? 0;
+          const rangeEndOffset =
+            lineOffsets[tokenizationRange.endLine + 1] ?? normalizedText.length;
+          const mergedTokens = mergeTokenizedRange({
+            cachedTokens: cacheRef.current.fullTokens,
+            rangeTokens: fallbackTokens,
+            rangeStartOffset,
+            rangeEndOffset,
+            retainOutsideRange: lineCount < LARGE_FILE_LINE_THRESHOLD,
+          });
+
+          setTokenState({ bufferId, tokens: mergedTokens });
+          setTokenizedContent(normalizedText);
+          cacheRef.current.fullTokens = mergedTokens;
+          cacheRef.current.previousContent = normalizedText;
+        }
       } finally {
         if (requestVersion === requestVersionRef.current) {
           setLoading(false);

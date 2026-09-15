@@ -1,23 +1,28 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
-  CaretDown as ChevronDown,
-  Plus,
-  MagnifyingGlass as Search,
-  SlidersHorizontal as Settings2,
+  CaretDownIcon as ChevronDown,
+  PlusIcon as Plus,
+  MagnifyingGlassIcon as Search,
+  SlidersHorizontalIcon as Settings2,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProviderIcon } from "@/features/ai/components/icons/provider-icons";
 import { AcpStreamHandler } from "@/features/ai/services/acp-stream-handler";
-import { useAIChatStore } from "@/features/ai/store/store";
-import type { AgentConfig } from "@/features/ai/types/acp";
-import type { AgentType } from "@/features/ai/types/ai-chat";
+import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
+import type { AgentConfig } from "@/features/ai/types/acp.types";
+import type { AgentType } from "@/features/ai/types/ai-chat.types";
 import { LoadingIndicator } from "@/ui/loading";
 import { Button } from "@/ui/button";
 import { Dropdown } from "@/ui/dropdown";
 import Input from "@/ui/input";
-import { PaneIconButton } from "@/ui/pane";
+import { PaneIconButton } from "@/features/panes/components/pane-chrome";
 import { toast } from "@/ui/toast";
 import { cn } from "@/utils/cn";
+import {
+  CLAUDE_CODE_TERMINAL_AGENT_ID,
+  CLAUDE_CODE_TERMINAL_OPTION,
+} from "@/features/ai/lib/claude-code";
+import { openClaudeCodeTerminal } from "@/features/ai/lib/claude-code-terminal";
 
 const ATHAS_AGENT_OPTION = {
   id: "custom",
@@ -34,7 +39,6 @@ interface AgentSelectorProps {
   portalContainer?: Element | DocumentFragment | null;
   triggerClassName?: string;
   triggerTooltip?: string;
-  openSignal?: number;
 }
 
 export function AgentSelector({
@@ -45,7 +49,6 @@ export function AgentSelector({
   portalContainer,
   triggerClassName,
   triggerTooltip,
-  openSignal,
 }: AgentSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -60,10 +63,12 @@ export function AgentSelector({
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const previousOpenSignalRef = useRef(openSignal);
 
   const currentAgentId = selectedAgentId ?? getCurrentAgentId();
-  const currentAgent = agentConfigs.get(currentAgentId) ?? ATHAS_AGENT_OPTION;
+  const currentAgent =
+    currentAgentId === CLAUDE_CODE_TERMINAL_AGENT_ID
+      ? CLAUDE_CODE_TERMINAL_OPTION
+      : (agentConfigs.get(currentAgentId) ?? ATHAS_AGENT_OPTION);
 
   const loadInstalledAgents = useCallback(async () => {
     try {
@@ -103,7 +108,7 @@ export function AgentSelector({
     const registryAgents = Array.from(agentConfigs.values()).sort((a, b) =>
       a.name.localeCompare(b.name),
     );
-    const availableAgents = [ATHAS_AGENT_OPTION, ...registryAgents];
+    const availableAgents = [ATHAS_AGENT_OPTION, CLAUDE_CODE_TERMINAL_OPTION, ...registryAgents];
     const matchingAgents = availableAgents.filter(
       (agent) =>
         !search ||
@@ -114,15 +119,17 @@ export function AgentSelector({
     for (const agent of matchingAgents) {
       const isInstalled = installedAgents.has(agent.id);
       const agentConfig = agentConfigs.get(agent.id);
+      const isClaudeCodeTerminal = agent.id === CLAUDE_CODE_TERMINAL_AGENT_ID;
 
       items.push({
         type: "agent",
         id: agent.id,
         name: agent.name,
         description: agentConfig?.description ?? agent.description ?? "ACP-compatible coding agent",
-        isInstalled,
+        isInstalled: isClaudeCodeTerminal || isInstalled,
         isCurrent: agent.id === currentAgentId,
-        canInstall: agent.id === "custom" ? false : (agentConfig?.canInstall ?? true),
+        canInstall:
+          agent.id === "custom" || isClaudeCodeTerminal ? false : (agentConfig?.canInstall ?? true),
         isInstalling: installingAgentId === agent.id,
       });
     }
@@ -139,37 +146,46 @@ export function AgentSelector({
     return () => cancelAnimationFrame(frame);
   }, [isOpen]);
 
-  useEffect(() => {
-    if (openSignal === undefined || openSignal === previousOpenSignalRef.current) return;
-    previousOpenSignalRef.current = openSignal;
-    setIsOpen(true);
-  }, [openSignal]);
-
-  useEffect(() => {
+  const resetSelection = useCallback(() => {
     setSelectedIndex(0);
-  }, [search]);
+  }, []);
 
-  useEffect(() => {
-    if (!isOpen) {
-      setSearch("");
-      setSelectedIndex(0);
+  const closeAgentSelector = useCallback(() => {
+    setSearch("");
+    setSelectedIndex(0);
+    setIsOpen(false);
+  }, []);
+
+  const toggleAgentSelector = useCallback(() => {
+    if (isOpen) {
+      closeAgentSelector();
+      return;
     }
-  }, [isOpen]);
+    setSearch("");
+    setSelectedIndex(0);
+    setIsOpen(true);
+  }, [closeAgentSelector, isOpen]);
 
   const handleAgentChange = useCallback(
     async (agentId: AgentType) => {
       if (onSelectAgent) {
-        setIsOpen(false);
+        closeAgentSelector();
         onSelectAgent(agentId);
         return;
       }
 
-      if (variant !== "header" && agentId === currentAgentId) {
-        setIsOpen(false);
+      if (agentId === CLAUDE_CODE_TERMINAL_AGENT_ID) {
+        closeAgentSelector();
+        openClaudeCodeTerminal();
         return;
       }
 
-      setIsOpen(false);
+      if (variant !== "header" && agentId === currentAgentId) {
+        closeAgentSelector();
+        return;
+      }
+
+      closeAgentSelector();
       setSelectedAgentId(agentId);
 
       if (currentAgentId !== "custom") {
@@ -192,6 +208,7 @@ export function AgentSelector({
       }
     },
     [
+      closeAgentSelector,
       onSelectAgent,
       variant,
       currentAgentId,
@@ -254,11 +271,18 @@ export function AgentSelector({
           break;
         case "Escape":
           e.preventDefault();
-          setIsOpen(false);
+          closeAgentSelector();
           break;
       }
     },
-    [isOpen, selectableItems, selectedIndex, handleAgentChange, handleInstallAgent],
+    [
+      isOpen,
+      selectableItems,
+      selectedIndex,
+      handleAgentChange,
+      handleInstallAgent,
+      closeAgentSelector,
+    ],
   );
 
   let selectableIndex = -1;
@@ -268,7 +292,7 @@ export function AgentSelector({
       {variant === "header" ? (
         <PaneIconButton
           ref={triggerRef}
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={toggleAgentSelector}
           type="button"
           tooltip={triggerTooltip ?? "New chat"}
           className={triggerClassName}
@@ -278,7 +302,7 @@ export function AgentSelector({
       ) : (
         <Button
           ref={triggerRef}
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={toggleAgentSelector}
           type="button"
           variant="ghost"
           compact
@@ -297,7 +321,7 @@ export function AgentSelector({
         anchorRef={triggerRef}
         anchorSide="bottom"
         anchorAlign="end"
-        onClose={() => setIsOpen(false)}
+        onClose={closeAgentSelector}
         portalContainer={portalContainer}
         className="flex w-[min(280px,calc(100vw-16px))] max-w-[calc(100vw-16px)] flex-col overflow-hidden rounded-xl p-0"
         style={{ maxHeight: "240px" }}
@@ -307,7 +331,10 @@ export function AgentSelector({
             ref={inputRef}
             type="text"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              resetSelection();
+            }}
             onKeyDown={handleKeyDown}
             placeholder="Search agents..."
             variant="ghost"
@@ -386,7 +413,7 @@ export function AgentSelector({
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation();
-                          setIsOpen(false);
+                          closeAgentSelector();
                           onOpenSettings();
                         }}
                         variant="ghost"

@@ -1,7 +1,7 @@
 import {
-  CaretDown as ChevronDown,
-  CaretRight as ChevronRight,
-  FileText,
+  CaretDownIcon as ChevronDown,
+  CaretRightIcon as ChevronRight,
+  FileTextIcon as FileText,
 } from "@phosphor-icons/react";
 import { memo } from "react";
 import { Button } from "@/ui/button";
@@ -9,7 +9,7 @@ import { LoadingIndicator } from "@/ui/loading";
 import Tooltip from "@/ui/tooltip";
 import { cn } from "@/utils/cn";
 import { usePRDiffHighlighting } from "../hooks/use-pr-diff-highlighting";
-import type { FileDiff } from "../types/github-pr-viewer";
+import type { FileDiff } from "../types/github-pr-viewer.types";
 import { DiffLineDisplay } from "./diff-line-display";
 
 interface FileDiffViewProps {
@@ -43,7 +43,7 @@ export const FileDiffView = memo(
     const tokenMap = usePRDiffHighlighting(isExpanded ? fileLines : [], file.path);
 
     return (
-      <div className="min-w-0 overflow-hidden rounded-xl bg-secondary-bg/20">
+      <div className="min-w-0 overflow-hidden rounded-md border border-border/70 bg-primary-bg">
         {isStatic ? (
           <div className="flex items-center gap-2 px-2.5 py-2">
             <FileText className="shrink-0 text-text-lighter" />
@@ -64,7 +64,7 @@ export const FileDiffView = memo(
             type="button"
             variant="ghost"
             onClick={onToggle}
-            className="h-auto w-full justify-start rounded-xl px-2.5 py-2 text-left hover:bg-hover/60"
+            className="h-auto w-full justify-start rounded-none px-2.5 py-2 text-left hover:bg-hover/60"
             aria-label={`${isExpanded ? "Collapse" : "Expand"} diff for ${file.path}`}
             compact
           >
@@ -88,7 +88,7 @@ export const FileDiffView = memo(
           </Button>
         )}
         {isExpanded && (
-          <div className="border-border/50 border-t bg-primary-bg/40">
+          <div className="border-border/70 border-t bg-primary-bg">
             <div className="flex items-center justify-between px-3 py-2">
               <Tooltip content="Open file in editor" side="top">
                 <Button

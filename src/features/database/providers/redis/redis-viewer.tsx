@@ -1,10 +1,10 @@
 import {
-  Clock,
-  Key,
-  ArrowClockwise as RefreshCw,
-  MagnifyingGlass as Search,
-  HardDrives as Server,
-  Trash as Trash2,
+  ClockIcon as Clock,
+  KeyIcon as Key,
+  ArrowClockwiseIcon as RefreshCw,
+  MagnifyingGlassIcon as Search,
+  HardDrivesIcon as Server,
+  TrashIcon as Trash2,
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import Badge from "@/ui/badge";
@@ -12,7 +12,7 @@ import { Button } from "@/ui/button";
 import Input from "@/ui/input";
 import { LoadingIndicator } from "@/ui/loading";
 import { cn } from "@/utils/cn";
-import { useRedisStore } from "./stores/redis-store";
+import { useRedisStore } from "./stores/redis.store";
 
 const TYPE_COLORS: Record<string, string> = {
   string: "text-accent",
@@ -115,7 +115,7 @@ export default function RedisViewer({ connectionId }: RedisViewerProps) {
           <div className="flex items-center gap-1.5 border-border/60 border-b px-3 py-2">
             <Search className="text-text-lighter" />
             <Input
-              className="border-0 bg-transparent px-0 py-0 focus:border-transparent focus:ring-0"
+              className="border-0 bg-transparent p-0 focus:border-transparent focus:ring-0"
               placeholder="Pattern (e.g. user:*)"
               value={patternInput}
               onChange={(e) => setPatternInput(e.target.value)}
@@ -145,7 +145,7 @@ export default function RedisViewer({ connectionId }: RedisViewerProps) {
                 variant="ghost"
                 onClick={() => actions.selectKey(keyInfo.key)}
                 className={cn(
-                  "h-auto w-full justify-start gap-1.5 px-2 py-1",
+                  "h-auto w-full justify-start gap-1.5 px-2 py-1 leading-[1.35]",
                   store.selectedKey === keyInfo.key && "bg-selected",
                 )}
                 aria-label={`Select key ${keyInfo.key}`}
@@ -158,7 +158,7 @@ export default function RedisViewer({ connectionId }: RedisViewerProps) {
                 >
                   {keyInfo.type.substring(0, 3)}
                 </Badge>
-                <span className="flex-1 truncate">{keyInfo.key}</span>
+                <span className="flex-1 truncate leading-[1.35]">{keyInfo.key}</span>
                 {keyInfo.ttl > 0 && (
                   <span className="flex items-center gap-0.5 text-text-lighter">
                     <Clock />
@@ -184,7 +184,7 @@ export default function RedisViewer({ connectionId }: RedisViewerProps) {
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-primary-bg/85">
           {store.error && (
-            <div className="mx-3 mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-red-400 ui-text-xs">
+            <div className="mx-3 mt-3 rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-error ui-text-xs">
               {store.error}
             </div>
           )}
@@ -231,7 +231,7 @@ export default function RedisViewer({ connectionId }: RedisViewerProps) {
                   onClick={() => actions.deleteKey(store.selectedKey!)}
                   variant="ghost"
                   compact
-                  className="text-red-400 hover:bg-red-500/10 hover:text-red-400"
+                  className="text-error hover:bg-error/10 hover:text-error"
                   aria-label="Delete key"
                 >
                   <Trash2 />

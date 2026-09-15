@@ -1,10 +1,12 @@
-import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { Dialog as DialogPrimitive } from "@base-ui/react";
 import { cva } from "class-variance-authority";
-import { AnimatePresence, motion } from "framer-motion";
-import { ArrowClockwise as RefreshCwIcon, X } from "@phosphor-icons/react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { ArrowClockwiseIcon as RefreshCwIcon, XIcon as X } from "@phosphor-icons/react";
+import { useCallback, useRef } from "react";
 import type React from "react";
-import { useActionsStore } from "@/features/command-palette/store";
-import { Button } from "@/ui/button";
+import { useActionsStore } from "@/features/command-palette/stores/action-history.store";
+import { Button, type ButtonProps, type ButtonVariant } from "@/ui/button";
+import { instantTransition, overlayTransition, motionEase, motionDuration } from "@/ui/motion";
 import { cn } from "@/utils/cn";
 
 interface CommandProps {
@@ -14,14 +16,17 @@ interface CommandProps {
   onClose?: () => void;
   placement?: "top" | "bottom";
   title?: string;
+  autoFocus?: boolean;
 }
 
+const commandInputSelector = "[data-command-input]";
+
 const commandContentVariants = cva(
-  "relative z-10 flex max-h-80 w-[520px] flex-col overflow-hidden rounded-xl border border-border bg-primary-bg shadow-2xl focus:outline-none",
+  "relative z-10 flex max-h-80 w-[520px] flex-col overflow-hidden rounded-xl border border-border bg-primary-bg shadow-[var(--shadow-dialog)] focus:outline-none",
 );
 
 const commandItemVariants = cva(
-  "mb-1 flex w-full cursor-pointer items-center justify-start gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors",
+  "ui-font mb-1 flex min-h-7 w-full cursor-pointer items-center justify-start gap-2 rounded-lg px-2.5 py-1.5 text-left text-[length:var(--ui-text-xs)] leading-[1.35] transition-colors",
   {
     variants: {
       selected: {
@@ -35,6 +40,33 @@ const commandItemVariants = cva(
   },
 );
 
+const commandHeaderContentVariants = cva("flex items-center gap-2", {
+  variants: {
+    density: {
+      compact: "px-3 py-2",
+      comfortable: "px-4 py-3",
+    },
+  },
+  defaultVariants: {
+    density: "compact",
+  },
+});
+
+const commandInputVariants = cva(
+  "ui-font min-w-0 flex-1 bg-transparent text-text placeholder-text-lighter outline-none",
+  {
+    variants: {
+      size: {
+        sm: "h-6 text-[length:var(--ui-text-xs)] leading-[1.35]",
+        md: "h-7 text-[length:var(--ui-text-sm)] leading-[1.4]",
+      },
+    },
+    defaultVariants: {
+      size: "sm",
+    },
+  },
+);
+
 const Command = ({
   isVisible,
   children,
@@ -42,12 +74,19 @@ const Command = ({
   onClose,
   placement = "top",
   title = "Command palette",
+  autoFocus = true,
 }: CommandProps) => {
+  const popupRef = useRef<HTMLDivElement>(null);
+  const prefersReducedMotion = useReducedMotion();
   const containerClassName =
     placement === "bottom"
       ? "fixed inset-0 z-[10060] flex items-end justify-center px-4 pb-12"
       : "fixed inset-0 z-[10060] flex items-start justify-center pt-16";
   const motionY = placement === "bottom" ? 8 : -8;
+  const getInitialFocusTarget = useCallback(
+    () => popupRef.current?.querySelector<HTMLElement>(commandInputSelector) ?? true,
+    [],
+  );
 
   return (
     <AnimatePresence>
@@ -55,30 +94,49 @@ const Command = ({
         <DialogPrimitive.Root open={isVisible} onOpenChange={(open) => !open && onClose?.()}>
           <DialogPrimitive.Portal>
             <div className={containerClassName}>
-              <DialogPrimitive.Overlay asChild>
-                <motion.button
-                  type="button"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute inset-0 z-0 cursor-default bg-black/20"
-                  aria-label="Close command palette"
-                  tabIndex={-1}
-                />
-              </DialogPrimitive.Overlay>
-              <DialogPrimitive.Content asChild aria-describedby={undefined}>
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: motionY }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: motionY }}
-                  transition={{ duration: 0.15, ease: "easeOut" }}
-                  className={cn(commandContentVariants(), className)}
-                >
-                  <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
-                  {children}
-                </motion.div>
-              </DialogPrimitive.Content>
+              <DialogPrimitive.Backdrop
+                render={
+                  <motion.button
+                    type="button"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={prefersReducedMotion ? instantTransition : overlayTransition}
+                  />
+                }
+                className="absolute inset-0 z-0 cursor-default bg-black/20"
+                aria-label="Close command palette"
+                tabIndex={-1}
+              />
+              <DialogPrimitive.Popup
+                ref={popupRef}
+                aria-describedby={undefined}
+                initialFocus={autoFocus ? getInitialFocusTarget : false}
+                render={
+                  <motion.div
+                    initial={
+                      prefersReducedMotion
+                        ? false
+                        : { opacity: 0, scale: 0.98, y: motionY, filter: "blur(2px)" }
+                    }
+                    animate={{ opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
+                    exit={
+                      prefersReducedMotion
+                        ? { opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }
+                        : { opacity: 0, scale: 0.98, y: motionY, filter: "blur(2px)" }
+                    }
+                    transition={
+                      prefersReducedMotion
+                        ? instantTransition
+                        : { duration: motionDuration.fast, ease: motionEase.smooth }
+                    }
+                  />
+                }
+                className={cn(commandContentVariants(), className)}
+              >
+                <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
+                {children}
+              </DialogPrimitive.Popup>
             </div>
           </DialogPrimitive.Portal>
         </DialogPrimitive.Root>
@@ -93,18 +151,24 @@ interface CommandHeaderProps {
   children: React.ReactNode;
   onClose: () => void;
   showClearButton?: boolean;
+  density?: "compact" | "comfortable";
+  className?: string;
+  contentClassName?: string;
 }
 
 export const CommandHeader = ({
   children,
   onClose,
   showClearButton = false,
+  density = "compact",
+  className,
+  contentClassName,
 }: CommandHeaderProps) => {
   const clearActionsStack = useActionsStore.use.clearStack();
 
   return (
-    <div data-command-header className="border-border border-b">
-      <div className="flex items-center gap-3 px-4 py-3">
+    <div data-command-header className={cn("border-border border-b", className)}>
+      <div className={cn(commandHeaderContentVariants({ density }), contentClassName)}>
         {children}
         <Button
           aria-label="Close command palette"
@@ -165,6 +229,7 @@ interface CommandInputProps {
   onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
   placeholder: string;
   className?: string;
+  size?: "sm" | "md";
   ref?: React.Ref<HTMLInputElement>;
 }
 
@@ -174,6 +239,7 @@ export const CommandInput = ({
   onKeyDown,
   placeholder,
   className,
+  size = "sm",
   ref,
 }: CommandInputProps) => (
   <input
@@ -183,10 +249,8 @@ export const CommandInput = ({
     onChange={(e) => onChange(e.target.value)}
     onKeyDown={onKeyDown}
     placeholder={placeholder}
-    className={cn(
-      "ui-text-sm flex-1 bg-transparent text-text placeholder-text-lighter outline-none",
-      className,
-    )}
+    className={cn(commandInputVariants({ size }), className)}
+    data-command-input=""
   />
 );
 
@@ -228,6 +292,41 @@ export const CommandItem = ({
 );
 
 CommandItem.displayName = "CommandItem";
+
+export const CommandItemTitle = ({ className, ...props }: React.ComponentProps<"span">) => (
+  <span className={cn("min-w-0 truncate text-text", className)} {...props} />
+);
+
+CommandItemTitle.displayName = "CommandItemTitle";
+
+export const CommandItemMeta = ({ className, ...props }: React.ComponentProps<"span">) => (
+  <span className={cn("ml-1.5 min-w-0 truncate text-text-lighter/70", className)} {...props} />
+);
+
+CommandItemMeta.displayName = "CommandItemMeta";
+
+type CommandFooterActionProps = Omit<ButtonProps, "compact" | "variant"> & {
+  variant?: ButtonVariant;
+};
+
+export const CommandFooterAction = ({
+  className,
+  variant = "ghost",
+  ...props
+}: CommandFooterActionProps) => (
+  <Button
+    variant={variant}
+    compact
+    className={cn(
+      "h-6 min-w-0 justify-start px-2 text-[length:var(--ui-text-xs)] leading-[1.35]",
+      variant === "ghost" && "text-text-lighter hover:text-text",
+      className,
+    )}
+    {...props}
+  />
+);
+
+CommandFooterAction.displayName = "CommandFooterAction";
 
 interface CommandEmptyProps {
   children: React.ReactNode;

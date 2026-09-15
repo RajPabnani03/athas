@@ -1,8 +1,8 @@
-import { Plus, X } from "@phosphor-icons/react";
+import { PlusIcon as Plus, XIcon as X } from "@phosphor-icons/react";
 import { Button } from "@/ui/button";
 import Input from "@/ui/input";
 import Select from "@/ui/select";
-import type { ColumnFilter, ColumnInfo, FilterOperator } from "../models/common.types";
+import type { ColumnFilter, ColumnInfo, FilterOperator } from "../types/common.types";
 
 const FILTER_OPERATORS: { value: FilterOperator; label: string }[] = [
   { value: "equals", label: "=" },
@@ -112,7 +112,7 @@ export default function ColumnFilters({
               onClick={() => onRemove(index)}
               variant="ghost"
               compact
-              className="text-text-lighter hover:text-red-500"
+              className="text-text-lighter hover:text-error"
               aria-label="Remove filter"
             >
               <X />

@@ -1,12 +1,18 @@
 import { appDataDir } from "@tauri-apps/api/path";
-import { ClockCounterClockwise as History } from "@phosphor-icons/react";
+import {
+  ClockCounterClockwiseIcon as History,
+  PuzzlePieceIcon as Puzzle,
+} from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useUIExtensionStore } from "@/extensions/ui/stores/ui-extension-store";
 import { IconThemeSelectorContent } from "@/features/command-palette/components/icon-theme-selector";
 import { ThemeSelectorContent } from "@/features/command-palette/components/theme-selector";
+import { useEditorSettingsStore } from "@/features/editor/stores/settings.store";
 import { QuickQuestionCommandContent } from "@/features/ai/components/quick-question-command";
-import { useLspStore } from "@/features/editor/lsp/lsp-store";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
-import { useFileSystemStore } from "@/features/file-system/controllers/store";
+import { useLspStore } from "@/features/editor/lsp/stores/lsp.store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { isMarkdownFile } from "@/features/editor/utils/lines";
+import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
 import { LocalHistoryCommandContent } from "@/features/local-history/components/local-history-command";
 import { OutlineCommandContent } from "@/features/outline/components/outline-command";
 import { commitChanges } from "@/features/git/api/git-commits-api";
@@ -16,18 +22,18 @@ import {
   stageAllFiles,
   unstageAllFiles,
 } from "@/features/git/api/git-status-api";
-import { useGitStore } from "@/features/git/stores/git-store";
-import { useRepositoryStore } from "@/features/git/stores/git-repository-store";
-import { useGitHubStore } from "@/features/github/stores/github-store";
+import { useGitStore } from "@/features/git/stores/git.store";
+import { useRepositoryStore } from "@/features/git/stores/git-repository.store";
+import { useGitHubStore } from "@/features/github/stores/github.store";
 import { useToast } from "@/features/layout/contexts/toast-context";
-import { useOnboardingStore } from "@/features/onboarding/store";
-import { useSettingsStore } from "@/features/settings/store";
-import { useWhatsNewStore } from "@/features/settings/stores/whats-new-store";
+import { useOnboardingStore } from "@/features/onboarding/stores/onboarding.store";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { useWhatsNewStore } from "@/features/settings/stores/whats-new.store";
 import { vimCommands } from "@/features/vim/stores/vim-commands";
-import { useVimStore } from "@/features/vim/stores/vim-store";
-import { useEditorAppStore } from "@/features/editor/stores/editor-app-store";
-import { useUIState } from "@/features/window/stores/ui-state-store";
-import { useZoomStore } from "@/features/window/stores/zoom-store";
+import { useVimStore } from "@/features/vim/stores/vim.store";
+import { useEditorAppStore } from "@/features/editor/stores/editor-app.store";
+import { useUIState } from "@/features/window/stores/ui-state.store";
+import { useZoomStore } from "@/features/window/stores/zoom.store";
 import { keymapRegistry } from "@/features/keymaps/utils/registry";
 import Command, {
   CommandEmpty,
@@ -41,6 +47,7 @@ import { matchesSearchQuery } from "@/utils/search-match";
 import { createAdvancedActions } from "../constants/advanced-actions";
 import { createDatabaseActions } from "../constants/database-actions";
 import { createFileActions } from "../constants/file-actions";
+import { createGenerateActions } from "../constants/generate-actions";
 import { createGitActions } from "../constants/git-actions";
 import { createGitHubActions } from "../constants/github-actions";
 import { createMarkdownActions } from "../constants/markdown-actions";
@@ -49,9 +56,9 @@ import { createPaneActions } from "../constants/pane-actions";
 import { createSettingsActions } from "../constants/settings-actions";
 import { createViewActions } from "../constants/view-actions";
 import { createWindowActions } from "../constants/window-actions";
-import type { Action } from "../models/action.types";
-import type { CommandPaletteViewId } from "../models/view.types";
-import { useActionsStore } from "../store";
+import type { Action } from "../types/action.types";
+import type { CommandPaletteViewId } from "../types/view.types";
+import { useActionsStore } from "../stores/action-history.store";
 
 const CommandPalette = () => {
   // Get data from stores
@@ -86,9 +93,15 @@ const CommandPalette = () => {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [viewStack, setViewStack] = useState<CommandPaletteViewId[]>(["root"]);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [activeInitialView, setActiveInitialView] = useState<CommandPaletteViewId>("root");
   const resultsRef = useRef<HTMLDivElement>(null);
-  const currentView = viewStack[viewStack.length - 1] || "root";
+  const initialViewStack = useMemo<CommandPaletteViewId[]>(
+    () => (commandPaletteInitialView === "root" ? ["root"] : ["root", commandPaletteInitialView]),
+    [commandPaletteInitialView],
+  );
+  const renderedViewStack =
+    isVisible && activeInitialView !== commandPaletteInitialView ? initialViewStack : viewStack;
+  const currentView = renderedViewStack[renderedViewStack.length - 1] || "root";
   const isRootView = currentView === "root";
 
   const pushView = (view: CommandPaletteViewId) => {
@@ -104,7 +117,13 @@ const CommandPalette = () => {
   };
 
   const handleThemeChange = useCallback((theme: string) => {
-    void useSettingsStore.getState().updateSetting("theme", theme);
+    const { settings, updateSetting } = useSettingsStore.getState();
+    if (settings.syncSystemTheme) {
+      void updateSetting("syncSystemTheme", false).then(() => updateSetting("theme", theme));
+      return;
+    }
+
+    void updateSetting("theme", theme);
   }, []);
 
   const handleIconThemeChange = useCallback((iconTheme: string) => {
@@ -114,13 +133,14 @@ const CommandPalette = () => {
   const lastEnteredActions = useActionsStore.use.lastEnteredActionsStack();
   const pushAction = useActionsStore.use.pushAction();
   const { settings } = useSettingsStore();
+  const effectiveTheme = useEditorSettingsStore.use.theme();
   const { setMode } = useVimStore.use.actions();
   const lspStatus = useLspStore.use.lspStatus();
-  const { clearLspError, updateLspStatus } = useLspStore.use.actions();
   const { rootFolderPath } = useFileSystemStore();
   const activeRepoPath = useRepositoryStore.use.activeRepoPath();
   const gitStore = useGitStore();
   const { checkAuth: checkGitHubAuth } = useGitHubStore().actions;
+  const extensionCommands = useUIExtensionStore.use.commands();
   const { showToast } = useToast();
   const openWhatsNew = useWhatsNewStore((state) => state.open);
   const openOnboarding = useOnboardingStore((state) => state.openPreview);
@@ -138,17 +158,12 @@ const CommandPalette = () => {
   const { zoomIn, zoomOut, resetZoom } = useZoomStore.use.actions();
   const { openBuffer } = useBufferStore.use.actions();
 
-  // Helper function to check if the active buffer is a markdown file
-  const isMarkdownFile = () => {
-    if (!activeBuffer) return false;
-    const extension = activeBuffer.path.split(".").pop()?.toLowerCase();
-    return extension === "md" || extension === "markdown";
-  };
+  const isActiveMarkdownFile = activeBuffer ? isMarkdownFile(activeBuffer.path) : false;
 
   // Create all actions using factory functions
   const allActions: Action[] = [
     ...createMarkdownActions({
-      isMarkdownFile: isMarkdownFile(),
+      isMarkdownFile: isActiveMarkdownFile,
       activeBuffer,
       openBuffer,
       onClose,
@@ -167,6 +182,7 @@ const CommandPalette = () => {
         sidebarPosition: settings.sidebarPosition,
         nativeMenuBar: settings.nativeMenuBar,
         compactMenuBar: settings.compactMenuBar,
+        webViewerEnabled: settings.coreFeatures.webViewer,
       },
       updateSetting: useSettingsStore.getState().updateSetting as (
         key: string,
@@ -219,6 +235,27 @@ const CommandPalette = () => {
       reopenClosedTab,
       onClose,
     }),
+    ...createGenerateActions({
+      onClose,
+    }),
+    ...Array.from(extensionCommands.values()).map(
+      (command): Action => ({
+        id: `extension-command:${command.id}`,
+        label: command.title,
+        description: command.category ?? "Installed extension command",
+        icon: <Puzzle />,
+        category: "Extensions",
+        action: () => {
+          onClose();
+          void Promise.resolve(command.execute()).catch((error) => {
+            showToast({
+              message: error instanceof Error ? error.message : "Extension command failed",
+              type: "error",
+            });
+          });
+        },
+      }),
+    ),
     ...createWindowActions({
       onClose,
     }),
@@ -265,13 +302,6 @@ const CommandPalette = () => {
     }),
     ...createAdvancedActions({
       lspStatus,
-      updateLspStatus: updateLspStatus as (
-        status: string,
-        workspaces?: string[],
-        error?: string,
-      ) => void,
-      clearLspError,
-      rootFolderPath,
       vimMode: settings.vimMode,
       vimCommands,
       setMode,
@@ -336,16 +366,10 @@ const CommandPalette = () => {
     if (isVisible) {
       setQuery("");
       setSelectedIndex(0);
-      setViewStack(
-        commandPaletteInitialView === "root" ? ["root"] : ["root", commandPaletteInitialView],
-      );
-      requestAnimationFrame(() => {
-        if (inputRef.current) {
-          inputRef.current.focus();
-        }
-      });
+      setActiveInitialView(commandPaletteInitialView);
+      setViewStack(initialViewStack);
     }
-  }, [isVisible, commandPaletteInitialView]);
+  }, [isVisible, commandPaletteInitialView, initialViewStack]);
 
   // Update selected index when query changes
   useEffect(() => {
@@ -371,7 +395,6 @@ const CommandPalette = () => {
     <Command isVisible={isVisible} onClose={onClose}>
       {currentView === "quick-question" ? (
         <QuickQuestionCommandContent
-          isActive={currentView === "quick-question"}
           onBack={popView}
           onClose={onClose}
           activeBuffer={activeBuffer}
@@ -384,7 +407,7 @@ const CommandPalette = () => {
           onBack={popView}
           onClose={onClose}
           onThemeChange={handleThemeChange}
-          currentTheme={settings.theme}
+          currentTheme={settings.syncSystemTheme ? effectiveTheme : settings.theme}
         />
       ) : currentView === "icon-theme" ? (
         <IconThemeSelectorContent
@@ -415,12 +438,7 @@ const CommandPalette = () => {
             onClose={onClose}
             showClearButton={settings.coreFeatures.persistentCommands}
           >
-            <CommandInput
-              ref={inputRef}
-              value={query}
-              onChange={setQuery}
-              placeholder="Type a command..."
-            />
+            <CommandInput value={query} onChange={setQuery} placeholder="Type a command..." />
           </CommandHeader>
 
           <CommandList ref={resultsRef}>

@@ -1,13 +1,13 @@
 import {
-  Brain,
-  Database,
-  Package,
-  PaintBrush,
-  Plus,
-  Robot,
-  MagnifyingGlass as Search,
-  TextT,
-  WarningCircle,
+  BrainIcon as Brain,
+  DatabaseIcon as Database,
+  PackageIcon as Package,
+  PaintBrushIcon as PaintBrush,
+  PlusIcon as Plus,
+  RobotIcon as Robot,
+  MagnifyingGlassIcon as Search,
+  TextTIcon as TextT,
+  WarningCircleIcon as WarningCircle,
 } from "@phosphor-icons/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
@@ -15,6 +15,10 @@ import { iconThemeRegistry } from "@/extensions/icon-themes/icon-theme-registry"
 import { useExtensionStore } from "@/extensions/registry/extension-store";
 import type { ExtensionRuntimeIssue } from "@/extensions/registry/extension-store-types";
 import { themeRegistry } from "@/extensions/themes/theme-registry";
+import {
+  getManifestDatabaseContributions,
+  getManifestIconContributions,
+} from "@/extensions/types/extension-contributions";
 import { SkillsCommand } from "@/features/ai/components/skills/skills-command";
 import {
   createSkillFromMarketplace,
@@ -25,11 +29,11 @@ import {
   resetSkillLocalOverride,
   updateSkillFromMarketplace,
 } from "@/features/ai/lib/skill-library";
-import type { AgentConfig } from "@/features/ai/types/acp";
-import type { AIChatSkill, MarketplaceSkill } from "@/features/ai/types/skills";
+import type { AgentConfig } from "@/features/ai/types/acp.types";
+import type { AIChatSkill, MarketplaceSkill } from "@/features/ai/types/skills.types";
 import { extensionManager } from "@/features/editor/extensions/manager";
 import { useToast } from "@/features/layout/contexts/toast-context";
-import { useSettingsStore } from "@/features/settings/store";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
 import Input from "@/ui/input";
@@ -155,7 +159,7 @@ const ExtensionRow = ({
     <div className="flex items-center justify-between gap-4 border-b border-border px-1 py-3 transition-colors hover:bg-hover max-[640px]:flex-col max-[640px]:items-stretch max-[640px]:gap-2">
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex flex-wrap items-center gap-2">
-          <span className="ui-font ui-text-md text-text">{extension.name}</span>
+          <span className="ui-font ui-text-base text-text">{extension.name}</span>
           <Badge variant="default" size="compact">
             {getCategoryLabel(extension.category)}
           </Badge>
@@ -340,8 +344,9 @@ export const ExtensionsSettings = () => {
         });
       }
 
-      if (ext.manifest.databaseProviders && ext.manifest.databaseProviders.length > 0) {
-        const provider = ext.manifest.databaseProviders[0];
+      const databaseContributions = getManifestDatabaseContributions(ext.manifest);
+      if (databaseContributions.length > 0) {
+        const provider = databaseContributions[0];
         const isBuiltInDatabase = isBuiltInDatabaseProvider(provider.id);
         allExtensions.push({
           id: ext.manifest.id,
@@ -377,7 +382,8 @@ export const ExtensionsSettings = () => {
         });
       }
 
-      if (ext.manifest.iconThemes && ext.manifest.iconThemes.length > 0) {
+      const iconContributions = getManifestIconContributions(ext.manifest);
+      if (iconContributions.length > 0) {
         allExtensions.push({
           id: ext.manifest.id,
           name: ext.manifest.displayName,
@@ -390,7 +396,7 @@ export const ExtensionsSettings = () => {
           isBundled: false,
           runtimeIssues: ext.runtimeIssues,
           packageSize: resolvePackageSize(ext.manifest),
-          contributionSummary: ext.manifest.iconThemes.map((theme) => `icon-theme:${theme.id}`),
+          contributionSummary: iconContributions.map((theme) => `icon:${theme.id}`),
         });
       }
     }
@@ -772,7 +778,7 @@ export const ExtensionsSettings = () => {
   return (
     <div className="flex h-full flex-col">
       <div className="mb-3">
-        <p className="ui-font ui-text-md font-medium text-text">Extensions</p>
+        <p className="ui-font ui-text-base font-medium text-text">Extensions</p>
         <p className="mt-1 ui-font ui-text-sm text-text-lighter">
           Install built-in tools, manage marketplace extensions, skills, and agents.
         </p>
@@ -805,7 +811,7 @@ export const ExtensionsSettings = () => {
         />
       </div>
 
-      {(settings.extensionsActiveTab === "skill" || settings.extensionsActiveTab === "all") && (
+      {settings.extensionsActiveTab === "skill" && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Button type="button" variant="default" onClick={() => setIsSkillsCommandOpen(true)}>
             <Plus />
@@ -815,8 +821,7 @@ export const ExtensionsSettings = () => {
         </div>
       )}
 
-      {(settings.extensionsActiveTab === "agent" || settings.extensionsActiveTab === "all") &&
-      isLoadingAgents ? (
+      {settings.extensionsActiveTab === "agent" && isLoadingAgents ? (
         <LoadingIndicator label="Loading agents" showLabel compact className="mb-3" />
       ) : null}
 

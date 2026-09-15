@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { editorAPI as editorAPIInstance } from "../extensions/api";
-import type { useBufferStore as useBufferStoreHook } from "../stores/buffer-store";
-import type { useEditorStateStore as useEditorStateStoreHook } from "../stores/state-store";
-import type { useHistoryStore as useHistoryStoreHook } from "../stores/history-store";
-import type { useEditorSettingsStore as useEditorSettingsStoreHook } from "../stores/settings-store";
+import type { useBufferStore as useBufferStoreHook } from "../stores/buffer.store";
+import type { useEditorStateStore as useEditorStateStoreHook } from "../stores/state.store";
+import type { useHistoryStore as useHistoryStoreHook } from "../stores/history.store";
+import type { useEditorSettingsStore as useEditorSettingsStoreHook } from "../stores/settings.store";
 import { calculateCursorPositionFromContent } from "../utils/position";
-import type { EditorContent } from "@/features/panes/types/pane-content";
+import type { EditorContent } from "@/features/panes/types/pane-content.types";
 
 type EditorAPIInstance = typeof editorAPIInstance;
 type BufferStoreHook = typeof useBufferStoreHook;
@@ -87,13 +87,14 @@ describe("editor API model operations", () => {
     vi.stubGlobal("document", documentStub);
 
     ({ editorAPI } = await import("../extensions/api"));
-    ({ useBufferStore } = await import("../stores/buffer-store"));
-    ({ useEditorStateStore } = await import("../stores/state-store"));
-    ({ useHistoryStore } = await import("../stores/history-store"));
-    ({ useEditorSettingsStore } = await import("../stores/settings-store"));
+    ({ useBufferStore } = await import("../stores/buffer.store"));
+    ({ useEditorStateStore } = await import("../stores/state.store"));
+    ({ useHistoryStore } = await import("../stores/history.store"));
+    ({ useEditorSettingsStore } = await import("../stores/settings.store"));
 
     onChange.mockReset();
     editorAPI.setTextareaRef?.(null);
+    editorAPI.setActiveEditorAdapter(null);
     editorAPI.updateCursorAndSelection({ line: 0, column: 0, offset: 0 }, null);
 
     useBufferStore.setState({
@@ -122,6 +123,7 @@ describe("editor API model operations", () => {
     });
     useHistoryStore?.getState().actions.clearAllHistories();
     useEditorSettingsStore?.setState({ theme: "athas-dark" });
+    editorAPI?.setActiveEditorAdapter(null);
     vi.unstubAllGlobals();
   });
 
@@ -136,6 +138,93 @@ describe("editor API model operations", () => {
     );
     expect(useEditorStateStore.getState().cursorPosition).toEqual(
       calculateCursorPositionFromContent("alpha\nbeX".length, "alpha\nbeXta"),
+    );
+  });
+
+  it("delegates text edits to the active editor adapter", () => {
+    const insertText = vi.fn();
+    const deleteRange = vi.fn();
+    const replaceRange = vi.fn();
+    const selectAll = vi.fn();
+    const addSelectionToNextFindMatch = vi.fn();
+    const addSelectionToPreviousFindMatch = vi.fn();
+    const selectAllFindMatches = vi.fn();
+    const undo = vi.fn();
+    const redo = vi.fn();
+    const range = {
+      start: calculateCursorPositionFromContent(0, "alpha\nbeta"),
+      end: calculateCursorPositionFromContent(5, "alpha\nbeta"),
+    };
+
+    editorAPI.setActiveEditorAdapter({
+      ownerId: "monaco-test",
+      insertText,
+      deleteRange,
+      replaceRange,
+      selectAll,
+      addSelectionToNextFindMatch,
+      addSelectionToPreviousFindMatch,
+      selectAllFindMatches,
+      undo,
+      redo,
+    });
+
+    editorAPI.insertText("X");
+    editorAPI.deleteRange(range);
+    editorAPI.replaceRange(range, "Y");
+    editorAPI.selectAll();
+    expect(editorAPI.addSelectionToNextFindMatch()).toBe(true);
+    expect(editorAPI.addSelectionToPreviousFindMatch()).toBe(true);
+    expect(editorAPI.selectAllFindMatches()).toBe(true);
+    editorAPI.undo();
+    editorAPI.redo();
+
+    expect(insertText).toHaveBeenCalledWith("X", undefined);
+    expect(deleteRange).toHaveBeenCalledWith(range);
+    expect(replaceRange).toHaveBeenCalledWith(range, "Y");
+    expect(selectAll).toHaveBeenCalledTimes(1);
+    expect(addSelectionToNextFindMatch).toHaveBeenCalledTimes(1);
+    expect(addSelectionToPreviousFindMatch).toHaveBeenCalledTimes(1);
+    expect(selectAllFindMatches).toHaveBeenCalledTimes(1);
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(redo).toHaveBeenCalledTimes(1);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("clears only the matching active editor adapter", () => {
+    const firstInsert = vi.fn();
+    const secondInsert = vi.fn();
+    const noopAdapter = {
+      deleteRange: vi.fn(),
+      replaceRange: vi.fn(),
+      selectAll: vi.fn(),
+      undo: vi.fn(),
+      redo: vi.fn(),
+    };
+
+    editorAPI.setActiveEditorAdapter({
+      ownerId: "first",
+      insertText: firstInsert,
+      ...noopAdapter,
+    });
+    editorAPI.setActiveEditorAdapter({
+      ownerId: "second",
+      insertText: secondInsert,
+      ...noopAdapter,
+    });
+
+    editorAPI.clearActiveEditorAdapter("first");
+    editorAPI.insertText("X");
+    expect(firstInsert).not.toHaveBeenCalled();
+    expect(secondInsert).toHaveBeenCalledTimes(1);
+
+    editorAPI.clearActiveEditorAdapter("second");
+    editorAPI.insertText("Y");
+    expect(onChange).toHaveBeenCalledWith(
+      "alpha\nbeYta",
+      "alpha\nbeta",
+      { line: 1, column: 2, offset: "alpha\nbe".length },
+      undefined,
     );
   });
 

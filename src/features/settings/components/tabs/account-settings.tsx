@@ -6,7 +6,7 @@ import {
   restoreSettingsFromCloud,
   syncSettingsNow,
 } from "@/features/settings/lib/settings-sync";
-import { useSettingsSyncStore } from "@/features/settings/stores/settings-sync-store";
+import { useSettingsSyncStore } from "@/features/settings/stores/settings-sync.store";
 import { useProFeature } from "@/extensions/ui/hooks/use-pro-feature";
 import { useDesktopSignIn } from "@/features/window/hooks/use-desktop-sign-in";
 import {
@@ -16,7 +16,7 @@ import {
   getAccountPlanLabel,
   getUsageProgress,
 } from "@/features/window/lib/account-usage";
-import { useAuthStore } from "@/features/window/stores/auth-store";
+import { useAuthStore } from "@/features/window/stores/auth.store";
 import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
 import Switch from "@/ui/switch";
@@ -107,7 +107,7 @@ export const AccountSettings = () => {
           description="Sign in to access account and subscription features."
         >
           {isAuthenticated ? (
-            <span className="ui-font ui-text-md text-text-lighter">{user?.email}</span>
+            <span className="ui-font ui-text-base text-text-lighter">{user?.email}</span>
           ) : (
             <Button
               variant="default"
@@ -153,7 +153,7 @@ export const AccountSettings = () => {
                 </div>
                 <div className="h-1.5 overflow-hidden rounded-full bg-primary-bg/80">
                   <div
-                    className="h-full rounded-full bg-accent transition-[width] duration-200"
+                    className="h-full rounded-full bg-accent transition-[width] duration-[var(--app-duration-normal)] ease-[var(--app-ease-smooth)]"
                     style={{ width: `${usageProgress}%` }}
                   />
                 </div>

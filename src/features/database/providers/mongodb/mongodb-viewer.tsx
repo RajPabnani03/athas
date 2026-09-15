@@ -1,13 +1,13 @@
 import {
-  BracketsCurly as Braces,
-  CaretLeft as ChevronLeft,
-  CaretRight as ChevronRight,
-  CaretDoubleLeft as ChevronsLeft,
-  CaretDoubleRight as ChevronsRight,
-  Database,
-  Stack as Layers,
-  ArrowClockwise as RefreshCw,
-  Trash as Trash2,
+  BracketsCurlyIcon as Braces,
+  CaretLeftIcon as ChevronLeft,
+  CaretRightIcon as ChevronRight,
+  CaretDoubleLeftIcon as ChevronsLeft,
+  CaretDoubleRightIcon as ChevronsRight,
+  DatabaseIcon as Database,
+  StackIcon as Layers,
+  ArrowClockwiseIcon as RefreshCw,
+  TrashIcon as Trash2,
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Button } from "@/ui/button";
@@ -16,7 +16,7 @@ import { LoadingIndicator } from "@/ui/loading";
 import Select from "@/ui/select";
 import { cn } from "@/utils/cn";
 import { getMongoDocumentDisplayIndex } from "./mongodb-pagination";
-import { useMongoDbStore } from "./stores/mongodb-store";
+import { useMongoDbStore } from "./stores/mongodb.store";
 
 interface MongoDBViewerProps {
   connectionId: string;
@@ -93,7 +93,7 @@ export default function MongoDBViewer({ connectionId }: MongoDBViewerProps) {
                 variant="ghost"
                 compact
                 className={cn(
-                  "block h-auto w-full justify-start rounded-lg px-2 py-1 text-left ui-text-xs",
+                  "block h-auto w-full justify-start rounded-lg px-2 py-1 text-left ui-text-xs leading-[1.35]",
                   store.selectedCollection === col.name && "bg-selected",
                 )}
                 aria-label={`Select collection ${col.name}`}
@@ -158,7 +158,7 @@ export default function MongoDBViewer({ connectionId }: MongoDBViewerProps) {
           )}
 
           {store.error && (
-            <div className="mx-3 mt-3 mb-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-red-400 ui-text-xs">
+            <div className="mx-3 mt-3 mb-2 rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-error ui-text-xs">
               {store.error}
             </div>
           )}
@@ -202,7 +202,7 @@ export default function MongoDBViewer({ connectionId }: MongoDBViewerProps) {
                           onClick={() => actions.deleteDocument(id)}
                           variant="ghost"
                           compact
-                          className="rounded-full text-red-400 opacity-0 transition-all hover:bg-red-500/10 group-hover:opacity-100"
+                          className="rounded-full text-error opacity-0 transition-[opacity,background-color] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] hover:bg-error/10 group-hover:opacity-100"
                           aria-label={`Delete document ${id}`}
                         >
                           <Trash2 />

@@ -1,5 +1,5 @@
 import type React from "react";
-import { Minus, Plus } from "@phosphor-icons/react";
+import { MinusIcon as Minus, PlusIcon as Plus } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Button } from "@/ui/button";
 import {
@@ -26,7 +26,7 @@ const numberInputFieldPadding = {
 const numberInputTextSize = {
   xs: "ui-text-sm",
   sm: "ui-text-sm",
-  md: "ui-text-md",
+  md: "ui-text-base",
 } as const;
 
 export default function NumberInput({

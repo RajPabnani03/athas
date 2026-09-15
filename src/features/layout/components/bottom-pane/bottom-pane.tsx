@@ -1,12 +1,12 @@
 import type React from "react";
 import { useCallback, useEffect, useState } from "react";
 import DebuggerView from "@/features/debugger/components/debugger-view";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { BOTTOM_PANE_ID } from "@/features/panes/constants/pane";
-import { usePaneStore } from "@/features/panes/stores/pane-store";
+import { usePaneStore } from "@/features/panes/stores/pane.store";
 import { activateBufferInPaneAndSync } from "@/features/panes/utils/pane-activation";
 import { getAllPaneGroups } from "@/features/panes/utils/pane-tree";
-import { useSettingsStore } from "@/features/settings/store";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import {
   clearInternalTabDragData,
   getInternalTabDragData,
@@ -15,8 +15,8 @@ import {
 import TerminalContainer from "@/features/terminal/components/terminal-container";
 import { cn } from "@/utils/cn";
 import { IS_MAC } from "@/utils/platform";
-import { useProjectStore } from "@/features/window/stores/project-store";
-import { useUIState } from "@/features/window/stores/ui-state-store";
+import { useProjectStore } from "@/features/window/stores/project.store";
+import { useUIState } from "@/features/window/stores/ui-state.store";
 import { BottomBufferPane } from "./bottom-buffer-pane";
 
 const BottomPane = () => {
@@ -101,8 +101,8 @@ const BottomPane = () => {
     [height],
   );
 
-  const titleBarHeight = IS_MAC ? 44 : 28; // h-11 for macOS, h-7 for Windows/Linux
-  const footerHeight = 32; // Footer height matches min-h-[32px] from editor-footer
+  const titleBarHeight = IS_MAC ? 44 : 28;
+  const footerHeight = 32;
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     if (!e.dataTransfer.types.includes("application/tab-data") && !getInternalTabDragData()) {
       return;
@@ -173,14 +173,14 @@ const BottomPane = () => {
       className={cn(
         "athas-glass-island relative flex flex-col overflow-hidden rounded-lg border border-border/70 bg-primary-bg",
         isInternalHoverTarget && "ring-2 ring-accent ring-inset",
-        isFullScreen && "fixed inset-x-2 z-[10040] rounded-xl shadow-2xl",
+        isFullScreen && "fixed inset-x-0 z-[10040] rounded-none border-0 shadow-none ring-0",
         !isBottomPaneVisible && "hidden",
       )}
       style={
         isFullScreen
           ? {
-              top: `${titleBarHeight + 8}px`,
-              bottom: `${footerHeight + 8}px`,
+              top: `${titleBarHeight}px`,
+              bottom: `${footerHeight}px`,
             }
           : {
               height: `${height}px`,
@@ -191,21 +191,23 @@ const BottomPane = () => {
       onDrop={handleDrop}
     >
       {/* Resize Handle */}
-      <div
-        onMouseDown={handleMouseDown}
-        className={cn(
-          "group absolute top-0 right-0 left-0 z-10 h-1",
-          "cursor-ns-resize transition-colors duration-150 hover:bg-blue-500/30",
-          isResizing && "bg-blue-500/50",
-        )}
-      >
+      {!isFullScreen && (
         <div
+          onMouseDown={handleMouseDown}
           className={cn(
-            "-translate-y-[1px] absolute top-0 right-0 left-0 h-[3px]",
-            "bg-blue-500 opacity-0 transition-opacity duration-150 group-hover:opacity-100",
+            "group absolute inset-x-0 top-0 z-10 h-1",
+            "cursor-ns-resize transition-colors duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] hover:bg-accent/30",
+            isResizing && "bg-accent/50",
           )}
-        />
-      </div>
+        >
+          <div
+            className={cn(
+              "-translate-y-[1px] absolute inset-x-0 top-0 h-[3px]",
+              "bg-accent opacity-0 transition-opacity duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] group-hover:opacity-100",
+            )}
+          />
+        </div>
+      )}
 
       {/* Content Area */}
       <div className="h-full overflow-hidden">

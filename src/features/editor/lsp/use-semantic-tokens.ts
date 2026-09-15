@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { extensionRegistry } from "@/extensions/registry/extension-registry";
-import { useEditorUIStore } from "@/features/editor/stores/ui-store";
+import { useEditorUIStore } from "@/features/editor/stores/ui.store";
 import { normalizeLineEndings } from "../utils/html";
 import { LspClient } from "./lsp-client";
 
@@ -9,6 +9,7 @@ export interface SemanticToken {
   startChar: number;
   length: number;
   tokenType: number;
+  tokenTypeName?: string;
   tokenModifiers: number;
 }
 

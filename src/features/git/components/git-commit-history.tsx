@@ -1,10 +1,14 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { writeSidebarResourceDragData } from "@/features/sidebar-drag/sidebar-resource-drag";
+import { CheckIcon as Check, MagnifyingGlassIcon as Search } from "@phosphor-icons/react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { writeSidebarResourceDragData } from "@/features/sidebar-drag/utils/sidebar-resource-drag";
+import type { MenuItem } from "@/ui/dropdown";
 import { LoadingIndicator } from "@/ui/loading";
-import { cn } from "@/utils/cn";
+import { SidebarSearchFilterRow } from "@/ui/sidebar";
 import { formatRelativeDate } from "@/utils/date";
-import type { GitCommit } from "../types/git-types";
-import { useGitStore } from "../stores/git-store";
+import { matchesSearchQuery } from "@/utils/search-match";
+import { cn } from "@/utils/cn";
+import type { GitCommit } from "../types/git.types";
+import { useGitStore } from "../stores/git.store";
 import GitSidebarSectionHeader from "./git-sidebar-section-header";
 
 interface GitCommitHistoryProps {
@@ -22,38 +26,71 @@ interface CommitItemProps {
   repoPath?: string;
 }
 
+type HistorySearchScope = "all" | "message" | "author" | "hash";
+
+const HISTORY_SEARCH_SCOPE_LABELS: Record<HistorySearchScope, string> = {
+  all: "All Fields",
+  message: "Message",
+  author: "Author",
+  hash: "Hash",
+};
+
+function getCommitSearchFields(commit: GitCommit, scope: HistorySearchScope) {
+  if (scope === "message") return [commit.message, commit.description ?? ""];
+  if (scope === "author") return [commit.author, commit.email ?? ""];
+  if (scope === "hash") return [commit.hash, commit.hash.substring(0, 7)];
+
+  return [
+    commit.message,
+    commit.description ?? "",
+    commit.author,
+    commit.email ?? "",
+    commit.hash,
+    commit.hash.substring(0, 7),
+  ];
+}
+
 const CommitItem = memo(({ commit, onViewCommitDiff, isSelected, repoPath }: CommitItemProps) => {
   const handleCommitClick = useCallback(() => {
     onViewCommitDiff(commit.hash);
   }, [commit.hash, onViewCommitDiff]);
 
+  const shortHash = commit.hash.substring(0, 7);
+
   return (
-    <div
-      onClick={handleCommitClick}
-      className={cn(
-        "ui-text-sm mx-1 mb-1 cursor-pointer rounded-lg px-2.5 py-2 transition-[transform,background-color,opacity] hover:bg-hover",
-        repoPath && "cursor-grab active:cursor-grabbing",
-        isSelected && "bg-hover",
-      )}
-      draggable={!!repoPath}
-      onDragStart={(event) => {
-        if (!repoPath) return;
-        writeSidebarResourceDragData(event.dataTransfer, {
-          type: "git-commit",
-          repoPath,
-          commitHash: commit.hash,
-          message: commit.message,
-          author: commit.author,
-          date: commit.date,
-          name: `Commit ${commit.hash.substring(0, 7)}`,
-        });
-      }}
-    >
-      <div className="truncate text-inherit text-text leading-tight">{commit.message}</div>
-      <div className="ui-text-sm mt-1 flex items-center gap-2 text-text-lighter">
-        <span className="truncate">{commit.author}</span>
-        <span className="shrink-0">{formatRelativeDate(commit.date)}</span>
-      </div>
+    <div className="mx-1 mb-1.5">
+      <button
+        type="button"
+        onClick={handleCommitClick}
+        className={cn(
+          "ui-text-sm flex w-full cursor-pointer items-start rounded-lg border border-transparent px-2.5 py-2 text-left outline-none transition-colors hover:border-border/55 hover:bg-hover/80 focus-visible:border-accent focus-visible:bg-hover/80",
+          isSelected && "border-accent/35 bg-accent/8",
+        )}
+        draggable={!!repoPath}
+        onDragStart={(event) => {
+          if (!repoPath) return;
+          writeSidebarResourceDragData(event.dataTransfer, {
+            type: "git-commit",
+            repoPath,
+            commitHash: commit.hash,
+            message: commit.message,
+            author: commit.author,
+            date: commit.date,
+            name: `Commit ${shortHash}`,
+          });
+        }}
+      >
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-text leading-tight">{commit.message}</span>
+          </span>
+          <span className="ui-text-xs mt-1 flex min-w-0 items-center gap-2 text-text-lighter">
+            <span className="truncate">{commit.author}</span>
+            <span className="shrink-0">{formatRelativeDate(commit.date)}</span>
+            <span className="shrink-0 editor-font">{shortHash}</span>
+          </span>
+        </span>
+      </button>
     </div>
   );
 });
@@ -71,6 +108,9 @@ const GitCommitHistory = ({
   const scrollSetupTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const scrollSetupRafRef = useRef<number | null>(null);
   const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
+  const [historySearchScope, setHistorySearchScope] = useState<HistorySearchScope>("all");
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
 
   const handleViewCommitDiff = useCallback(
     (commitHash: string, filePath?: string) => {
@@ -78,6 +118,33 @@ const GitCommitHistory = ({
       onViewCommitDiff?.(commitHash, filePath);
     },
     [onViewCommitDiff],
+  );
+
+  const filteredCommits = useMemo(() => {
+    const query = historySearchQuery.trim();
+    if (!query) return commits;
+
+    return commits.filter((commit) =>
+      matchesSearchQuery(query, getCommitSearchFields(commit, historySearchScope)),
+    );
+  }, [commits, historySearchQuery, historySearchScope]);
+
+  const hasHistoryRows = commits.length > 0;
+  const hasHistoryFilter = historySearchScope !== "all";
+
+  const filterMenuItems = useMemo<MenuItem[]>(
+    () =>
+      (Object.keys(HISTORY_SEARCH_SCOPE_LABELS) as HistorySearchScope[]).map((scope) => ({
+        id: scope,
+        label: HISTORY_SEARCH_SCOPE_LABELS[scope],
+        keybinding:
+          historySearchScope === scope ? <Check className="size-3.5 text-accent" /> : null,
+        onClick: () => {
+          setHistorySearchScope(scope);
+          setIsFilterOpen(false);
+        },
+      })),
+    [historySearchScope],
   );
 
   useEffect(() => {
@@ -187,41 +254,64 @@ const GitCommitHistory = ({
         </div>
 
         {!isCollapsed && (
-          <div
-            className={cn(
-              "scrollbar-none relative min-h-0 flex-1 overflow-y-scroll px-1 pb-1",
-              showHeader ? "bg-primary-bg/70" : "bg-transparent",
-            )}
-            ref={scrollContainerRef}
-          >
-            {commits.length === 0 ? (
-              <div className="ui-text-sm px-2.5 py-2 text-text-lighter italic">No commits</div>
-            ) : (
-              <>
-                {commits.map((commit) => (
-                  <CommitItem
-                    key={commit.hash}
-                    commit={commit}
-                    onViewCommitDiff={handleViewCommitDiff}
-                    isSelected={commit.hash === selectedCommitHash}
-                    repoPath={repoPath}
-                  />
-                ))}
+          <>
+            <SidebarSearchFilterRow
+              value={historySearchQuery}
+              onChange={setHistorySearchQuery}
+              searchIcon={Search}
+              placeholder="Search history"
+              searchAriaLabel="Search history"
+              filterOpen={isFilterOpen}
+              onFilterOpenChange={setIsFilterOpen}
+              filterItems={filterMenuItems}
+              filterActive={hasHistoryFilter}
+              filterTooltip={`Filter: ${HISTORY_SEARCH_SCOPE_LABELS[historySearchScope]}`}
+              filterAriaLabel="Filter history"
+              filterCloseOnSelect={false}
+              filterMenuClassName="w-fit min-w-fit"
+              className="px-2 pb-1 pt-0"
+            />
 
-                {isLoadingMoreCommits && (
-                  <div className="flex justify-center px-3 py-1.5 text-text-lighter">
-                    <LoadingIndicator label="Loading commits" showLabel compact />
-                  </div>
-                )}
+            <div
+              className={cn(
+                "scrollbar-none relative min-h-0 flex-1 overflow-y-scroll px-1 pb-1",
+                showHeader ? "bg-primary-bg/70" : "bg-transparent",
+              )}
+              ref={scrollContainerRef}
+            >
+              {!hasHistoryRows ? (
+                <div className="ui-text-sm px-2.5 py-2 text-text-lighter italic">No commits</div>
+              ) : filteredCommits.length === 0 ? (
+                <div className="ui-text-sm px-2.5 py-2 text-text-lighter italic">
+                  No commits match the current filters
+                </div>
+              ) : (
+                <>
+                  {filteredCommits.map((commit) => (
+                    <CommitItem
+                      key={commit.hash}
+                      commit={commit}
+                      onViewCommitDiff={handleViewCommitDiff}
+                      isSelected={commit.hash === selectedCommitHash}
+                      repoPath={repoPath}
+                    />
+                  ))}
 
-                {!hasMoreCommits && commits.length > 0 && (
-                  <div className="ui-text-sm px-3 py-1.5 text-center text-text-lighter">
-                    end of history
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+                  {isLoadingMoreCommits && (
+                    <div className="flex justify-center px-3 py-1.5 text-text-lighter">
+                      <LoadingIndicator label="Loading commits" showLabel compact />
+                    </div>
+                  )}
+
+                  {!hasMoreCommits && commits.length > 0 && (
+                    <div className="ui-text-sm px-3 py-1.5 text-center text-text-lighter">
+                      end of history
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>

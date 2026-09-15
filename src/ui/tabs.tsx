@@ -82,7 +82,7 @@ export const equalWidthSegmentedTabs = cva(
 );
 
 export const equalWidthSegmentedTabItem = cva(
-  "h-10 w-full min-w-0 rounded-lg px-2.5 py-2 transition-colors [&>div]:gap-1.5",
+  "h-10 w-full min-w-0 rounded-lg px-2.5 py-2 transition-[transform,background-color,color,border-color] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] active:scale-[var(--app-press-scale)] [&>div]:gap-1.5",
 );
 
 function moveItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
@@ -105,7 +105,7 @@ function areOrdersEqual<T>(left: T[], right: T[]): boolean {
 }
 
 const tabVariants = cva(
-  "group/tab relative shrink-0 cursor-pointer select-none whitespace-nowrap transition-[transform,opacity,color,background-color,border-color] duration-150 ease-out",
+  "group/tab relative shrink-0 cursor-pointer select-none whitespace-nowrap transition-[transform,opacity,color,background-color,border-color] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] active:scale-[var(--app-press-scale)]",
   {
     variants: {
       size: {
@@ -116,7 +116,7 @@ const tabVariants = cva(
       variant: {
         default: "rounded-md",
         pill: "rounded-md border border-transparent",
-        segmented: "h-full w-full rounded-none border-0",
+        segmented: "size-full rounded-none border-0",
       },
       active: {
         true: "",

@@ -1,21 +1,19 @@
 import { memo, type ReactNode } from "react";
-import { MultiAgentsSidebarView } from "@/features/ai/components/multi-agents-sidebar-view";
 import { CollaborationSidebarView } from "@/features/collaboration/components/collaboration-sidebar";
 import { DatabaseSidebar } from "@/features/database/components/database-sidebar";
 import { FileExplorerTree } from "@/features/file-explorer/components/file-explorer-tree";
-import { useFileSystemStore } from "@/features/file-system/controllers/store";
+import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
 import GitView from "@/features/git/components/git-view";
 import GitHubPRsView from "@/features/github/components/github-prs-view";
 import { SidebarPaneSelector } from "@/features/layout/components/sidebar/sidebar-pane-selector";
 import { useSidebarPaneController } from "@/features/layout/hooks/use-sidebar-pane-controller";
 import { getSidebarPaneLevel, type SidebarView } from "@/features/layout/utils/sidebar-pane-utils";
 import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
-import { useSettingsStore } from "@/features/settings/store";
-import { useSidebarStore } from "@/features/layout/stores/sidebar-store";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
-import { useUIState } from "@/features/window/stores/ui-state-store";
-import { NotificationsPane } from "@/features/window/components/notifications-sidebar";
-import { useAuthStore } from "@/features/window/stores/auth-store";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { useSidebarStore } from "@/features/layout/stores/sidebar.store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { useUIState } from "@/features/window/stores/ui-state.store";
+import { useAuthStore } from "@/features/window/stores/auth.store";
 import { useExtensionViews } from "@/extensions/ui/hooks/use-extension-views";
 import { ExtensionErrorBoundary } from "@/extensions/ui/components/extension-error-boundary";
 import { LoadingIndicator } from "@/ui/loading";
@@ -24,7 +22,7 @@ import { cn } from "@/utils/cn";
 
 interface MainSidebarProps {
   showActivityRail?: boolean;
-  paneLevel?: "primary" | "agent" | "edge";
+  paneLevel?: "primary" | "edge";
   activeView?: SidebarView;
   isGitActive?: boolean;
   isGitHubPRsActive?: boolean;
@@ -104,8 +102,6 @@ export const MainSidebar = memo(
     );
     const isCollaborationFeatureEnabled =
       hasTeamsCollaborationAccess && settings.coreFeatures.teamCollaboration;
-    const isMultiAgentsFeatureEnabled =
-      settings.coreFeatures.aiChat && settings.coreFeatures.multiAgents;
     const isOutlineFeatureEnabled = settings.coreFeatures.outline;
     const showLeftSidebarTabs = settings.sidebarTabsPosition === "left";
     const shouldRenderActivityRail = showActivityRail && showLeftSidebarTabs;
@@ -163,7 +159,7 @@ export const MainSidebar = memo(
 
             {isFileTreeLoading && !isSwitchingProject && (
               <div className="pointer-events-none absolute inset-0 flex items-start justify-center p-3">
-                <div className="rounded-full border border-border/60 bg-secondary-bg/92 px-3 py-1.5 shadow-lg backdrop-blur-sm">
+                <div className="rounded-full border border-border/60 bg-secondary-bg/92 px-3 py-1.5 shadow-[var(--shadow-popover)] backdrop-blur-sm">
                   <LoadingIndicator label="Loading files" showLabel compact />
                 </div>
               </div>
@@ -180,10 +176,6 @@ export const MainSidebar = memo(
           ]
         : []),
       {
-        id: "notifications",
-        content: <NotificationsPane />,
-      },
-      {
         id: "databases",
         content: <DatabaseSidebar />,
       },
@@ -192,14 +184,6 @@ export const MainSidebar = memo(
             {
               id: "collaboration" as const,
               content: <CollaborationSidebarView />,
-            },
-          ]
-        : []),
-      ...(isMultiAgentsFeatureEnabled
-        ? [
-            {
-              id: "multi-agents" as const,
-              content: <MultiAgentsSidebarView />,
             },
           ]
         : []),
@@ -225,7 +209,7 @@ export const MainSidebar = memo(
       return paneEntries[0] ?? null;
     })();
     return (
-      <div className="flex h-full min-h-0">
+      <div className="flex h-full min-h-0" data-external-file-drop-scope="sidebar">
         {shouldRenderActivityRail ? <SidebarActivityRail /> : null}
 
         <SidebarPanel

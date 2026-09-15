@@ -1,17 +1,17 @@
 import {
-  CaretDown as ChevronDown,
-  FlipHorizontal,
-  FlipVertical,
-  Image,
-  ArrowCounterClockwise as RotateCcw,
-  ArrowClockwise as RotateCw,
-  FloppyDisk as Save,
-  ArrowCounterClockwise as Undo2,
+  CaretDownIcon as ChevronDown,
+  FlipHorizontalIcon as FlipHorizontal,
+  FlipVerticalIcon as FlipVertical,
+  ImageIcon as Image,
+  ArrowCounterClockwiseIcon as RotateCcw,
+  ArrowClockwiseIcon as RotateCw,
+  FloppyDiskIcon as Save,
+  ArrowCounterClockwiseIcon as Undo2,
 } from "@phosphor-icons/react";
 import { useState } from "react";
 import { Button } from "@/ui/button";
 import { cn } from "@/utils/cn";
-import type { ImageFormat } from "../models/image-operation.types";
+import type { ImageFormat } from "../types/image-operation.types";
 import { ImageFormatDialog } from "./image-format-dialog";
 
 interface ImageEditorToolbarProps {
@@ -98,7 +98,7 @@ export function ImageEditorToolbar({
             <div
               className={cn(
                 "absolute top-full left-0 z-50 mt-1",
-                "w-48 rounded border border-border bg-secondary-bg shadow-lg",
+                "w-48 rounded border border-border bg-secondary-bg shadow-[var(--shadow-popover)]",
               )}
             >
               <div className="py-1">
@@ -193,7 +193,7 @@ export function ImageEditorToolbar({
             <div
               className={cn(
                 "absolute top-full left-0 z-50 mt-1",
-                "w-40 rounded border border-border bg-secondary-bg shadow-lg",
+                "w-40 rounded border border-border bg-secondary-bg shadow-[var(--shadow-popover)]",
               )}
             >
               <div className="py-1">

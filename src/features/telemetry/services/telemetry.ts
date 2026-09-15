@@ -92,6 +92,19 @@ function serializeError(error: unknown): { message: string; stack?: string } {
   }
 }
 
+function isExpectedCancellation(error: unknown): boolean {
+  if (error instanceof Error) {
+    return (
+      error.name === "Canceled" ||
+      error.name === "CancellationError" ||
+      error.message === "Canceled" ||
+      error.message === "Canceled: Canceled"
+    );
+  }
+
+  return error === "Canceled" || error === "Canceled: Canceled";
+}
+
 function sanitizePayload(value: unknown): unknown {
   if (
     value === null ||
@@ -301,19 +314,26 @@ async function enqueueTelemetryEvent(
 
   queue.push(event);
 
+  const droppedEvents: QueuedTelemetryEvent[] = [];
   while (queue.length > MAX_QUEUE_LENGTH) {
     const dropped = queue.shift();
     if (dropped) {
-      await appendLogEntry(
+      droppedEvents.push(dropped);
+    }
+  }
+
+  await Promise.all(
+    droppedEvents.map((dropped) =>
+      appendLogEntry(
         {
           status: "dropped",
           eventType: dropped.type,
           summary: `Dropped ${dropped.type} from local queue to stay under ${MAX_QUEUE_LENGTH} events`,
         },
         store,
-      );
-    }
-  }
+      ),
+    ),
+  );
 
   await saveQueue(queue, store);
   await appendLogEntry(
@@ -345,29 +365,35 @@ export async function flushTelemetryQueue(): Promise<boolean> {
     const context = await ensureClientContext();
 
     try {
+      const chunks: QueuedTelemetryEvent[][] = [];
       for (let index = 0; index < queue.length; index += QUEUE_FLUSH_THRESHOLD) {
-        const chunk = queue.slice(index, index + QUEUE_FLUSH_THRESHOLD);
-        const response = await tauriFetch(`${API_BASE}/api/telemetry/events`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            device_id: context.deviceId,
-            app_version: context.appVersion,
-            platform: context.platform,
-            arch: context.arch,
-            events: chunk.map((event) => ({
-              id: event.id,
-              type: event.type,
-              occurred_at: event.occurredAt,
-              payload: event.payload,
-            })),
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Telemetry upload failed (${response.status})`);
-        }
+        chunks.push(queue.slice(index, index + QUEUE_FLUSH_THRESHOLD));
       }
+
+      await Promise.all(
+        chunks.map(async (chunk) => {
+          const response = await tauriFetch(`${API_BASE}/api/telemetry/events`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              device_id: context.deviceId,
+              app_version: context.appVersion,
+              platform: context.platform,
+              arch: context.arch,
+              events: chunk.map((event) => ({
+                id: event.id,
+                type: event.type,
+                occurred_at: event.occurredAt,
+                payload: event.payload,
+              })),
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error(`Telemetry upload failed (${response.status})`);
+          }
+        }),
+      );
 
       await saveQueue([], store);
       await appendLogEntry(
@@ -430,6 +456,11 @@ function registerCrashListeners() {
   });
 
   window.addEventListener("unhandledrejection", (event) => {
+    if (isExpectedCancellation(event.reason)) {
+      event.preventDefault();
+      return;
+    }
+
     const details = serializeError(event.reason);
     void recordCrashReport({
       kind: "unhandled_rejection",

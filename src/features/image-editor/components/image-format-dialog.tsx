@@ -1,9 +1,9 @@
-import { Image } from "@phosphor-icons/react";
+import { ImageIcon as Image } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Button } from "@/ui/button";
 import Dialog from "@/ui/dialog";
 import { cn } from "@/utils/cn";
-import type { ImageFormat } from "../models/image-operation.types";
+import type { ImageFormat } from "../types/image-operation.types";
 import { convertImageFormat } from "../utils/image-conversion";
 import { formatFileSize, getDataURLSize } from "../utils/image-file-utils";
 
@@ -194,7 +194,7 @@ export function ImageFormatDialog({
                   <span
                     className={cn(
                       "ui-font ui-text-xs",
-                      sizeDiff < 0 ? "text-green-500" : "text-orange-500",
+                      sizeDiff < 0 ? "text-success" : "text-warning",
                     )}
                   >
                     {sizeDiff > 0 ? "+" : ""}

@@ -1,17 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useAIChatStore } from "@/features/ai/store/store";
+import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
 import type {
   AcpAgentStatus,
   AcpEvent,
   AcpPromptContentBlock,
   AcpSessionList,
   AgentConfig,
-} from "@/features/ai/types/acp";
-import type { ContextInfo } from "@/features/ai/types/ai-context";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
-import { useProjectStore } from "@/features/window/stores/project-store";
+} from "@/features/ai/types/acp.types";
+import type { ContextInfo } from "@/features/ai/types/ai-context.types";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { useProjectStore } from "@/features/window/stores/project.store";
+import { getAcpPathBaseName, toAcpFileUri } from "@/features/ai/lib/acp-file-uri";
 import { getChatTitleFromSessionInfo } from "@/features/ai/lib/acp-session-info";
+import { normalizeAcpWorkspacePath } from "@/features/ai/lib/acp-workspace-path";
+import { getFollowUpActionsInstruction } from "@/features/ai/lib/follow-up-actions";
 import { buildContextPrompt } from "../utils/ai-context-builder";
 
 interface AcpHandlers {
@@ -84,20 +87,29 @@ export class AcpStreamHandler {
       const targetChat = this.getTargetChat();
       const desiredSessionId =
         targetChat?.agentId === this.agentId ? (targetChat.acpSessionId ?? null) : null;
+      const workspacePath = this.getWorkspacePath();
+      const statusWorkspacePath = normalizeAcpWorkspacePath(status.workspacePath);
+      const desiredWorkspacePath = normalizeAcpWorkspacePath(workspacePath);
       const shouldRestartForSession =
         status.running &&
         status.agentId === this.agentId &&
         (status.sessionId ?? null) !== desiredSessionId;
+      const shouldRestartForWorkspace =
+        status.running &&
+        status.agentId === this.agentId &&
+        statusWorkspacePath !== desiredWorkspacePath;
 
       if (status.running) {
         useAIChatStore.getState().setAcpStatus(status);
       }
 
-      if (!status.running || status.agentId !== this.agentId || shouldRestartForSession) {
+      if (
+        !status.running ||
+        status.agentId !== this.agentId ||
+        shouldRestartForSession ||
+        shouldRestartForWorkspace
+      ) {
         console.log(`Starting agent ${this.agentId}...`);
-
-        // Get current workspace path if available
-        const workspacePath = this.getWorkspacePath();
 
         let startStatus: AcpAgentStatus;
         try {
@@ -182,7 +194,9 @@ export class AcpStreamHandler {
       return [{ type: "text", text: userMessage }];
     }
 
-    const contextPrompt = buildContextPrompt(context);
+    const contextPrompt = [buildContextPrompt(context), getFollowUpActionsInstruction()]
+      .filter(Boolean)
+      .join("\n\n");
     const blocks: AcpPromptContentBlock[] = [
       { type: "text", text: contextPrompt ? `${contextPrompt}\n\n${userMessage}` : userMessage },
     ];
@@ -196,7 +210,7 @@ export class AcpStreamHandler {
         blocks.push({
           type: "resource",
           resource: {
-            uri: `file://${file.path}`,
+            uri: toAcpFileUri(file.path),
             text: file.content,
             mimeType: "text/plain",
           },
@@ -204,8 +218,8 @@ export class AcpStreamHandler {
       } else {
         blocks.push({
           type: "resource_link",
-          uri: `file://${file.path}`,
-          name: file.path.split("/").pop() || file.path,
+          uri: toAcpFileUri(file.path),
+          name: getAcpPathBaseName(file.path),
           mimeType: "text/plain",
         });
       }
@@ -222,8 +236,8 @@ export class AcpStreamHandler {
       resourceLinks.add(filePath);
       blocks.push({
         type: "resource_link",
-        uri: `file://${filePath}`,
-        name: filePath.split("/").pop() || filePath,
+        uri: toAcpFileUri(filePath),
+        name: getAcpPathBaseName(filePath),
         mimeType: "text/plain",
       });
     }
@@ -239,7 +253,6 @@ export class AcpStreamHandler {
 
   private handleAcpEvent(event: AcpEvent): void {
     if (this.cancelled) return;
-    console.log("ACP event:", event.type);
     if (this.handlers.onEvent) {
       this.handlers.onEvent(event);
     }
@@ -308,6 +321,10 @@ export class AcpStreamHandler {
         // Plan updates are surfaced through generic ACP event stream UI for now
         break;
 
+      case "usage_update":
+        this.handleUsageUpdate(event);
+        break;
+
       case "session_info_update":
         break;
 
@@ -333,6 +350,10 @@ export class AcpStreamHandler {
     }
     // Treat all other stop reasons as completion in case no session_complete arrives
     this.handleSessionComplete();
+  }
+
+  private handleUsageUpdate(event: Extract<AcpEvent, { type: "usage_update" }>): void {
+    console.info("ACP usage update:", event.usage);
   }
 
   private handleSessionModeUpdate(event: Extract<AcpEvent, { type: "session_mode_update" }>): void {

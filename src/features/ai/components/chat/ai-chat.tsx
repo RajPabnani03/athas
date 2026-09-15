@@ -1,17 +1,13 @@
 import { listen } from "@tauri-apps/api/event";
-import { Key as KeyRound } from "@phosphor-icons/react";
+import { KeyIcon as KeyRound } from "@phosphor-icons/react";
 import type React from "react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { ProviderApiKeyCommand } from "@/features/ai/components/provider-api-key-command";
-import {
-  appendChatAcpEvent,
-  type ChatAcpEventInput,
-  truncateDetail,
-  updateToolCompletionAcpEvent,
-} from "@/features/ai/lib/acp-event-timeline";
+import { appendChatAcpEvent, type ChatAcpEventInput } from "@/features/ai/lib/acp-event-timeline";
 import { getChatTitleFromSessionInfo } from "@/features/ai/lib/acp-session-info";
 import { parseDirectAcpUiAction } from "@/features/ai/lib/acp-ui-intents";
 import { parseMentionsAndLoadFiles } from "@/features/ai/lib/file-mentions";
+import { extractFollowUpActions } from "@/features/ai/lib/follow-up-actions";
 import {
   createToolCall,
   markToolCallComplete,
@@ -20,16 +16,16 @@ import {
 import { requestInlineEdit } from "@/features/editor/services/editor-inline-edit-service";
 import { AcpStreamHandler } from "@/features/ai/services/acp-stream-handler";
 import { getChatCompletionStream, isAcpAgent } from "@/features/ai/services/ai-chat-service";
-import { useAIChatStore } from "@/features/ai/store/store";
-import type { AcpEvent, AcpPermissionOption, AcpToolKind } from "@/features/ai/types/acp";
-import type { ContextInfo } from "@/features/ai/types/ai-context";
-import type { AIChatProps, Message } from "@/features/ai/types/ai-chat";
-import type { ChatAcpEvent } from "@/features/ai/types/chat-ui";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
+import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
+import type { AcpEvent, AcpPermissionOption } from "@/features/ai/types/acp.types";
+import type { ContextInfo } from "@/features/ai/types/ai-context.types";
+import type { AIChatProps, Message } from "@/features/ai/types/ai-chat.types";
+import type { ChatAcpEvent } from "@/features/ai/types/chat-ui.types";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { useToast } from "@/features/layout/contexts/toast-context";
-import { useSettingsStore } from "@/features/settings/store";
-import { useAuthStore } from "@/features/window/stores/auth-store";
-import { useProjectStore } from "@/features/window/stores/project-store";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { useAuthStore } from "@/features/window/stores/auth.store";
+import { useProjectStore } from "@/features/window/stores/project.store";
 import { Button } from "@/ui/button";
 import { cn } from "@/utils/cn";
 import { useChatActions, useChatState } from "../../hooks/use-chat-store";
@@ -119,66 +115,6 @@ function getPermissionOptionClassName(option: AcpPermissionOption) {
       return "";
     default:
       return "";
-  }
-}
-
-function getAcpToolTarget(event: Extract<AcpEvent, { type: "tool_start" | "tool_update" }>) {
-  const locations = "locations" in event ? event.locations : null;
-  const location = locations?.[0]?.path;
-  if (location) return location.split("/").pop() || location;
-
-  const input = event.input;
-  if (typeof input === "string") return input;
-  if (input && typeof input === "object") {
-    const record = input as Record<string, unknown>;
-    const path =
-      typeof record.file_path === "string"
-        ? record.file_path
-        : typeof record.path === "string"
-          ? record.path
-          : typeof record.filename === "string"
-            ? record.filename
-            : undefined;
-
-    if (path) return path.split("/").pop() || path;
-    if (typeof record.command === "string") return truncateDetail(record.command, 120);
-    if (typeof record.query === "string") return truncateDetail(record.query, 120);
-  }
-
-  const output = "output" in event ? event.output : null;
-  if (Array.isArray(output)) {
-    const diffItems = output.filter(
-      (item) => item && typeof item === "object" && item.type === "diff",
-    );
-    if (diffItems.length > 0) {
-      const firstPath = (diffItems[0] as Record<string, unknown>).path;
-      const firstFile =
-        typeof firstPath === "string" ? firstPath.split("/").pop() || firstPath : "file";
-      return diffItems.length === 1 ? firstFile : `${diffItems.length} files`;
-    }
-  }
-
-  return undefined;
-}
-
-function getAcpToolLabel(kind: AcpToolKind | null | undefined, completed = false) {
-  switch (kind) {
-    case "edit":
-      return completed ? "Edited file" : "Editing file";
-    case "read":
-      return completed ? "Read file" : "Reading file";
-    case "delete":
-      return completed ? "Deleted file" : "Deleting file";
-    case "move":
-      return completed ? "Moved file" : "Moving file";
-    case "search":
-      return completed ? "Searched" : "Searching";
-    case "execute":
-      return completed ? "Ran command" : "Running command";
-    case "fetch":
-      return completed ? "Fetched" : "Fetching";
-    default:
-      return completed ? "Tool completed" : "Using tool";
   }
 }
 
@@ -318,8 +254,7 @@ const AIChat = memo(function AIChat({
     setAcpEvents((prev) => appendChatAcpEvent(prev, event));
   }, []);
 
-  // Agent availability is now handled dynamically by the model-provider-selector component
-  // No need to check Claude Code status on mount
+  // Agent availability is handled dynamically by the agent selector.
 
   const handleDeleteChat = (chatId: string, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -496,7 +431,7 @@ const AIChat = memo(function AIChat({
       : null;
     const currentAgentId = targetChat?.agentId ?? store.getCurrentAgentId();
     const isAcp = isAcpAgent(currentAgentId);
-    // For ACP agents (Claude Code, etc.), we don't need an API key
+    // For ACP agents, we don't need an API key.
     // For Custom API, we need an API key to be set
     if (!messageContent.trim() || (!isAcp && !store.hasApiKey)) return;
 
@@ -505,6 +440,8 @@ const AIChat = memo(function AIChat({
     let targetChatId = effectiveChatId ?? store.currentChatId;
     if (!targetChatId) {
       targetChatId = chatActions.createNewChat(currentAgentId);
+    } else {
+      targetChatId = chatActions.ensureChatSession(targetChatId, currentAgentId);
     }
 
     const { processedMessage, mentionedFiles } = await parseMentionsAndLoadFiles(
@@ -546,6 +483,7 @@ const AIChat = memo(function AIChat({
 
     abortControllerRef.current = new AbortController();
     let currentAssistantMessageId = assistantMessageId;
+    let currentAssistantRawContent = "";
     let acpProducedStateOnlyUpdate = false;
     let acpCommandResultLabel: string | null = null;
 
@@ -556,6 +494,16 @@ const AIChat = memo(function AIChat({
         if (directAction) {
           const bufferActions = useBufferStore.getState().actions;
           if (directAction.kind === "open_web_viewer" && directAction.url) {
+            if (!useSettingsStore.getState().settings.coreFeatures.webViewer) {
+              chatActions.updateMessage(targetChatId, currentAssistantMessageId, {
+                content: "Web Viewer is disabled. Enable it in Settings > Features to open URLs.",
+                isStreaming: false,
+              });
+              chatActions.setIsTyping(false);
+              chatActions.setStreamingMessageId(null);
+              return;
+            }
+
             bufferActions.openWebViewerBuffer(directAction.url);
             chatActions.updateMessage(targetChatId, currentAssistantMessageId, {
               content: `Opened ${directAction.url} in Athas web viewer.`,
@@ -601,13 +549,12 @@ const AIChat = memo(function AIChat({
         enhancedMessage,
         context,
         (chunk: string) => {
-          updateStreamingAssistantMessage(
-            targetChatId,
-            currentAssistantMessageId,
-            (currentMessage) => ({
-              content: (currentMessage?.content || "") + chunk,
-            }),
-          );
+          currentAssistantRawContent += chunk;
+          const extracted = extractFollowUpActions(currentAssistantRawContent);
+          updateStreamingAssistantMessage(targetChatId, currentAssistantMessageId, () => ({
+            content: extracted.content,
+            followUpActions: extracted.actions,
+          }));
           requestAnimationFrame(() => scrollToBottom());
         },
         () => {
@@ -772,6 +719,7 @@ details: ${errorDetails || mainError}
         conversationContext,
         () => {
           const newMessageId = Date.now().toString();
+          currentAssistantRawContent = "";
           const newAssistantMessage: Message = {
             id: newMessageId,
             content: "",
@@ -786,13 +734,6 @@ details: ${errorDetails || mainError}
           requestAnimationFrame(() => scrollToBottom(true));
         },
         (event) => {
-          appendAcpEvent({
-            id: `tool-${event.toolId}`,
-            kind: "tool",
-            label: getAcpToolLabel(event.kind),
-            detail: getAcpToolTarget(event),
-            state: event.status === "pending" ? "info" : "running",
-          });
           updateStreamingAssistantMessage(
             targetChatId,
             currentAssistantMessageId,
@@ -814,48 +755,6 @@ details: ${errorDetails || mainError}
           );
         },
         (event) => {
-          if (
-            event.kind ||
-            event.input ||
-            event.output ||
-            event.locations?.length ||
-            event.status
-          ) {
-            setAcpEvents((prev) => {
-              const activityId = `tool-${event.toolId}`;
-              const nextState =
-                event.status === "failed"
-                  ? "error"
-                  : event.status === "completed"
-                    ? "success"
-                    : event.status === "pending"
-                      ? "info"
-                      : "running";
-              const detail = getAcpToolTarget(event);
-
-              if (!prev.some((activity) => activity.id === activityId)) {
-                return appendChatAcpEvent(prev, {
-                  id: activityId,
-                  kind: "tool",
-                  label: getAcpToolLabel(event.kind),
-                  detail,
-                  state: nextState,
-                });
-              }
-
-              return prev.map((activity) =>
-                activity.id === activityId
-                  ? {
-                      ...activity,
-                      label: event.kind ? getAcpToolLabel(event.kind) : activity.label,
-                      detail: detail ?? activity.detail,
-                      state: nextState,
-                      timestamp: new Date(),
-                    }
-                  : activity,
-              );
-            });
-          }
           updateStreamingAssistantMessage(
             targetChatId,
             currentAssistantMessageId,
@@ -874,9 +773,6 @@ details: ${errorDetails || mainError}
           );
         },
         (toolName: string, toolId?: string, output?: unknown, error?: string) => {
-          if (toolId) {
-            setAcpEvents((prev) => updateToolCompletionAcpEvent(prev, `tool-${toolId}`, !error));
-          }
           updateStreamingAssistantMessage(
             targetChatId,
             currentAssistantMessageId,
@@ -926,9 +822,6 @@ details: ${errorDetails || mainError}
             case "tool_update":
               break;
             case "tool_complete":
-              setAcpEvents((prev) =>
-                updateToolCompletionAcpEvent(prev, `tool-${event.toolId}`, event.success),
-              );
               break;
             case "permission_request":
               break; // Handled separately with permission UI
@@ -972,15 +865,28 @@ details: ${errorDetails || mainError}
             case "plan_update": {
               const summary =
                 event.entries.length > 0
-                  ? event.entries
-                      .slice(0, 2)
-                      .map((entry) => entry.content)
-                      .join(" | ")
+                  ? event.entries.map((entry) => entry.content).join(" | ")
                   : "No plan steps";
               appendAcpEvent({
                 kind: "plan",
                 label: `Plan updated (${event.entries.length} steps)`,
-                detail: truncateDetail(summary),
+                detail: summary,
+                state: "info",
+              });
+              break;
+            }
+            case "usage_update": {
+              const usagePercent =
+                event.usage.size > 0
+                  ? Math.round((event.usage.used / event.usage.size) * 100)
+                  : null;
+              appendAcpEvent({
+                kind: "status",
+                label: "Session usage updated",
+                detail:
+                  usagePercent === null
+                    ? `${event.usage.used} used`
+                    : `${event.usage.used}/${event.usage.size} (${usagePercent}%)`,
                 state: "info",
               });
               break;
@@ -992,7 +898,7 @@ details: ${errorDetails || mainError}
               appendAcpEvent({
                 kind: "error",
                 label: "Agent error",
-                detail: truncateDetail(event.error),
+                detail: event.error,
                 state: "error",
               });
               break;
@@ -1053,7 +959,7 @@ details: ${errorDetails || mainError}
     async (messageContent: string) => {
       const currentAgentId = chatActions.getCurrentAgentId();
       const isAcp = isAcpAgent(currentAgentId);
-      // For ACP agents (Claude Code, etc.), we don't need an API key
+      // For ACP agents, we don't need an API key.
       if (!messageContent.trim() || (!isAcp && !chatState.hasApiKey)) return;
 
       chatActions.setInput("");
@@ -1157,13 +1063,14 @@ details: ${errorDetails || mainError}
               ref={messagesEndRef}
               chatId={effectiveChatId}
               onApplyCode={onApplyCode}
+              onSendFollowUp={handleSendMessage}
               acpEvents={acpEvents}
             />
           </div>
 
           {currentPermission && (
             <div className="bg-transparent px-3 pt-2 ui-text-xs">
-              <div className="flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-primary-bg/92 px-2 shadow-sm">
+              <div className="flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-primary-bg/92 px-2 shadow-[var(--shadow-card)]">
                 <KeyRound className="size-3.5 shrink-0 text-text-lighter" weight="duotone" />
                 <div
                   className="min-w-0 flex-1 truncate text-text"

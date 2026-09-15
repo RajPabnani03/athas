@@ -11,7 +11,7 @@ import {
   HEADER_TRAILING_ITEM_IDS,
   SIDEBAR_ACTIVITY_ITEM_IDS,
 } from "@/features/layout/config/item-order";
-import type { Settings } from "@/features/settings/types/settings";
+import type { Settings } from "@/features/settings/types/settings.types";
 
 export const DEFAULT_AI_PROVIDER_ID = "anthropic";
 export const DEFAULT_AI_MODEL_ID = "claude-sonnet-4-6";
@@ -27,6 +27,7 @@ export const defaultSettings: Settings = {
   quickOpenPreview: true,
   // Editor
   fontFamily: DEFAULT_MONO_FONT_FAMILY,
+  editorEngine: "monaco",
   fontSize: DEFAULT_CODE_FONT_SIZE,
   editorLineHeight: 1.4,
   tabSize: 2,
@@ -42,7 +43,7 @@ export const defaultSettings: Settings = {
   terminalLineHeight: 1,
   terminalLetterSpacing: 0,
   terminalScrollback: 10000,
-  terminalCursorStyle: "block",
+  terminalCursorStyle: "bar",
   terminalCursorBlink: true,
   terminalCursorWidth: 2,
   terminalDefaultShellId: "",
@@ -52,12 +53,13 @@ export const defaultSettings: Settings = {
   uiFontSize: UI_FONT_SIZE_DEFAULT,
   // Theme
   theme: "athas-dark",
-  iconTheme: "material",
+  iconTheme: "symbols",
   syncSystemTheme: false,
   autoThemeLight: "athas-light",
   autoThemeDark: "athas-dark",
   nativeMenuBar: false,
   compactMenuBar: true,
+  windowTransparency: true,
   sidebarTabsPosition: "top",
   titleBarProjectMode: "window",
   headerTrailingItemsOrder: [...HEADER_TRAILING_ITEM_IDS],
@@ -112,21 +114,24 @@ export const defaultSettings: Settings = {
     outline: true,
     aiChat: true,
     teamCollaboration: true,
-    multiAgents: false,
     breadcrumbs: true,
     persistentCommands: true,
+    webViewer: false,
+    athasEditorEngine: false,
   },
   // Advanced
   enterpriseManagedMode: false,
   enterpriseRequireExtensionAllowlist: false,
   enterpriseAllowedExtensionIds: [],
   // Other
+  lastSettingsTab: "general",
   extensionsActiveTab: "all",
   maxOpenTabs: 100,
   horizontalTabScroll: false,
   //// File tree
   fileTreeIndentSize: 16,
-  compactFoldersInFileTree: false,
+  compactFoldersInFileTree: true,
+  hideRootFolderInFileTree: false,
   fileTreeDensity: "default",
   showHiddenFilesInFileTree: true,
   showGitignoredFilesInFileTree: true,
@@ -144,7 +149,7 @@ export const defaultSettings: Settings = {
   collapseEmptyGitSections: false,
   rememberLastGitPanelMode: false,
   gitLastPanelMode: "changes",
-  gitSidebarTabOrder: ["changes", "history", "worktrees"],
+  gitSidebarTabOrder: ["changes", "history"],
   githubSidebarSectionOrder: ["pull-requests", "issues", "actions"],
   enableInlineGitBlame: true,
   enableGitGutter: true,

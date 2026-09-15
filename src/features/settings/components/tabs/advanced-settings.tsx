@@ -4,11 +4,7 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { useToast } from "@/features/layout/contexts/toast-context";
 import { TypedConfirmAction } from "@/features/settings/components/typed-confirm-action";
 import { createSettingsExportPayload } from "@/features/settings/lib/settings-import-export";
-import {
-  REQUIRED_UPDATE_TELEMETRY_NOTICE,
-  USAGE_TELEMETRY_DESCRIPTION,
-} from "@/features/settings/lib/telemetry-copy";
-import { useSettingsStore } from "@/features/settings/store";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import {
   clearTelemetryLogEntries,
   getTelemetryLogEntries,
@@ -18,6 +14,10 @@ import {
 import { Button } from "@/ui/button";
 import Switch from "@/ui/switch";
 import Section, { SettingRow } from "../settings-section";
+
+const telemetryDescription =
+  "Athas sends anonymous operational metadata for updates and, when enabled, heartbeats, extensions, and crashes; it never sends file paths, project names, prompts, or editor content.";
+const telemetryLearnMoreUrl = "https://athas.dev/docs/telemetry";
 
 export const AdvancedSettings = () => {
   const { settings, updateSetting, resetToDefaults } = useSettingsStore();
@@ -123,16 +123,28 @@ export const AdvancedSettings = () => {
         </SettingRow>
       </Section>
       <Section title="Telemetry">
-        <SettingRow label="Anonymous Usage Telemetry" description={USAGE_TELEMETRY_DESCRIPTION}>
+        <SettingRow
+          label="Anonymous Usage Telemetry"
+          description={
+            <>
+              {telemetryDescription}{" "}
+              <a
+                href={telemetryLearnMoreUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-link hover:underline"
+              >
+                Learn more
+              </a>
+            </>
+          }
+        >
           <Switch
             checked={settings.telemetry}
             onChange={(checked) => updateSetting("telemetry", checked)}
             size="sm"
           />
         </SettingRow>
-        <p className="ui-font ui-text-sm px-1 text-text-lighter">
-          {REQUIRED_UPDATE_TELEMETRY_NOTICE}
-        </p>
         <SettingRow
           label="Telemetry Log"
           description="Inspect the local queue and recent telemetry delivery results."

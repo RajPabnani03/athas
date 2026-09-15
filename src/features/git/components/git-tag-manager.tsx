@@ -1,17 +1,16 @@
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
-  Calendar,
-  CaretDown,
-  CaretRight,
-  ClockCounterClockwise,
-  Copy,
-  GitBranch,
-  GitCommit,
-  Plus,
-  Tag,
-  Trash as Trash2,
-  Upload,
-  X,
+  CalendarIcon as Calendar,
+  CaretDownIcon as CaretDown,
+  CaretRightIcon as CaretRight,
+  ClockCounterClockwiseIcon as ClockCounterClockwise,
+  CopyIcon as Copy,
+  GitBranchIcon as GitBranch,
+  GitCommitIcon as GitCommit,
+  PlusIcon as Plus,
+  TagIcon as Tag,
+  TrashIcon as Trash2,
+  UploadIcon as Upload,
+  XIcon as X,
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import Badge from "@/ui/badge";
@@ -19,9 +18,10 @@ import { Button } from "@/ui/button";
 import Checkbox from "@/ui/checkbox";
 import { CommandEmpty, CommandList } from "@/ui/command";
 import Input from "@/ui/input";
-import { primitiveConfirm } from "@/ui/primitive-dialog-service";
+import { showConfirmDialog } from "@/features/dialogs/services/dialog-service";
 import Select from "@/ui/select";
 import { toast } from "@/ui/toast";
+import { writeClipboardText } from "@/utils/clipboard";
 import { formatShortDate } from "@/utils/date";
 import { matchesSearchQuery } from "@/utils/search-match";
 import { getRemotes } from "../api/git-remotes-api";
@@ -33,7 +33,7 @@ import {
   getTags,
   pushTag,
 } from "../api/git-tags-api";
-import type { GitRemote, GitTag } from "../types/git-types";
+import type { GitRemote, GitTag } from "../types/git.types";
 import GitCommandSurface from "./git-command-surface";
 
 interface GitTagManagerProps {
@@ -66,12 +66,24 @@ const GitTagManager = ({
 
   useEffect(() => {
     if (!isOpen) return;
-    setQuery("");
-    setIsCreateOpen(false);
-    setExpandedTagName(null);
     void loadTags();
     void loadRemotes();
   }, [isOpen, repoPath]);
+
+  const resetTransientState = () => {
+    setQuery("");
+    setIsCreateOpen(false);
+    setNewTagName("");
+    setNewTagMessage("");
+    setNewTagCommit("");
+    setNewTagSigned(false);
+    setExpandedTagName(null);
+  };
+
+  const handleClose = () => {
+    resetTransientState();
+    onClose();
+  };
 
   const filteredTags = useMemo(() => {
     if (!query.trim()) return tags;
@@ -160,7 +172,7 @@ const GitTagManager = ({
   const handleCheckoutTag = async (tagName: string) => {
     if (!repoPath) return;
     if (
-      !(await primitiveConfirm(`Checkout ${tagName} in detached HEAD?`, {
+      !(await showConfirmDialog(`Checkout ${tagName} in detached HEAD?`, {
         title: "Checkout Tag",
         confirmLabel: "Checkout",
       }))
@@ -175,7 +187,7 @@ const GitTagManager = ({
       if (result.success) {
         toast.success(result.message);
         onRefresh?.();
-        onClose();
+        handleClose();
       } else {
         toast.error(result.message);
       }
@@ -208,7 +220,7 @@ const GitTagManager = ({
 
   const handleCopy = async (value: string, label: string) => {
     try {
-      await writeText(value);
+      await writeClipboardText(value);
       toast.success(`${label} copied`);
     } catch (error) {
       console.error(`Failed to copy ${label.toLowerCase()}:`, error);
@@ -219,7 +231,7 @@ const GitTagManager = ({
   return (
     <GitCommandSurface
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
       query={query}
       onQueryChange={setQuery}
       placeholder="Search tags..."
@@ -380,7 +392,7 @@ const GitTagManager = ({
                     </div>
                   </div>
                 </div>
-                <div className="pointer-events-none absolute top-6 right-2 flex -translate-y-1/2 translate-x-1 items-center gap-0.5 rounded-md border border-border/60 bg-secondary-bg p-0.5 opacity-0 transition-all group-hover/tag:pointer-events-auto group-hover/tag:translate-x-0 group-hover/tag:opacity-100 group-focus-within/tag:pointer-events-auto group-focus-within/tag:translate-x-0 group-focus-within/tag:opacity-100">
+                <div className="pointer-events-none absolute top-6 right-2 flex -translate-y-1/2 translate-x-1 items-center gap-0.5 rounded-md border border-border/60 bg-secondary-bg p-0.5 opacity-0 transition-[opacity,transform] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] group-hover/tag:pointer-events-auto group-hover/tag:translate-x-0 group-hover/tag:opacity-100 group-focus-within/tag:pointer-events-auto group-focus-within/tag:translate-x-0 group-focus-within/tag:opacity-100">
                   <Button
                     type="button"
                     onClick={(event) => {
@@ -419,7 +431,7 @@ const GitTagManager = ({
                         tag.name,
                         `${previousTag.name}..${tag.name}`,
                       );
-                      onClose();
+                      handleClose();
                     }}
                     disabled={!previousTag}
                     variant="ghost"
@@ -435,7 +447,7 @@ const GitTagManager = ({
                     onClick={(event) => {
                       event.stopPropagation();
                       onViewTagComparison?.("HEAD", tag.name, `HEAD..${tag.name}`);
-                      onClose();
+                      handleClose();
                     }}
                     variant="ghost"
                     compact
@@ -483,7 +495,7 @@ const GitTagManager = ({
                     onClick={(event) => {
                       event.stopPropagation();
                       if (!repoPath || !selectedRemoteName) return;
-                      void primitiveConfirm(`Delete ${tag.name} from ${selectedRemoteName}?`, {
+                      void showConfirmDialog(`Delete ${tag.name} from ${selectedRemoteName}?`, {
                         title: "Delete Remote Tag",
                         confirmLabel: "Delete",
                       }).then((confirmed) => {
@@ -498,7 +510,7 @@ const GitTagManager = ({
                     }
                     variant="ghost"
                     compact
-                    className="text-red-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50"
+                    className="text-error hover:bg-error/10 hover:text-error disabled:opacity-50"
                     tooltip={
                       selectedRemoteName ? `Delete tag from ${selectedRemoteName}` : "No remote"
                     }
@@ -515,7 +527,7 @@ const GitTagManager = ({
                     disabled={isActionLoading}
                     variant="ghost"
                     compact
-                    className="text-red-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50"
+                    className="text-error hover:bg-error/10 hover:text-error disabled:opacity-50"
                     tooltip="Delete tag"
                     aria-label={`Delete ${tag.name}`}
                   >

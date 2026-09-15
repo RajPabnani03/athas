@@ -1,8 +1,8 @@
-import { FileText, FolderOpen } from "@phosphor-icons/react";
+import { FolderOpenIcon as FolderOpen } from "@phosphor-icons/react";
 import { useEffect, useState, type ReactNode } from "react";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { IdeSettingsImportDialog } from "@/features/file-system/components/ide-settings-import-dialog";
-import { useFileSystemStore } from "@/features/file-system/controllers/store";
+import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
 import {
   type KeybindingPreset,
   keybindingPresetDefinitions,
@@ -11,15 +11,15 @@ import {
 import { markOnboardingCompleted } from "@/features/onboarding/lib/onboarding-state";
 import type { OnboardingContext } from "@/features/onboarding/lib/onboarding-state";
 import { buildOnboardingViewModel } from "@/features/onboarding/lib/onboarding-view-model";
-import {
-  REQUIRED_UPDATE_TELEMETRY_NOTICE,
-  USAGE_TELEMETRY_DESCRIPTION,
-} from "@/features/settings/lib/telemetry-copy";
-import { useSettingsStore } from "@/features/settings/store";
-import { useWhatsNewStore } from "@/features/settings/stores/whats-new-store";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { useWhatsNewStore } from "@/features/settings/stores/whats-new.store";
 import { Button } from "@/ui/button";
 import Select from "@/ui/select";
 import Switch from "@/ui/switch";
+
+const telemetryDescription =
+  "Athas sends anonymous operational metadata for updates and, when enabled, heartbeats, extensions, and crashes; it never sends file paths, project names, prompts, or editor content.";
+const telemetryLearnMoreUrl = "https://athas.dev/docs/telemetry";
 
 interface OnboardingViewProps {
   bufferId: string;
@@ -32,7 +32,7 @@ function SettingRow({
   children,
 }: {
   title: string;
-  description?: string;
+  description?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -115,7 +115,7 @@ export default function OnboardingView({ bufferId, context }: OnboardingViewProp
     <div className="flex h-full min-h-0 w-full overflow-auto bg-primary-bg">
       <div className="mx-auto flex w-full max-w-[820px] flex-col px-8 py-10">
         <div className="mb-7">
-          <h1 className="ui-font ui-text-lg font-semibold text-text">{viewModel.title}</h1>
+          <h1 className="ui-font ui-text-base font-semibold text-text">{viewModel.title}</h1>
           <p className="ui-font ui-text-sm mt-2 text-text-light">{viewModel.description}</p>
         </div>
 
@@ -137,7 +137,19 @@ export default function OnboardingView({ bufferId, context }: OnboardingViewProp
 
             <SettingRow
               title="Share anonymous telemetry"
-              description={`${USAGE_TELEMETRY_DESCRIPTION} ${REQUIRED_UPDATE_TELEMETRY_NOTICE}`}
+              description={
+                <>
+                  {telemetryDescription}{" "}
+                  <a
+                    href={telemetryLearnMoreUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-link hover:underline"
+                  >
+                    Learn more
+                  </a>
+                </>
+              }
             >
               <Switch checked={telemetry} onChange={setTelemetry} />
             </SettingRow>
@@ -176,7 +188,7 @@ export default function OnboardingView({ bufferId, context }: OnboardingViewProp
             {viewModel.secondaryLabel}
           </Button>
           <Button variant="accent" onClick={() => void handlePrimaryAction()}>
-            {viewModel.primaryAction === "open-whats-new" ? <FileText /> : <FolderOpen />}
+            {viewModel.primaryAction !== "open-whats-new" && <FolderOpen />}
             {viewModel.primaryLabel}
           </Button>
         </div>

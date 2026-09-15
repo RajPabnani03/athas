@@ -1,12 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { WarningCircle as AlertCircle } from "@phosphor-icons/react";
+import { WarningCircleIcon as AlertCircle } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
-import { useProjectStore } from "@/features/window/stores/project-store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import {
+  isWebViewerContent,
+  type WebViewerContent,
+} from "@/features/panes/types/pane-content.types";
+import { useProjectStore } from "@/features/window/stores/project.store";
 import { LoadingIndicator } from "@/ui/loading";
+import { writeClipboardText } from "@/utils/clipboard";
 import { useEmbeddedWebview } from "../hooks/use-embedded-webview";
-import { useWebViewerNavigationStore } from "../stores/web-viewer-navigation-store";
+import { useWebViewerNavigationStore } from "../stores/web-viewer-navigation.store";
 import { getEmbeddedWebViewerUserAgent, getWebViewerProfileKey } from "../utils/web-viewer-profile";
 import { getWebViewerSecurity, normalizeWebViewerUrl } from "../utils/web-viewer-url";
 import { WebViewerToolbar } from "./web-viewer-toolbar";
@@ -113,7 +118,7 @@ export function WebViewer({
   const profileKey = initialProfileKey ?? getWebViewerProfileKey(rootFolderPath);
   const userAgent = getEmbeddedWebViewerUserAgent();
   const webViewerBuffer = buffers.find(
-    (buffer) => buffer.id === bufferId && buffer.type === "webViewer",
+    (buffer): buffer is WebViewerContent => buffer.id === bufferId && isWebViewerContent(buffer),
   );
   const {
     error: webviewError,
@@ -629,7 +634,7 @@ export function WebViewer({
 
   const handleCopyUrl = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(currentUrl);
+      await writeClipboardText(currentUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
@@ -825,6 +830,7 @@ export function WebViewer({
             ? "Open Developer Tools"
             : "Developer Tools are only available in development builds"
         }
+        favicon={webViewerBuffer?.favicon ?? null}
         hasUrlError={Boolean(urlError)}
         inputUrl={inputUrl}
         isLoading={isLoading}
@@ -854,21 +860,25 @@ export function WebViewer({
         </div>
       )}
 
-      <div ref={containerRef} className="relative flex-1 overflow-hidden">
-        {!currentUrl && !isLoading && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-primary-bg px-6 text-center">
-            <div className="ui-font ui-text-sm text-text">Open a page</div>
-            <div className="ui-text-xs max-w-[320px] text-text-lighter">
-              Enter a URL to load a website, local development server, or app-bound page.
-            </div>
-          </div>
-        )}
+      <div className="min-h-0 flex-1 bg-primary-bg p-1.5">
+        <div className="relative h-full overflow-hidden rounded-lg border border-border/70 bg-primary-bg shadow-[var(--shadow-card)]">
+          <div ref={containerRef} className="absolute inset-px overflow-hidden rounded-[7px]">
+            {!currentUrl && !isLoading && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-primary-bg px-6 text-center">
+                <div className="ui-font ui-text-sm text-text">Open a page</div>
+                <div className="ui-text-xs max-w-[320px] text-text-lighter">
+                  Enter a URL to load a website, local development server, or app-bound page.
+                </div>
+              </div>
+            )}
 
-        {isLoading && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-primary-bg">
-            <LoadingIndicator label="Loading page" showLabel />
+            {isLoading && (
+              <div className="absolute inset-0 z-50 flex items-center justify-center bg-primary-bg">
+                <LoadingIndicator label="Loading page" showLabel />
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

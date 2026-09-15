@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 pub type AcpBridgeState = Arc<Mutex<AcpAgentBridge>>;
 const EXTENSIONS_CDN_BASE_URL: &str = "https://athas.dev/extensions";
 const AGENT_CATALOG_CACHE_SECONDS: u64 = 300;
+const TERMINAL_ONLY_AGENT_IDS: &[&str] = &["claude-code"];
 
 #[derive(Deserialize)]
 pub struct PermissionResponseArgs {
@@ -252,6 +253,7 @@ async fn load_marketplace_agents() -> Result<Vec<AgentConfig>, String> {
    let mut agents = manifests
       .into_values()
       .flat_map(|manifest| manifest.agents)
+      .filter(|agent| !TERMINAL_ONLY_AGENT_IDS.contains(&agent.id.as_str()))
       .map(to_agent_config)
       .collect::<Vec<_>>();
    agents.sort_by_key(|agent| agent.name.clone());
@@ -433,6 +435,8 @@ fn remove_managed_tool(app_handle: &AppHandle, tool_config: &ToolConfig) -> Resu
       ToolRuntime::Binary => tools_dir.join("binary").join(&tool_config.name),
       ToolRuntime::Bun => tools_dir.join("bun").join(package),
       ToolRuntime::Ruby => tools_dir.join("ruby").join(package),
+      ToolRuntime::R => tools_dir.join("r").join(package),
+      ToolRuntime::System => return Ok(()),
    };
 
    if path.is_dir() {

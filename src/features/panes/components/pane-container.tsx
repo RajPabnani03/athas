@@ -1,25 +1,25 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import type { DatabaseType } from "@/features/database/models/provider.types";
+import type { DatabaseType } from "@/features/database/types/provider.types";
 import {
   PROVIDER_REGISTRY,
   type DatabaseViewerProps,
 } from "@/features/database/providers/provider-registry";
 import CodeEditor from "@/features/editor/components/code-editor";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
-import type { Buffer } from "@/features/editor/stores/buffer-store";
-import { useFileSystemStore } from "@/features/file-system/controllers/store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import type { Buffer } from "@/features/editor/stores/buffer.store";
+import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
 import { stageHunk, unstageHunk } from "@/features/git/api/git-status-api";
-import type { GitHunk } from "@/features/git/types/git-types";
-import { useGitHubStore } from "@/features/github/stores/github-store";
+import type { GitHunk } from "@/features/git/types/git.types";
+import { useGitHubStore } from "@/features/github/stores/github.store";
 import { formatDiffBufferLabel } from "@/features/git/utils/diff-buffer-label";
-import { openSidebarResourceBuffer } from "@/features/sidebar-drag/open-sidebar-resource";
+import { openSidebarResourceBuffer } from "@/features/sidebar-drag/utils/open-sidebar-resource";
 import {
   hasSidebarResourceDragData,
   readSidebarResourceDragData,
   type SidebarDragResource,
-} from "@/features/sidebar-drag/sidebar-resource-drag";
-import { useSettingsStore } from "@/features/settings/store";
+} from "@/features/sidebar-drag/utils/sidebar-resource-drag";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import TabBar from "@/features/tabs/components/tab-bar";
 import { extractDroppedFilePaths } from "@/features/file-system/utils/file-system-dropped-paths";
 import {
@@ -32,9 +32,9 @@ import { cn } from "@/utils/cn";
 import { activateBufferInPaneAndSync, activatePaneAndSyncBuffer } from "../utils/pane-activation";
 import { EmptyEditorState } from "./empty-editor-state";
 import { BOTTOM_PANE_ID } from "../constants/pane";
-import { usePaneStore } from "../stores/pane-store";
-import type { PaneGroup } from "../types/pane";
-import type { EditorContent, PullRequestContent } from "../types/pane-content";
+import { usePaneStore } from "../stores/pane.store";
+import type { PaneGroup } from "../types/pane.types";
+import type { EditorContent, NewTabContent, PullRequestContent } from "../types/pane-content.types";
 import {
   ensureBufferInPaneDropTarget,
   getOrCreatePaneDropTarget,
@@ -110,7 +110,7 @@ const MIN_CAROUSEL_CARD_WIDTH = 320;
 const CAROUSEL_OUTER_GAP_PX = 160;
 
 type EditorBufferShell = Pick<EditorContent, "id" | "path" | "name" | "type">;
-type PaneRenderBuffer = Exclude<Buffer, EditorContent> | EditorBufferShell;
+type PaneRenderBuffer = Exclude<Buffer, EditorContent | NewTabContent> | EditorBufferShell;
 
 function BufferPreviewCard({ buffer }: { buffer: PaneRenderBuffer }) {
   const previewText =
@@ -189,7 +189,7 @@ function PullRequestPreviewCard({ buffer }: { buffer: PullRequestContent }) {
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-primary-bg">
       <div className="shrink-0 bg-secondary-bg/60 px-3 py-3">
         <div className="flex min-w-0 items-start gap-2">
-          <div className="mt-0.5 size-4 shrink-0 rounded-[4px] bg-green-500/80" />
+          <div className="mt-0.5 size-4 shrink-0 rounded-[4px] bg-success/80" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-md border border-border bg-primary-bg/70 px-1.5 py-0.5 editor-font ui-text-xs text-text-lighter">
@@ -235,21 +235,31 @@ function PullRequestPreviewCard({ buffer }: { buffer: PullRequestContent }) {
   );
 }
 
-function isStandardEditorBuffer(buffer: PaneRenderBuffer): buffer is EditorBufferShell {
-  return buffer.type === "editor";
+function WebViewerDisabledState() {
+  return (
+    <div className="flex size-full items-center justify-center bg-primary-bg px-6">
+      <div className="max-w-sm text-center">
+        <div className="font-medium ui-text-sm text-text">Web Viewer is disabled</div>
+        <div className="mt-1 ui-text-xs text-text-lighter">
+          Enable it in Settings &gt; Features to open URLs in embedded editor tabs.
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function EmptyPaneState() {
-  return <div className="h-full w-full bg-primary-bg" />;
+function isStandardEditorBuffer(buffer: PaneRenderBuffer): buffer is EditorBufferShell {
+  return buffer.type === "editor";
 }
 
 export function PaneContainer({ pane }: PaneContainerProps) {
   const activePaneId = usePaneStore.use.activePaneId();
   const { reorderPaneBuffers } = usePaneStore.use.actions();
-  const { closeBufferForce, openTerminalBuffer, showNewTabView } = useBufferStore.use.actions();
+  const { closeBufferForce, openTerminalBuffer } = useBufferStore.use.actions();
   const rootFolderPath = useFileSystemStore.use.rootFolderPath?.();
   const handleFileOpen = useFileSystemStore.use.handleFileOpen?.();
   const horizontalBufferCarousel = useSettingsStore((state) => state.settings.horizontalTabScroll);
+  const webViewerEnabled = useSettingsStore((state) => state.settings.coreFeatures.webViewer);
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [isTabDragOver, setIsTabDragOver] = useState(false);
@@ -258,7 +268,6 @@ export function PaneContainer({ pane }: PaneContainerProps) {
   const [isCarouselResizing, setIsCarouselResizing] = useState(false);
   const [draggedCarouselBufferId, setDraggedCarouselBufferId] = useState<string | null>(null);
   const [carouselDropBufferId, setCarouselDropBufferId] = useState<string | null>(null);
-  const [suppressAutoNewTab, setSuppressAutoNewTab] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const carouselViewportRef = useRef<HTMLDivElement>(null);
   const lastCarouselBufferIdRef = useRef<string | null>(null);
@@ -273,6 +282,7 @@ export function PaneContainer({ pane }: PaneContainerProps) {
         .map((bufferId) => {
           const buffer = buffersById.get(bufferId);
           if (!buffer) return undefined;
+          if (buffer.type === "newTab") return undefined;
           if (buffer.type === "editor") {
             return {
               id: buffer.id,
@@ -291,23 +301,6 @@ export function PaneContainer({ pane }: PaneContainerProps) {
     if (!pane.activeBufferId) return null;
     return paneBuffers.find((b) => b.id === pane.activeBufferId) || null;
   }, [paneBuffers, pane.activeBufferId]);
-
-  const hasNonNewTabBuffer = paneBuffers.some((buffer) => buffer.type !== "newTab");
-
-  useEffect(() => {
-    if (hasNonNewTabBuffer) {
-      setSuppressAutoNewTab(false);
-    }
-  }, [hasNonNewTabBuffer]);
-
-  useEffect(() => {
-    if (pane.id === BOTTOM_PANE_ID) return;
-    if (paneBuffers.length > 0) return;
-    if (suppressAutoNewTab) return;
-
-    activatePaneAndSyncBuffer(pane.id);
-    showNewTabView();
-  }, [pane.id, paneBuffers.length, showNewTabView, suppressAutoNewTab]);
 
   const handlePaneClick = useCallback(() => {
     if (!isActivePane) {
@@ -816,16 +809,11 @@ export function PaneContainer({ pane }: PaneContainerProps) {
     setCarouselDropBufferId(null);
   }, []);
 
-  const shouldShowNewTabCard = horizontalBufferCarousel && !activeBuffer;
-  const shouldRenderCarousel =
-    horizontalBufferCarousel && (paneBuffers.length > 1 || shouldShowNewTabCard);
+  const shouldRenderCarousel = horizontalBufferCarousel && paneBuffers.length > 1;
 
   const renderActiveBuffer = useCallback(
     (buffer: PaneRenderBuffer) => {
       switch (buffer.type) {
-        case "newTab":
-          return null;
-
         case "terminal":
           return (
             <TerminalTab
@@ -840,6 +828,10 @@ export function PaneContainer({ pane }: PaneContainerProps) {
           );
 
         case "webViewer":
+          if (!webViewerEnabled) {
+            return <WebViewerDisabledState />;
+          }
+
           return <WebViewer url={buffer.url} bufferId={buffer.id} isActive={isActivePane} />;
 
         case "agent":
@@ -956,7 +948,7 @@ export function PaneContainer({ pane }: PaneContainerProps) {
       ref={containerRef}
       data-pane-container
       data-pane-id={pane.id}
-      className={`relative flex h-full w-full flex-col overflow-hidden bg-primary-bg ${
+      className={`relative flex size-full flex-col overflow-hidden bg-primary-bg ${
         isActivePane ? "ring-1 ring-accent/30" : ""
       } ${isDragOver || internalHoverZone ? "ring-2 ring-accent" : ""}`}
       onMouseDownCapture={handlePaneMouseDownCapture}
@@ -977,12 +969,10 @@ export function PaneContainer({ pane }: PaneContainerProps) {
       <TabBar
         paneId={pane.id}
         onTabClick={handleTabClick}
-        onNewTabClose={() => setSuppressAutoNewTab(true)}
         disablePaneActions={pane.id === BOTTOM_PANE_ID}
       />
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        {!activeBuffer && !shouldRenderCarousel && <EmptyPaneState />}
-        {activeBuffer?.type === "newTab" && !shouldRenderCarousel && <EmptyEditorState />}
+        {!activeBuffer && !shouldRenderCarousel && <EmptyEditorState />}
 
         <Suspense fallback={null}>
           {shouldRenderCarousel ? (
@@ -1003,7 +993,7 @@ export function PaneContainer({ pane }: PaneContainerProps) {
                     key={buffer.id}
                     data-buffer-card-id={buffer.id}
                     className={cn(
-                      "relative h-full shrink-0 overflow-hidden rounded-2xl border text-left transition-[transform,opacity,border-color,box-shadow] duration-200",
+                      "relative h-full shrink-0 overflow-hidden rounded-2xl border text-left transition-[transform,opacity,border-color,box-shadow] duration-[var(--app-duration-normal)] ease-[var(--app-ease-smooth)]",
                       isActiveBuffer
                         ? "border-accent/50 bg-primary-bg shadow-[0_0_0_1px_rgba(99,102,241,0.15)]"
                         : "border-border/70 bg-primary-bg hover:border-border/90",
@@ -1044,10 +1034,8 @@ export function PaneContainer({ pane }: PaneContainerProps) {
                           }
                     }
                   >
-                    <div className="h-full w-full">
-                      {buffer.type === "newTab" ? (
-                        <EmptyEditorState />
-                      ) : isStandardEditorBuffer(buffer) ? (
+                    <div className="size-full">
+                      {isStandardEditorBuffer(buffer) ? (
                         <CodeEditor
                           paneId={pane.id}
                           bufferId={buffer.id}
@@ -1057,9 +1045,7 @@ export function PaneContainer({ pane }: PaneContainerProps) {
                         />
                       ) : buffer.type === "terminal" ? (
                         <div
-                          className={
-                            isActiveBuffer ? "h-full w-full" : "pointer-events-none h-full w-full"
-                          }
+                          className={isActiveBuffer ? "size-full" : "pointer-events-none size-full"}
                         >
                           <TerminalTab
                             sessionId={buffer.sessionId}
@@ -1071,21 +1057,21 @@ export function PaneContainer({ pane }: PaneContainerProps) {
                             isVisible={true}
                           />
                         </div>
-                      ) : buffer.type === "webViewer" ? (
-                        <div
-                          className={
-                            isActiveBuffer ? "h-full w-full" : "pointer-events-none h-full w-full"
-                          }
-                        >
-                          <WebViewer
-                            url={buffer.url}
-                            bufferId={buffer.id}
-                            profileKey={buffer.profileKey}
-                            history={buffer.history}
-                            historyIndex={buffer.historyIndex}
-                            isActive={isActivePane && isActiveBuffer}
-                            isVisible={true}
-                          />
+                      ) : buffer.type === "webViewer" && isActiveBuffer ? (
+                        <div className="size-full">
+                          {webViewerEnabled ? (
+                            <WebViewer
+                              url={buffer.url}
+                              bufferId={buffer.id}
+                              profileKey={buffer.profileKey}
+                              history={buffer.history}
+                              historyIndex={buffer.historyIndex}
+                              isActive={isActivePane && isActiveBuffer}
+                              isVisible={true}
+                            />
+                          ) : (
+                            <WebViewerDisabledState />
+                          )}
                         </div>
                       ) : buffer.type === "pullRequest" ? (
                         <PullRequestPreviewCard buffer={buffer} />
@@ -1105,30 +1091,6 @@ export function PaneContainer({ pane }: PaneContainerProps) {
                   </div>
                 );
               })}
-              {shouldShowNewTabCard && (
-                <div
-                  key="new-tab-card"
-                  data-buffer-card-id="new-tab-card"
-                  className={cn(
-                    "relative h-full shrink-0 overflow-hidden rounded-2xl border border-dashed border-border/70 bg-primary-bg",
-                    isCarouselResizing && "transition-none",
-                  )}
-                  style={{
-                    width: `${carouselCardWidth}px`,
-                  }}
-                >
-                  <div className="h-full w-full">
-                    <EmptyEditorState />
-                  </div>
-                  <div
-                    className="absolute top-0 right-0 z-20 h-full w-2 cursor-col-resize transition-colors hover:bg-accent/20"
-                    onMouseDown={handleCarouselResizeStart}
-                    role="separator"
-                    aria-orientation="vertical"
-                    aria-label="Resize buffer carousel cards"
-                  />
-                </div>
-              )}
             </div>
           ) : (
             <>
@@ -1139,9 +1101,9 @@ export function PaneContainer({ pane }: PaneContainerProps) {
                   (
                     b,
                   ): b is
-                    | import("../types/pane-content").TerminalContent
-                    | import("../types/pane-content").WebViewerContent =>
-                    b.type === "terminal" || b.type === "webViewer",
+                    | import("../types/pane-content.types").TerminalContent
+                    | import("../types/pane-content.types").WebViewerContent =>
+                    b.type === "terminal" || (webViewerEnabled && b.type === "webViewer"),
                 )
                 .map((b) => {
                   const isActive = b.id === activeBuffer?.id;
@@ -1177,7 +1139,7 @@ export function PaneContainer({ pane }: PaneContainerProps) {
                 })}
               {activeBuffer &&
                 activeBuffer.type !== "terminal" &&
-                activeBuffer.type !== "webViewer" &&
+                (activeBuffer.type !== "webViewer" || !webViewerEnabled) &&
                 renderActiveBuffer(activeBuffer)}
             </>
           )}

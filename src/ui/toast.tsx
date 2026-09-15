@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { create } from "zustand";
 import {
-  Warning as AlertTriangle,
-  CheckCircle as CheckCircle2,
-  Info,
-  X,
+  WarningIcon as AlertTriangle,
+  CheckCircleIcon as CheckCircle2,
+  InfoIcon as Info,
+  XIcon as X,
 } from "@phosphor-icons/react";
 import { Toaster as SonnerToaster, toast as sonnerToast } from "sonner";
 import { LoadingIndicator } from "@/ui/loading";
@@ -282,10 +282,10 @@ export const ToastContainer = () => {
         descriptionClassName: "ui-font font-normal",
         classNames: {
           toast:
-            "group ui-font rounded-xl border border-border bg-primary-bg text-text font-normal shadow-xl backdrop-blur-sm",
+            "group ui-font rounded-xl border border-border bg-primary-bg text-text font-normal shadow-[var(--shadow-popover)] backdrop-blur-sm",
           content: "pr-8",
-          title: "ui-font text-sm font-normal leading-5 text-text",
-          description: "ui-font text-sm font-normal leading-5 text-text-light",
+          title: "ui-font ui-text-sm font-normal leading-5 text-text",
+          description: "ui-font ui-text-sm font-normal leading-5 text-text-light",
           icon: "mt-0.5",
           success: "border-border",
           info: "border-border",
@@ -293,7 +293,7 @@ export const ToastContainer = () => {
           error: "border-border",
           loading: "border-border",
           closeButton:
-            "absolute left-auto right-2 top-2 m-0 opacity-0 transition-opacity group-hover:opacity-100 border-none bg-transparent text-text-lighter hover:bg-hover hover:text-text",
+            "absolute left-auto right-2 top-2 m-0 opacity-0 transition-[transform,opacity,background-color,color] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] group-hover:opacity-100 border-none bg-transparent text-text-lighter hover:bg-hover hover:text-text active:scale-[var(--app-press-scale)]",
           actionButton: "ui-font border-none bg-hover text-text hover:bg-border",
           cancelButton: "ui-font border-none bg-hover text-text hover:bg-border",
         },

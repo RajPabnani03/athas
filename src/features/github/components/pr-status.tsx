@@ -1,20 +1,20 @@
 import {
-  WarningCircle as AlertCircle,
-  CheckCircle as CheckCircle2,
-  CaretDown as ChevronDown,
-  CaretRight as ChevronRight,
-  DotOutline as CircleDot,
-  GitMerge,
-  LinkSimple as Link2,
-  User,
-  XCircle,
+  WarningCircleIcon as AlertCircle,
+  CheckCircleIcon as CheckCircle2,
+  CaretDownIcon as ChevronDown,
+  CaretRightIcon as ChevronRight,
+  DotOutlineIcon as CircleDot,
+  GitMergeIcon as GitMerge,
+  LinkSimpleIcon as Link2,
+  UserIcon as User,
+  XCircleIcon as XCircle,
 } from "@phosphor-icons/react";
 import { memo, useMemo, useState } from "react";
 import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { LoadingIndicator } from "@/ui/loading";
 import { cn } from "@/utils/cn";
-import type { Label, LinkedIssue, ReviewRequest, StatusCheck } from "../types/github";
+import type { Label, LinkedIssue, ReviewRequest, StatusCheck } from "../types/github.types";
 
 // CI Status Indicator
 interface CIStatusProps {
@@ -90,7 +90,7 @@ export const CIStatusIndicator = memo(({ checks }: CIStatusProps) => {
       </Button>
 
       {isExpanded && (
-        <div className="absolute top-full left-0 z-20 mt-2 min-w-[320px] rounded-2xl border border-border/70 bg-secondary-bg/95 p-2 shadow-xl backdrop-blur-sm">
+        <div className="absolute top-full left-0 z-20 mt-2 min-w-[320px] rounded-2xl border border-border/70 bg-secondary-bg/95 p-2 shadow-[var(--shadow-popover)] backdrop-blur-sm">
           {checks.map((check, idx) => (
             <div
               key={idx}

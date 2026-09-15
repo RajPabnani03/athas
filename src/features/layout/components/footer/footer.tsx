@@ -1,14 +1,13 @@
 import {
-  BugBeetle,
-  CaretUp,
-  Database,
-  DownloadSimple,
-  ListBullets,
-  Network,
-  PuzzlePiece,
-  TerminalWindow,
-  UsersThree,
-  WarningCircle,
+  BugBeetleIcon as BugBeetle,
+  CaretUpIcon as CaretUp,
+  DatabaseIcon as Database,
+  DownloadSimpleIcon as DownloadSimple,
+  ListBulletsIcon as ListBullets,
+  PuzzlePieceIcon as PuzzlePiece,
+  TerminalWindowIcon as TerminalWindow,
+  UsersThreeIcon as UsersThree,
+  WarningCircleIcon as WarningCircle,
 } from "@phosphor-icons/react";
 import { cva } from "class-variance-authority";
 import { type ReactNode, type Ref, useMemo, useRef, useState } from "react";
@@ -16,8 +15,8 @@ import { Tab, TabsList } from "@/ui/tabs";
 import { LoadingIndicator } from "@/ui/loading";
 import Tooltip from "@/ui/tooltip";
 import { Dropdown } from "@/ui/dropdown";
-import { useDiagnosticsStore } from "@/features/diagnostics/stores/diagnostics-store";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
+import { useDiagnosticsStore } from "@/features/diagnostics/stores/diagnostics.store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { useExtensionStore } from "@/extensions/registry/extension-store";
 import {
   chromeControl,
@@ -29,22 +28,23 @@ import { useSidebarPaneController } from "@/features/layout/hooks/use-sidebar-pa
 import { getGitStatus } from "@/features/git/api/git-status-api";
 import GitBranchManager from "@/features/git/components/git-branch-manager";
 import GitWorktreeSwitcher from "@/features/git/components/git-worktree-switcher";
-import { useGitStore } from "@/features/git/stores/git-store";
-import { useRepositoryStore } from "@/features/git/stores/git-repository-store";
+import { useGitStore } from "@/features/git/stores/git.store";
+import { useRepositoryStore } from "@/features/git/stores/git-repository.store";
+import { openGitWorktreeWorkspace } from "@/features/git/utils/git-worktree-open";
 import { useAutoUpdate } from "@/features/settings/hooks/use-auto-update";
-import { useSettingsStore } from "@/features/settings/store";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { useCommandShortcut } from "@/features/keymaps/hooks/use-command-shortcut";
 import { cn } from "@/utils/cn";
-import { useUIState } from "@/features/window/stores/ui-state-store";
-import { useAuthStore } from "@/features/window/stores/auth-store";
-import { NotificationsTrigger } from "@/features/window/components/notifications-sidebar";
+import { useUIState } from "@/features/window/stores/ui-state.store";
+import { useAuthStore } from "@/features/window/stores/auth.store";
+import { NotificationsTrigger } from "@/features/notifications/components/notifications-trigger";
 import {
   FOOTER_TRAILING_ITEM_IDS,
   normalizeItemOrder,
   type FooterLeadingItemId,
   type FooterTrailingItemId,
 } from "@/features/layout/config/item-order";
-import { useFileSystemStore } from "../../../file-system/controllers/store";
+import { useFileSystemStore } from "../../../file-system/stores/file-system.store";
 
 type FooterItem<T extends string> = {
   id: T;
@@ -121,15 +121,12 @@ const Footer = () => {
   );
   const isCollaborationFeatureEnabled =
     hasTeamsCollaborationAccess && settings.coreFeatures.teamCollaboration;
-  const isMultiAgentsFeatureEnabled =
-    settings.coreFeatures.aiChat && settings.coreFeatures.multiAgents;
   const { openSidebarView } = useSidebarPaneController();
   const activeBufferId = useBufferStore.use.activeBufferId();
   const buffers = useBufferStore.use.buffers();
   const openDiagnosticsBuffer = useBufferStore.use.actions().openDiagnosticsBuffer;
   const { rootFolderPath } = useFileSystemStore();
   const activeRepoPath = useRepositoryStore.use.activeRepoPath();
-  const selectRepository = useRepositoryStore.use.actions().selectRepository;
   const gitStatus = useGitStore((state) => state.gitStatus);
   const workspaceGitStatus = useGitStore((state) => state.workspaceGitStatus);
   const currentRepoPath = useGitStore((state) => state.currentRepoPath);
@@ -234,7 +231,9 @@ const Footer = () => {
                 triggerClassName={footerGitTrigger()}
                 triggerInputClassName={cn(footerGitTriggerInput(), "max-w-[118px]")}
                 onWorktreeChange={async (worktreePath) => {
-                  selectRepository(worktreePath);
+                  const opened = await openGitWorktreeWorkspace(worktreePath);
+                  if (!opened) return;
+
                   const status = await getGitStatus(worktreePath);
                   actions.setWorkspaceGitStatus(status, worktreePath);
                   if (currentRepoPath === footerRepoPath) {
@@ -332,11 +331,11 @@ const Footer = () => {
           content: (
             <FooterTabControl
               tooltip={`${extensionUpdatesCount} extension update${extensionUpdatesCount === 1 ? "" : "s"} available`}
-              className={cn(chromeControl({ shape: "pill" }), "text-blue-400 hover:text-blue-300")}
+              className={cn(chromeControl({ shape: "pill" }), "text-accent hover:text-accent")}
               onClick={() => uiState.openSettingsDialog("extensions")}
             >
               <PuzzlePiece weight="duotone" />
-              <span className={cn(footerCountPill(), "bg-blue-400 text-primary-bg")}>
+              <span className={cn(footerCountPill(), "bg-accent text-primary-bg")}>
                 {extensionUpdatesCount > 9 ? "9+" : extensionUpdatesCount}
               </span>
             </FooterTabControl>
@@ -426,40 +425,14 @@ const Footer = () => {
     uiState.isRightSidebarVisible && uiState.activeRightSidebarView === "databases";
   const isCollaborationActive =
     uiState.isRightSidebarVisible && uiState.activeRightSidebarView === "collaboration";
-  const isMultiAgentsActive =
-    uiState.isRightSidebarVisible && uiState.activeRightSidebarView === "multi-agents";
   const footerTrailingOrder = useMemo<FooterTrailingItemId[]>(() => {
-    const normalizedOrder = normalizeItemOrder(
+    return normalizeItemOrder(
       settings.footerTrailingItemsOrder,
       FOOTER_TRAILING_ITEM_IDS,
     ) as FooterTrailingItemId[];
-
-    if (!normalizedOrder.includes("multi-agents")) return normalizedOrder;
-
-    return ["multi-agents", ...normalizedOrder.filter((itemId) => itemId !== "multi-agents")];
   }, [settings.footerTrailingItemsOrder]);
 
   const footerTrailingItems: Array<FooterItem<FooterTrailingItemId>> = [
-    ...(isMultiAgentsFeatureEnabled
-      ? [
-          {
-            id: "multi-agents" as const,
-            label: "Multi Agents",
-            content: (
-              <FooterTabControl
-                tooltip="Multi Agents"
-                active={isMultiAgentsActive}
-                className={chromeControl()}
-                onClick={() => {
-                  openSidebarView("multi-agents", { paneLevel: "edge", triggerSide: "right" });
-                }}
-              >
-                <Network className={chromeIcon()} weight="duotone" />
-              </FooterTabControl>
-            ),
-          },
-        ]
-      : []),
     ...(shouldShowOutline
       ? [
           {

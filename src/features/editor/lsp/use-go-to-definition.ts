@@ -2,9 +2,9 @@ import { useCallback } from "react";
 import { EDITOR_CONSTANTS } from "@/features/editor/config/constants";
 import { editorAPI } from "@/features/editor/extensions/api";
 import { useCenterCursor } from "@/features/editor/hooks/use-center-cursor";
-import { useBufferStore } from "@/features/editor/stores/buffer-store";
-import { useJumpListStore } from "@/features/editor/stores/jump-list-store";
-import { useEditorStateStore } from "@/features/editor/stores/state-store";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { useJumpListStore } from "@/features/editor/stores/jump-list.store";
+import { useEditorStateStore } from "@/features/editor/stores/state.store";
 import { calculateOffsetFromContentPosition } from "@/features/editor/utils/position";
 import { readFileContent } from "@/features/file-system/controllers/file-operations";
 import { logger } from "../utils/logger";
@@ -66,8 +66,7 @@ export const useGoToDefinition = ({
       const scrollTop = textarea?.scrollTop ?? 0;
       const scrollLeft = textarea?.scrollLeft ?? 0;
 
-      // Always use EDITOR_PADDING_LEFT since mouse events are captured on the
-      // overlay-editor-container which is positioned AFTER the gutter
+      // Keep the fallback coordinate path aligned with editor content padding.
       const contentOffsetX = EDITOR_CONSTANTS.EDITOR_PADDING_LEFT;
       const paddingTop = EDITOR_CONSTANTS.EDITOR_PADDING_TOP;
 

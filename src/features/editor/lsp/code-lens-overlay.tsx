@@ -1,4 +1,4 @@
-import { type ForwardedRef, forwardRef, useMemo } from "react";
+import { type ForwardedRef, forwardRef, useEffect, useMemo, useState } from "react";
 import { EDITOR_CONSTANTS } from "@/features/editor/config/constants";
 import type { EditorModelPositionResolver } from "../view-model/view-layout";
 import type { CodeLensItem } from "./use-code-lens";
@@ -26,6 +26,25 @@ const CodeLensOverlay = forwardRef(
     }: CodeLensOverlayProps,
     ref: ForwardedRef<HTMLDivElement>,
   ) => {
+    const [resolvedTops, setResolvedTops] = useState<Map<number, number>>(new Map());
+
+    useEffect(() => {
+      if (!resolveModelPosition || lenses.length === 0) {
+        setResolvedTops(new Map());
+        return;
+      }
+
+      const nextTops = new Map<number, number>();
+      for (const line of new Set(lenses.map((lens) => lens.line))) {
+        const resolvedTop = resolveModelPosition(line, 0)?.top;
+        if (typeof resolvedTop === "number") {
+          nextTops.set(line, resolvedTop);
+        }
+      }
+
+      setResolvedTops(nextTops);
+    }, [lenses, resolveModelPosition]);
+
     // Group lenses by line and only render visible ones
     const visibleGroups = useMemo(() => {
       const buffer = viewportHeight * 0.5;
@@ -34,8 +53,10 @@ const CodeLensOverlay = forwardRef(
 
       const byLine = new Map<number, CodeLensItem[]>();
       for (const lens of lenses) {
+        if (!lens.command) continue;
+
         const top =
-          resolveModelPosition?.(lens.line, 0)?.top ??
+          resolvedTops.get(lens.line) ??
           EDITOR_CONSTANTS.EDITOR_PADDING_TOP + lens.line * lineHeight;
         if (top < visibleTop || top > visibleBottom) continue;
         const existing = byLine.get(lens.line) || [];
@@ -43,17 +64,22 @@ const CodeLensOverlay = forwardRef(
         byLine.set(lens.line, existing);
       }
       return byLine;
-    }, [lenses, scrollTop, viewportHeight, lineHeight, resolveModelPosition]);
+    }, [lenses, scrollTop, viewportHeight, lineHeight, resolvedTops]);
 
     if (visibleGroups.size === 0) return null;
 
     return (
-      <div ref={ref} className="absolute inset-0 overflow-hidden" style={{ zIndex: 4 }}>
+      <div
+        ref={ref}
+        className="pointer-events-none absolute inset-0 overflow-hidden"
+        style={{ zIndex: 4 }}
+      >
         {Array.from(visibleGroups.entries()).map(([line, items]) => {
-          const top =
-            (resolveModelPosition?.(line, 0)?.top ??
-              EDITOR_CONSTANTS.EDITOR_PADDING_TOP + line * lineHeight) -
-            lineHeight * 0.2;
+          const top = Math.max(
+            0,
+            (resolvedTops.get(line) ?? EDITOR_CONSTANTS.EDITOR_PADDING_TOP + line * lineHeight) -
+              lineHeight * 0.2,
+          );
           const left = EDITOR_CONSTANTS.EDITOR_PADDING_LEFT;
 
           return (
@@ -71,7 +97,7 @@ const CodeLensOverlay = forwardRef(
                 <button
                   key={`${item.title}-${i}`}
                   type="button"
-                  className="mr-2 cursor-pointer border-none bg-transparent p-0 editor-font text-text-lighter/60 hover:text-text"
+                  className="pointer-events-auto mr-2 cursor-pointer border-none bg-transparent p-0 editor-font text-text-lighter/60 hover:text-text"
                   disabled={!item.command}
                   onClick={(event) => {
                     event.preventDefault();

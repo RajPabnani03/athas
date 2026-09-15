@@ -1,5 +1,5 @@
-import type { SettingSearchRecord } from "../types/search";
-import { IS_MAC, IS_WINDOWS } from "@/utils/platform";
+import type { SettingSearchRecord } from "../types/search.types";
+import { IS_LINUX, IS_MAC, IS_WINDOWS } from "@/utils/platform";
 
 export const settingsSearchIndex: SettingSearchRecord[] = [
   // Enterprise Settings
@@ -190,6 +190,14 @@ export const settingsSearchIndex: SettingSearchRecord[] = [
     label: "Compact Folders",
     description: "Collapse single-child folder chains in the file tree",
     keywords: ["compact", "folders", "directories", "single child", "collapse", "nested"],
+  },
+  {
+    id: "file-tree-hide-root-folder",
+    tab: "file-explorer",
+    section: "Display",
+    label: "Hide Root Folder",
+    description: "Show project files directly at the top level",
+    keywords: ["root", "folder", "project", "workspace", "top level", "file explorer"],
   },
   {
     id: "file-tree-density",
@@ -402,7 +410,7 @@ export const settingsSearchIndex: SettingSearchRecord[] = [
     description: "Show sidebar activity tabs across the top or in a left rail",
     keywords: ["sidebar", "tabs", "activity", "top", "left", "rail", "layout"],
   },
-  ...(!IS_MAC && !IS_WINDOWS
+  ...(!IS_MAC && !IS_WINDOWS && !IS_LINUX
     ? [
         {
           id: "appearance-native-menu-bar",
@@ -426,6 +434,14 @@ export const settingsSearchIndex: SettingSearchRecord[] = [
         } satisfies SettingSearchRecord,
       ]
     : []),
+  {
+    id: "appearance-window-transparency",
+    tab: "appearance",
+    section: "Layout",
+    label: "Window Transparency",
+    description: "Use translucent app chrome and transparent native windows where supported",
+    keywords: ["window", "transparency", "transparent", "translucent", "glass", "chrome"],
+  },
   {
     id: "appearance-title-bar-project-mode",
     tab: "appearance",
@@ -777,14 +793,6 @@ export const settingsSearchIndex: SettingSearchRecord[] = [
     keywords: ["ai", "assistant", "chat"],
   },
   {
-    id: "features-multi-agents",
-    tab: "features",
-    section: "Features",
-    label: "Multi Agents",
-    description: "Multi-agent session sidebar",
-    keywords: ["ai", "agents", "multi", "sidebar", "experimental"],
-  },
-  {
     id: "features-breadcrumbs",
     tab: "features",
     section: "Features",
@@ -807,6 +815,22 @@ export const settingsSearchIndex: SettingSearchRecord[] = [
     label: "Persistent Commands",
     description: "The last used commands appear at the top of the command palette",
     keywords: ["persistent", "commands", "recent", "command", "palette"],
+  },
+  {
+    id: "features-web-viewer",
+    tab: "features",
+    section: "Features",
+    label: "Web Viewer",
+    description: "Open URLs in embedded editor tabs",
+    keywords: ["web", "viewer", "browser", "url", "embedded", "experimental"],
+  },
+  {
+    id: "features-athas-editor-engine",
+    tab: "features",
+    section: "Features",
+    label: "Athas Editor Engine",
+    description: "Use the experimental Athas editor engine instead of Monaco",
+    keywords: ["athas", "editor", "engine", "monaco", "experimental"],
   },
 
   // Terminal Settings
@@ -899,23 +923,6 @@ export const settingsSearchIndex: SettingSearchRecord[] = [
     description: "Show open buffers as a horizontally scrollable carousel in the main view",
     keywords: ["tabs", "buffers", "carousel", "scroll", "horizontal", "trackpad", "main view"],
   },
-  {
-    id: "editor-external-editor",
-    tab: "editor",
-    section: "External Editor",
-    label: "Default Editor",
-    description: "Open files in an external terminal editor instead of the built-in editor",
-    keywords: ["external", "editor", "neovim", "vim", "helix", "nano", "emacs", "terminal"],
-  },
-  {
-    id: "editor-custom-editor-command",
-    tab: "editor",
-    section: "External Editor",
-    label: "Custom Command",
-    description: "Command to run for custom external editor",
-    keywords: ["custom", "command", "editor", "external"],
-  },
-
   // Extensions Settings
   {
     id: "extensions-browse",
@@ -976,7 +983,7 @@ export const settingsSearchIndex: SettingSearchRecord[] = [
     section: "Telemetry",
     label: "Anonymous Usage Telemetry",
     description:
-      "Send anonymous heartbeat, extension, and crash-report metadata; update checks always send required delivery metadata",
+      "Send anonymous operational metadata for updates, heartbeats, extensions, and crashes",
     keywords: ["telemetry", "analytics", "tracking", "privacy", "crash", "updates", "extensions"],
   },
 ];

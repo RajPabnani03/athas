@@ -1,19 +1,23 @@
 import {
-  BracketsCurly as Braces,
-  Code,
-  Cube,
-  Function as FunctionIcon,
-  Hash,
+  BracketsCurlyIcon as Braces,
+  CodeIcon as Code,
+  CubeIcon as Cube,
+  FunctionIcon,
+  HashIcon as Hash,
   IconContext,
-  Package,
-  PuzzlePiece,
-  SquaresFour,
-  Stack,
-  TextT,
+  PackageIcon as Package,
+  PuzzlePieceIcon as PuzzlePiece,
+  SquaresFourIcon as SquaresFour,
+  StackIcon as Stack,
+  TextTIcon as TextT,
 } from "@phosphor-icons/react";
 import { forwardRef } from "react";
-import { SidebarTreeDisclosure, SidebarTreeIcon, SidebarTreeRow } from "@/ui/sidebar-tree";
-import type { OutlineSymbol } from "../types/outline-symbol";
+import {
+  SidebarTreeDisclosure,
+  SidebarTreeIcon,
+  SidebarTreeRow,
+} from "@/features/sidebar-tree/components/sidebar-tree";
+import type { OutlineSymbol } from "../types/outline-symbol.types";
 
 function OutlineSymbolIcon({ kind, className = "size-3.5" }: { kind: string; className?: string }) {
   return (
@@ -21,31 +25,31 @@ function OutlineSymbolIcon({ kind, className = "size-3.5" }: { kind: string; cla
       {(() => {
         switch (kind) {
           case "class":
-            return <SquaresFour className={`${className} text-amber-500`} />;
+            return <SquaresFour className={`${className} text-symbol-type`} />;
           case "interface":
-            return <PuzzlePiece className={`${className} text-sky-500`} />;
+            return <PuzzlePiece className={`${className} text-symbol-interface`} />;
           case "struct":
-            return <Cube className={`${className} text-amber-500`} />;
+            return <Cube className={`${className} text-symbol-type`} />;
           case "enum":
-            return <Stack className={`${className} text-orange-500`} />;
+            return <Stack className={`${className} text-symbol-enum`} />;
           case "enum-member":
-            return <Hash className={`${className} text-orange-500`} />;
+            return <Hash className={`${className} text-symbol-enum`} />;
           case "property":
           case "field":
-            return <Braces className={`${className} text-emerald-500`} />;
+            return <Braces className={`${className} text-symbol-property`} />;
           case "function":
           case "method":
           case "constructor":
-            return <FunctionIcon className={`${className} text-violet-500`} />;
+            return <FunctionIcon className={`${className} text-symbol-function`} />;
           case "variable":
           case "constant":
-            return <Code className={`${className} text-blue-500`} />;
+            return <Code className={`${className} text-symbol-variable`} />;
           case "module":
           case "namespace":
           case "package":
             return <Package className={`${className} text-text-lighter`} />;
           case "type-parameter":
-            return <TextT className={`${className} text-teal-500`} />;
+            return <TextT className={`${className} text-symbol-type-parameter`} />;
           default:
             return <Code className={`${className} text-text-lighter`} />;
         }
