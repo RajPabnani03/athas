@@ -1,13 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
-import { useEffect } from "react";
 import { editorAPI } from "@/features/editor/extensions/api";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
 import { isEditorKeyboardTarget } from "@/features/keymaps/utils/editor-keyboard-target";
 import { useToast } from "@/features/layout/contexts/toast-context";
 import { keymapRegistry } from "@/features/keymaps/utils/registry";
+import { OPEN_NOTIFICATIONS_COMMAND_EVENT } from "@/features/notifications/constants/notifications-events";
 import { usePaneStore } from "@/features/panes/stores/pane.store";
 import { splitActiveEditorGroup } from "@/features/panes/utils/pane-command-actions";
 import { useUpdater } from "@/features/settings/hooks/use-updater";
@@ -16,59 +15,20 @@ import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { useEditorAppStore } from "@/features/editor/stores/editor-app.store";
 import { useUIState } from "@/features/window/stores/ui-state.store";
 import { createAppWindow } from "@/features/window/utils/create-app-window";
-import { showAlertDialog } from "@/features/dialogs/services/dialog-service";
+import { requestWindowClose } from "@/features/window/utils/request-window-close";
+import { showAlertDialog } from "@/ui/dialog";
 import { writeClipboardText } from "@/utils/clipboard";
+import { getServiceUrls } from "@/config/services";
 import { useMenuEvents } from "./use-menu-events";
 
-interface EmbeddedWebviewShortcutEvent {
-  webviewLabel: string;
-  shortcut: string;
-}
-
-const WEBVIEW_GLOBAL_SHORTCUT_COMMANDS: Record<string, string> = {
-  "switch-tab": "workbench.nextTabCtrlTab",
-  "toggle-terminal": "workbench.toggleTerminal",
-  "toggle-sidebar": "workbench.toggleSidebar",
-  "command-palette": "workbench.commandPalette",
-  "quick-open": "file.quickOpen",
-  "close-tab": "file.close",
-  "reopen-tab": "file.reopenClosed",
-  "new-tab": "workbench.newTab",
-  find: "workbench.showFind",
-  "find-in-files": "workbench.showGlobalSearch",
-};
-
-function handleEmbeddedWebviewGlobalShortcut(shortcut: string) {
-  if (!shortcut.startsWith("global:")) return;
-
-  const globalShortcut = shortcut.replace("global:", "");
-
-  if (globalShortcut === "new-window") {
-    void createAppWindow();
-    return;
-  }
-
-  if (globalShortcut === "settings") {
-    useUIState.getState().openSettingsDialog("general");
-    return;
-  }
-
-  const commandId = WEBVIEW_GLOBAL_SHORTCUT_COMMANDS[globalShortcut];
-  if (!commandId) return;
-
-  void keymapRegistry.executeCommand(commandId);
-}
-
 export function useMenuEventsWrapper() {
-  const uiState = useUIState();
-  const fileSystemStore = useFileSystemStore();
-  const updateSetting = useSettingsStore((state) => state.updateSetting);
-  const buffers = useBufferStore.use.buffers();
-  const activeBufferId = useBufferStore.use.activeBufferId();
-  const activeBuffer = buffers.find((b) => b.id === activeBufferId) || null;
+  const handleCreateNewFile = useFileSystemStore.use.handleCreateNewFile();
+  const handleOpenFolder = useFileSystemStore.use.handleOpenFolder();
+  const closeFolder = useFileSystemStore.use.closeFolder();
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
   const { closeBuffer } = useBufferStore.use.actions();
   const { handleSave } = useEditorAppStore.use.actions();
-  const openWhatsNew = useWhatsNewStore((state) => state.open);
+  const openWhatsNew = useWhatsNewStore((state) => state.actions.open);
   const { checkForUpdates } = useUpdater(false);
   const { showToast } = useToast();
   const isTerminalFocused = () => {
@@ -95,30 +55,8 @@ export function useMenuEventsWrapper() {
       return false;
     }
 
-    return activeBuffer?.type === "editor";
+    return useBufferStore.getState().actions.getActiveBuffer()?.type === "editor";
   };
-
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-
-    const setupListener = async () => {
-      unlisten = await listen<EmbeddedWebviewShortcutEvent>(
-        "embedded-webview-shortcut",
-        (event) => {
-          if (disposed) return;
-          handleEmbeddedWebviewGlobalShortcut(event.payload.shortcut);
-        },
-      );
-    };
-
-    void setupListener();
-
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, []);
 
   useMenuEvents({
     onNewWindow: () => {
@@ -129,12 +67,13 @@ export function useMenuEventsWrapper() {
         window.dispatchEvent(new CustomEvent("terminal-new"));
         return;
       }
-      void fileSystemStore.handleCreateNewFile();
+      void handleCreateNewFile();
     },
-    onOpenFolder: fileSystemStore.handleOpenFolder,
-    onCloseFolder: fileSystemStore.closeFolder,
+    onOpenFolder: handleOpenFolder,
+    onCloseFolder: closeFolder,
     onSave: handleSave,
     onSaveAs: async () => {
+      const activeBuffer = useBufferStore.getState().actions.getActiveBuffer();
       if (!activeBuffer) return;
 
       try {
@@ -186,11 +125,15 @@ export function useMenuEventsWrapper() {
       // Use the active pane's active buffer instead of global activeBuffer
       const paneStore = usePaneStore.getState();
       const activePane = paneStore.actions.getActivePane();
-      const bufferIdToClose = activePane?.activeBufferId || activeBuffer?.id;
+      const bufferIdToClose =
+        activePane?.activeBufferId || useBufferStore.getState().actions.getActiveBuffer()?.id;
 
       if (bufferIdToClose) {
         closeBuffer(bufferIdToClose);
+        return;
       }
+
+      requestWindowClose();
     },
     onUndo: () => {
       if (shouldRouteEditMenuToEditor()) {
@@ -222,7 +165,7 @@ export function useMenuEventsWrapper() {
         return;
       }
 
-      uiState.setIsFindVisible(true);
+      void keymapRegistry.executeCommand("workbench.showFind");
     },
     onFindReplace: () => {
       void keymapRegistry.executeCommand("workbench.showFindReplace");
@@ -230,9 +173,15 @@ export function useMenuEventsWrapper() {
     onToggleComment: () => {
       void keymapRegistry.executeCommand("editor.toggleComment");
     },
-    onCommandPalette: () => uiState.setIsCommandPaletteVisible(true),
-    onToggleSidebar: () => uiState.setIsSidebarVisible(!uiState.isSidebarVisible),
+    onCommandPalette: () => useUIState.getState().setIsCommandPaletteVisible(true),
+    onToggleActivitySidebar: () => {
+      void keymapRegistry.executeCommand("workbench.toggleActivitySidebar");
+    },
+    onToggleSidebar: () => {
+      void keymapRegistry.executeCommand("workbench.toggleSidebar");
+    },
     onToggleTerminal: () => {
+      const uiState = useUIState.getState();
       const showingTerminal =
         !uiState.isBottomPaneVisible || uiState.bottomPaneActiveTab !== "terminal";
       uiState.setBottomPaneActiveTab("terminal");
@@ -244,9 +193,6 @@ export function useMenuEventsWrapper() {
           uiState.requestTerminalFocus();
         }, 100);
       }
-    },
-    onToggleAiChat: () => {
-      useSettingsStore.getState().toggleAIChatVisible();
     },
     onSplitEditor: () => {
       splitActiveEditorGroup("horizontal");
@@ -260,10 +206,7 @@ export function useMenuEventsWrapper() {
       );
       // In a full implementation, this would toggle vim keybinding mode in the editor
     },
-    onQuickOpen: () => uiState.setIsQuickOpenVisible(true),
-    onGoToLine: () => {
-      void keymapRegistry.executeCommand("editor.goToLine");
-    },
+    onQuickOpen: () => useUIState.getState().setIsQuickOpenVisible(true),
     onNextTab: () => {
       void keymapRegistry.executeCommand("workbench.nextTab");
     },
@@ -284,7 +227,7 @@ export function useMenuEventsWrapper() {
     },
     onDocumentation: async () => {
       const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl("https://athas.dev/docs");
+      await openUrl(getServiceUrls().docsUrl);
     },
     onChangelog: async () => {
       const { openUrl } = await import("@tauri-apps/plugin-opener");
@@ -326,11 +269,18 @@ export function useMenuEventsWrapper() {
         showToast({ message: "You're on the latest version", type: "success" });
       }
     },
+    onOpenGitHubNotifications: () => {
+      window.dispatchEvent(
+        new CustomEvent(OPEN_NOTIFICATIONS_COMMAND_EVENT, {
+          detail: { category: "github" },
+        }),
+      );
+    },
     onOpenSettings: () => {
-      uiState.openSettingsDialog("general");
+      useUIState.getState().openSettingsDialog("general");
     },
     onOpenExtensions: () => {
-      uiState.openSettingsDialog("extensions");
+      useBufferStore.getState().actions.openExtensionsBuffer();
     },
     onToggleMenuBar: async () => {
       try {

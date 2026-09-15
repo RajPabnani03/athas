@@ -2,11 +2,14 @@ import type {
   CommandContribution,
   DatabaseProviderContribution,
   ExtensionManifest,
+  AIProviderContribution,
   IconThemeContribution,
-  KeybindingContribution,
+  IntegrationContribution,
   LanguageContribution,
+  SkillContribution,
   Snippet,
   SnippetContribution,
+  ThemeContribution,
 } from "./extension-manifest";
 
 function uniqueBy<T>(items: T[], getKey: (item: T) => string): T[] {
@@ -60,18 +63,7 @@ export function getManifestCommandContributions(
   );
 }
 
-export function getManifestKeybindingContributions(
-  manifest: ExtensionManifest,
-): KeybindingContribution[] {
-  return uniqueBy(
-    [...(manifest.keybindings || []), ...(manifest.contributes?.keybindings || [])],
-    (keybinding) => `${keybinding.command}:${keybinding.key}`,
-  );
-}
-
-export function getManifestSnippetContributions(
-  manifest: ExtensionManifest,
-): SnippetContribution[] {
+function getManifestSnippetContributions(manifest: ExtensionManifest): SnippetContribution[] {
   return [...(manifest.snippets || []), ...(manifest.contributes?.snippets || [])];
 }
 
@@ -84,6 +76,32 @@ export function getManifestDatabaseContributions(
     ...(manifest.contributes?.databases || []),
     ...(manifest.contributes?.databaseProviders || []),
   ];
+}
+
+export function getManifestAIProviderContributions(
+  manifest: ExtensionManifest,
+): AIProviderContribution[] {
+  return [...(manifest.aiProviders || []), ...(manifest.contributes?.aiProviders || [])];
+}
+
+export function getManifestIntegrationContributions(
+  manifest: ExtensionManifest,
+): IntegrationContribution[] {
+  return uniqueBy(
+    [...(manifest.integrations || []), ...(manifest.contributes?.integrations || [])],
+    (integration) => integration.id,
+  );
+}
+
+export function getManifestSkillContributions(manifest: ExtensionManifest): SkillContribution[] {
+  return uniqueBy(
+    [...(manifest.skills || []), ...(manifest.contributes?.skills || [])],
+    (skill) => skill.id,
+  );
+}
+
+export function getManifestThemeContributions(manifest: ExtensionManifest): ThemeContribution[] {
+  return [...(manifest.themes || []), ...(manifest.contributes?.themes || [])];
 }
 
 export function getManifestIconContributions(manifest: ExtensionManifest): IconThemeContribution[] {

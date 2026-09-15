@@ -1,9 +1,15 @@
 import { getFileDiff } from "../api/git-diff-api";
 import type { MultiFileDiff } from "../types/git-diff.types";
 import type { GitDiff, GitFile, GitStatus } from "../types/git.types";
-import { countDiffStats } from "./git-diff-helpers";
+import { countDiffStats, hasGitDiffChanges } from "./git-diff-helpers";
 
 const WORKING_TREE_TITLE = "Uncommitted Changes";
+const WORKING_TREE_MULTI_DIFF_BATCH_SIZE = 8;
+const WORKING_TREE_MULTI_DIFF_FILE_LIMIT = 1_000;
+const yieldToRenderer = () =>
+  new Promise<void>((resolve) => {
+    globalThis.setTimeout(resolve, 0);
+  });
 
 const getWorkingTreeFileKey = (file: Pick<GitFile, "path" | "staged">): string =>
   `${file.staged ? "staged" : "unstaged"}:${file.path}`;
@@ -15,6 +21,35 @@ const parseWorkingTreeFileKey = (fileKey: string): { path: string; staged: boole
   return {
     staged: match[1] === "staged",
     path: match[2],
+  };
+};
+
+export const createSingleFileWorkingTreeDiff = ({
+  repoPath,
+  fileKey,
+  diff,
+  title = WORKING_TREE_TITLE,
+}: {
+  repoPath: string;
+  fileKey: string;
+  diff: GitDiff;
+  title?: string;
+}): MultiFileDiff => {
+  const stats = countDiffStats([diff]);
+
+  return {
+    title,
+    repoPath,
+    commitHash: "working-tree",
+    files: [diff],
+    totalFiles: 1,
+    totalAdditions: stats.additions,
+    totalDeletions: stats.deletions,
+    fileKeys: [fileKey],
+    initiallyExpandedFileKey: fileKey,
+    selectedFileKey: fileKey,
+    selectedFilePath: diff.new_path || diff.old_path || diff.file_path,
+    isLoading: false,
   };
 };
 
@@ -100,13 +135,21 @@ export const buildWorkingTreeMultiDiff = async ({
 }): Promise<MultiFileDiff> => {
   const statusFiles = getDiffableWorkingTreeFiles(status);
   const orderedFiles = reconcileWorkingTreeFiles(statusFiles, previousFileKeys);
+  const filesToLoad = orderedFiles.slice(0, WORKING_TREE_MULTI_DIFF_FILE_LIMIT);
+  const diffResults: Array<{ fileKey: string; diff: GitDiff | null }> = [];
 
-  const diffResults = await Promise.all(
-    orderedFiles.map(async (file) => ({
-      fileKey: getWorkingTreeFileKey(file),
-      diff: await loadDiff(repoPath, file.path, file.staged),
-    })),
-  );
+  for (let index = 0; index < filesToLoad.length; index += WORKING_TREE_MULTI_DIFF_BATCH_SIZE) {
+    const batch = filesToLoad.slice(index, index + WORKING_TREE_MULTI_DIFF_BATCH_SIZE);
+    diffResults.push(
+      ...(await Promise.all(
+        batch.map(async (file) => ({
+          fileKey: getWorkingTreeFileKey(file),
+          diff: await loadDiff(repoPath, file.path, file.staged),
+        })),
+      )),
+    );
+    await yieldToRenderer();
+  }
 
   const resolvedDiffs = diffResults.filter(
     (
@@ -114,7 +157,7 @@ export const buildWorkingTreeMultiDiff = async ({
     ): entry is {
       fileKey: string;
       diff: GitDiff;
-    } => !!entry.diff && (entry.diff.lines.length > 0 || entry.diff.is_image === true),
+    } => hasGitDiffChanges(entry.diff),
   );
 
   const stats = countDiffStats(resolvedDiffs.map((entry) => entry.diff));
@@ -129,6 +172,17 @@ export const buildWorkingTreeMultiDiff = async ({
     totalDeletions: stats.deletions,
     fileKeys: resolvedDiffs.map((entry) => entry.fileKey),
     initiallyExpandedFileKey: resolvedDiffs[0]?.fileKey,
+    selectedFileKey: resolvedDiffs[0]?.fileKey,
+    selectedFilePath: resolvedDiffs[0]
+      ? resolvedDiffs[0].diff.new_path ||
+        resolvedDiffs[0].diff.old_path ||
+        resolvedDiffs[0].diff.file_path
+      : undefined,
     isLoading: false,
+    indexingProgress: {
+      processed: filesToLoad.length,
+      total: orderedFiles.length,
+      label: "Indexing",
+    },
   };
 };

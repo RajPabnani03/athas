@@ -1,6 +1,7 @@
 import { getProviderById } from "@/features/ai/types/providers.types";
+import { normalizeOllamaBaseUrl } from "@/features/ai/lib/ollama-endpoint";
+import { normalizeLegacyV0DesignSystems } from "@/features/settings/lib/legacy-v0-settings";
 import { isKeybindingPreset } from "@/features/keymaps/defaults/keybinding-presets";
-import { normalizeFileTreeDensity } from "@/features/file-explorer/lib/file-tree-density";
 import {
   DEFAULT_AI_AUTOCOMPLETE_MODEL_ID,
   DEFAULT_AI_MODEL_ID,
@@ -13,20 +14,23 @@ import {
 } from "@/features/settings/config/typography-defaults";
 import { normalizeConfiguredFontFamily } from "@/features/settings/lib/font-family-resolution";
 import {
-  FOOTER_LEADING_ITEM_IDS,
-  FOOTER_TRAILING_ITEM_IDS,
-  HEADER_TRAILING_ITEM_IDS,
+  GIT_SIDEBAR_ITEM_IDS,
+  GIT_SIDEBAR_TAB_IDS,
   SIDEBAR_ACTIVITY_ITEM_IDS,
   normalizeItemOrder,
 } from "@/features/layout/config/item-order";
 import { normalizeUiFontSize } from "@/features/settings/lib/ui-font-size";
+import type { GitSidebarItemId } from "@/features/layout/config/item-order";
 import type { Settings, SettingsSection } from "@/features/settings/types/settings.types";
 
 const AI_MODEL_MIGRATIONS: Record<string, Record<string, string>> = {
   anthropic: {
-    "claude-opus-4-7": "claude-opus-4-8",
-    "claude-opus-4-6": "claude-opus-4-8",
-    "claude-sonnet-4-5": "claude-sonnet-4-6",
+    "claude-fable-5": "claude-fable-5-1",
+    "claude-opus-4-8": "claude-opus-5",
+    "claude-opus-4-7": "claude-opus-5",
+    "claude-opus-4-6": "claude-opus-5",
+    "claude-sonnet-4-6": "claude-sonnet-5",
+    "claude-sonnet-4-5": "claude-sonnet-5",
   },
   deepseek: {
     "deepseek-chat": "deepseek-v4-flash",
@@ -54,13 +58,14 @@ const AI_MODEL_MIGRATIONS: Record<string, Record<string, string>> = {
   mistral: {
     "mistral-large-3-25-12": "mistral-large-2512",
     "mistral-large-2512": "mistral-large-2512",
-    "mistral-medium-3-1-25-08": "mistral-medium-2604",
-    "mistral-medium-2508": "mistral-medium-2604",
-    "mistral-medium-2505": "mistral-medium-2604",
+    "mistral-medium-2604": "mistral-medium-3-5",
+    "mistral-medium-3-1-25-08": "mistral-medium-3-5",
+    "mistral-medium-2508": "mistral-medium-3-5",
+    "mistral-medium-2505": "mistral-medium-3-5",
     "mistral-small-4-0-26-03": "mistral-small-2603",
     "mistral-small-2506": "mistral-small-2603",
     "codestral-25-08": "codestral-2508",
-    "devstral-2-25-12": "mistral-medium-2604",
+    "devstral-2-25-12": "mistral-medium-3-5",
   },
   openai: {
     "gpt-5.2": "gpt-5.5",
@@ -104,13 +109,44 @@ const EDITOR_LINE_HEIGHT_MIN = 1;
 const EDITOR_LINE_HEIGHT_MAX = 2;
 const FILE_TREE_INDENT_SIZE_MIN = 8;
 const FILE_TREE_INDENT_SIZE_MAX = 32;
+const ACTIVITY_RAIL_WIDTH_MIN = 140;
+const ACTIVITY_RAIL_WIDTH_MAX = 320;
+const SIDEBAR_WIDTH_MIN = 140;
+const SIDEBAR_WIDTH_MAX = 600;
 const RENDER_WHITESPACE_MODES = new Set<Settings["renderWhitespace"]>([
   "none",
   "boundary",
   "trailing",
   "all",
 ]);
-const EDITOR_ENGINES = new Set<Settings["editorEngine"]>(["monaco"]);
+const EDITOR_CURSOR_STYLES = new Set<Settings["editorCursorStyle"]>([
+  "line",
+  "block",
+  "underline",
+  "line-thin",
+  "block-outline",
+  "underline-thin",
+]);
+const EDITOR_CURSOR_BLINKING_MODES = new Set<Settings["editorCursorBlinking"]>([
+  "blink",
+  "smooth",
+  "phase",
+  "expand",
+  "solid",
+]);
+const TERMINAL_CURSOR_INACTIVE_STYLES = new Set<Settings["terminalCursorInactiveStyle"]>([
+  "outline",
+  "block",
+  "bar",
+  "underline",
+  "none",
+]);
+const TAB_CLOSE_BUTTON_VISIBILITY_MODES = new Set<Settings["tabCloseButtonVisibility"]>([
+  "active",
+  "hover",
+  "always",
+]);
+const FILE_TREE_SORT_ORDERS = new Set<Settings["fileTreeSortOrder"]>(["folders-first", "name"]);
 const EXTERNAL_EDITOR_MODES = new Set<Settings["externalEditor"]>([
   "none",
   "nvim",
@@ -119,21 +155,20 @@ const EXTERNAL_EDITOR_MODES = new Set<Settings["externalEditor"]>([
   "custom",
 ]);
 const SETTINGS_SECTIONS = new Set<SettingsSection>([
+  "notifications",
   "account",
   "general",
   "editor",
   "git",
   "appearance",
-  "databases",
-  "extensions",
   "ai",
   "keyboard",
-  "features",
   "collaboration",
   "enterprise",
   "advanced",
   "terminal",
   "file-explorer",
+  "sharing",
 ]);
 
 function normalizeEditorLineHeight(value: number): number {
@@ -154,6 +189,43 @@ function normalizeFileTreeIndentSize(value: number): number {
   return Math.min(FILE_TREE_INDENT_SIZE_MAX, Math.max(FILE_TREE_INDENT_SIZE_MIN, snapped));
 }
 
+function normalizeBoundedWidth(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return Array.from(
+    new Set(
+      value.filter((item): item is string => typeof item === "string" && item.trim().length > 0),
+    ),
+  );
+}
+
+function normalizeIconTheme(value: string): string {
+  if (
+    value === "athas-icons" ||
+    value === "athas-icons-dimmed" ||
+    value === "athas-icons-light" ||
+    value === "athas-file-icons" ||
+    value === "athas-file-icons-dark" ||
+    value === "athas-file-icons-light" ||
+    value === "colorful-material" ||
+    value === "material" ||
+    value === "seti" ||
+    value === "symbols"
+  ) {
+    return "pierre-icons-complete";
+  }
+
+  return value;
+}
+
 function normalizeBaseUrl(value: string | undefined): string {
   return value?.trim().replace(/\/+$/, "") || "";
 }
@@ -172,12 +244,36 @@ function normalizeRenderWhitespace(value: unknown): Settings["renderWhitespace"]
   return "none";
 }
 
-function normalizeEditorEngine(value: unknown): Settings["editorEngine"] {
-  if (!EDITOR_ENGINES.has(value as Settings["editorEngine"])) {
-    return "monaco";
-  }
+function normalizeEditorCursorStyle(value: unknown): Settings["editorCursorStyle"] {
+  return EDITOR_CURSOR_STYLES.has(value as Settings["editorCursorStyle"])
+    ? (value as Settings["editorCursorStyle"])
+    : defaultSettings.editorCursorStyle;
+}
 
-  return value as Settings["editorEngine"];
+function normalizeEditorCursorBlinking(value: unknown): Settings["editorCursorBlinking"] {
+  return EDITOR_CURSOR_BLINKING_MODES.has(value as Settings["editorCursorBlinking"])
+    ? (value as Settings["editorCursorBlinking"])
+    : defaultSettings.editorCursorBlinking;
+}
+
+function normalizeTerminalCursorInactiveStyle(
+  value: unknown,
+): Settings["terminalCursorInactiveStyle"] {
+  return TERMINAL_CURSOR_INACTIVE_STYLES.has(value as Settings["terminalCursorInactiveStyle"])
+    ? (value as Settings["terminalCursorInactiveStyle"])
+    : defaultSettings.terminalCursorInactiveStyle;
+}
+
+function normalizeTabCloseButtonVisibility(value: unknown): Settings["tabCloseButtonVisibility"] {
+  return TAB_CLOSE_BUTTON_VISIBILITY_MODES.has(value as Settings["tabCloseButtonVisibility"])
+    ? (value as Settings["tabCloseButtonVisibility"])
+    : defaultSettings.tabCloseButtonVisibility;
+}
+
+function normalizeFileTreeSortOrder(value: unknown): Settings["fileTreeSortOrder"] {
+  return FILE_TREE_SORT_ORDERS.has(value as Settings["fileTreeSortOrder"])
+    ? (value as Settings["fileTreeSortOrder"])
+    : defaultSettings.fileTreeSortOrder;
 }
 
 function normalizeExternalEditor(
@@ -196,6 +292,10 @@ function normalizeExternalEditor(
 }
 
 function normalizeSettingsSection(value: unknown): SettingsSection {
+  if (value === "features") {
+    return "advanced";
+  }
+
   if (typeof value === "string" && SETTINGS_SECTIONS.has(value as SettingsSection)) {
     return value as SettingsSection;
   }
@@ -240,6 +340,10 @@ function normalizeAISkills(skills: Settings["aiSkills"]): Settings["aiSkills"] {
         : {}),
       content: skill.content.slice(0, 100_000),
       ...(typeof skill.author === "string" ? { author: skill.author.trim().slice(0, 120) } : {}),
+      ...(typeof skill.license === "string" ? { license: skill.license.trim().slice(0, 80) } : {}),
+      ...(typeof skill.sourceUrl === "string"
+        ? { sourceUrl: skill.sourceUrl.trim().slice(0, 2048) }
+        : {}),
       ...(skill.source === "marketplace" || skill.source === "local"
         ? { source: skill.source }
         : {}),
@@ -275,36 +379,32 @@ function normalizeAISkills(skills: Settings["aiSkills"]): Settings["aiSkills"] {
 
 function normalizeAISettings(settings: Settings): Settings {
   const normalizedSettings = { ...settings };
-  const provider =
-    getProviderById(normalizedSettings.aiProviderId) || getProviderById(DEFAULT_AI_PROVIDER_ID);
-
-  if (!provider) {
-    return {
-      ...normalizedSettings,
-      aiProviderId: DEFAULT_AI_PROVIDER_ID,
-      aiModelId: DEFAULT_AI_MODEL_ID,
-      aiAutocompleteModelId:
-        AI_AUTOCOMPLETE_MODEL_MIGRATIONS[normalizedSettings.aiAutocompleteModelId] ||
-        normalizedSettings.aiAutocompleteModelId ||
-        DEFAULT_AI_AUTOCOMPLETE_MODEL_ID,
-    };
-  }
-
-  normalizedSettings.aiProviderId = provider.id;
-  normalizedSettings.aiModelId =
-    AI_MODEL_MIGRATIONS[provider.id]?.[normalizedSettings.aiModelId] ||
-    normalizedSettings.aiModelId;
-
+  const requestedProviderId =
+    typeof normalizedSettings.aiProviderId === "string"
+      ? normalizedSettings.aiProviderId.trim()
+      : "";
+  const provider = requestedProviderId ? getProviderById(requestedProviderId) : undefined;
   normalizedSettings.aiCustomBaseUrl = normalizeBaseUrl(normalizedSettings.aiCustomBaseUrl);
   normalizedSettings.aiCustomModelId = normalizedSettings.aiCustomModelId?.trim() || "";
+  normalizedSettings.ollamaBaseUrl = normalizeOllamaBaseUrl(normalizedSettings.ollamaBaseUrl);
 
-  if (provider.id === "custom") {
-    normalizedSettings.aiModelId = normalizedSettings.aiCustomModelId;
-  } else if (
-    provider.models.length > 0 &&
-    !provider.models.some((model) => model.id === normalizedSettings.aiModelId)
-  ) {
-    normalizedSettings.aiModelId = provider.models[0].id;
+  if (!provider) {
+    normalizedSettings.aiProviderId = requestedProviderId || DEFAULT_AI_PROVIDER_ID;
+    normalizedSettings.aiModelId = normalizedSettings.aiModelId?.trim() || DEFAULT_AI_MODEL_ID;
+  } else {
+    normalizedSettings.aiProviderId = provider.id;
+    normalizedSettings.aiModelId =
+      AI_MODEL_MIGRATIONS[provider.id]?.[normalizedSettings.aiModelId] ||
+      normalizedSettings.aiModelId;
+
+    if (provider.id === "custom") {
+      normalizedSettings.aiModelId = normalizedSettings.aiCustomModelId;
+    } else if (
+      provider.models.length > 0 &&
+      !provider.models.some((model) => model.id === normalizedSettings.aiModelId)
+    ) {
+      normalizedSettings.aiModelId = provider.models[0].id;
+    }
   }
 
   normalizedSettings.aiAutocompleteModelId =
@@ -317,7 +417,22 @@ function normalizeAISettings(settings: Settings): Settings {
     normalizedSettings.aiAutocompleteCustomBaseUrl?.trim() || "";
   normalizedSettings.aiAutocompleteCustomModelId =
     normalizedSettings.aiAutocompleteCustomModelId?.trim() || "";
+  normalizedSettings.aiAgentNotifications = normalizedSettings.aiAgentNotifications === true;
   normalizedSettings.aiSkills = normalizeAISkills(normalizedSettings.aiSkills);
+  normalizedSettings.v0DesignSystems = normalizeLegacyV0DesignSystems(
+    (normalizedSettings as { v0DesignSystems?: unknown }).v0DesignSystems,
+  );
+  normalizedSettings.activeV0DesignSystemId =
+    typeof normalizedSettings.activeV0DesignSystemId === "string"
+      ? normalizedSettings.activeV0DesignSystemId.trim()
+      : "";
+  if (
+    !normalizedSettings.v0DesignSystems.some(
+      (profile) => profile.id === normalizedSettings.activeV0DesignSystemId,
+    )
+  ) {
+    normalizedSettings.activeV0DesignSystemId = "";
+  }
 
   return normalizedSettings;
 }
@@ -331,31 +446,63 @@ export function normalizeSettings(settings: Settings): Settings {
     ...defaultSettings.coreFeatures,
     ...normalizedSettings.coreFeatures,
   };
+  delete (
+    normalizedSettings.coreFeatures as typeof normalizedSettings.coreFeatures & {
+      outline?: unknown;
+    }
+  ).outline;
+  delete (normalizedSettings.coreFeatures as { athasEditorEngine?: unknown }).athasEditorEngine;
+  delete (normalizedSettings.coreFeatures as { energyEdge?: unknown }).energyEdge;
+  delete (normalizedSettings.coreFeatures as { webViewer?: unknown }).webViewer;
+  delete (normalizedSettings.coreFeatures as { ghosttyTerminal?: unknown }).ghosttyTerminal;
+  delete (normalizedSettings as Settings & { windowChromeDensity?: unknown }).windowChromeDensity;
+  const legacyFooterSettings = normalizedSettings as Settings & {
+    footerLeadingItemsOrder?: unknown;
+    footerTrailingItemsOrder?: unknown;
+    showStatusBar?: unknown;
+  };
+  delete legacyFooterSettings.footerLeadingItemsOrder;
+  delete legacyFooterSettings.footerTrailingItemsOrder;
+  delete legacyFooterSettings.showStatusBar;
 
   if (
     persistedGitPanelMode === "none" ||
-    (persistedGitPanelMode && !["changes", "history"].includes(persistedGitPanelMode))
+    (persistedGitPanelMode &&
+      !GIT_SIDEBAR_ITEM_IDS.includes(persistedGitPanelMode as GitSidebarItemId))
   ) {
     normalizedSettings.gitLastPanelMode = "changes";
   }
-  normalizedSettings.gitSidebarTabOrder = normalizedSettings.gitSidebarTabOrder.filter(
-    (item): item is "changes" | "history" => item === "changes" || item === "history",
+  normalizedSettings.githubSidebarSectionOrder = normalizeItemOrder(
+    normalizedSettings.githubSidebarSectionOrder,
+    ["pull-requests", "issues", "actions", "releases", "deployments"],
   );
-  if (normalizedSettings.gitSidebarTabOrder.length === 0) {
-    normalizedSettings.gitSidebarTabOrder = ["changes", "history"];
-  }
+  normalizedSettings.gitSidebarTabOrder = normalizeItemOrder(
+    normalizedSettings.gitSidebarTabOrder,
+    GIT_SIDEBAR_TAB_IDS,
+  );
+  normalizedSettings.hiddenGitSidebarItems = normalizeStringList(
+    normalizedSettings.hiddenGitSidebarItems,
+  ).filter((itemId): itemId is GitSidebarItemId =>
+    GIT_SIDEBAR_ITEM_IDS.includes(itemId as GitSidebarItemId),
+  );
 
   normalizedSettings.uiFontSize = normalizeUiFontSize(normalizedSettings.uiFontSize);
   normalizedSettings.fontFamily = normalizeConfiguredFontFamily(
-    normalizedSettings.fontFamily,
+    normalizedSettings.fontFamily === "Geist Mono"
+      ? DEFAULT_MONO_FONT_FAMILY
+      : normalizedSettings.fontFamily,
     DEFAULT_MONO_FONT_FAMILY,
   );
   normalizedSettings.terminalFontFamily = normalizeConfiguredFontFamily(
-    normalizedSettings.terminalFontFamily,
+    normalizedSettings.terminalFontFamily === "Geist Mono"
+      ? DEFAULT_MONO_FONT_FAMILY
+      : normalizedSettings.terminalFontFamily,
     DEFAULT_MONO_FONT_FAMILY,
   );
   normalizedSettings.uiFontFamily = normalizeConfiguredFontFamily(
-    normalizedSettings.uiFontFamily,
+    ["system-ui", "Geist Sans"].includes(normalizedSettings.uiFontFamily)
+      ? DEFAULT_UI_FONT_FAMILY
+      : normalizedSettings.uiFontFamily,
     DEFAULT_UI_FONT_FAMILY,
   );
   if (normalizedSettings.terminalLineHeight === LEGACY_TERMINAL_LINE_HEIGHT_DEFAULT) {
@@ -367,17 +514,50 @@ export function normalizeSettings(settings: Settings): Settings {
   normalizedSettings.renderWhitespace = normalizeRenderWhitespace(
     (normalizedSettings as { renderWhitespace?: unknown }).renderWhitespace,
   );
+  normalizedSettings.editorCursorStyle = normalizeEditorCursorStyle(
+    (normalizedSettings as { editorCursorStyle?: unknown }).editorCursorStyle,
+  );
+  normalizedSettings.editorCursorBlinking = normalizeEditorCursorBlinking(
+    (normalizedSettings as { editorCursorBlinking?: unknown }).editorCursorBlinking,
+  );
+  normalizedSettings.terminalCursorInactiveStyle = normalizeTerminalCursorInactiveStyle(
+    (normalizedSettings as { terminalCursorInactiveStyle?: unknown }).terminalCursorInactiveStyle,
+  );
+  normalizedSettings.tabCloseButtonVisibility = normalizeTabCloseButtonVisibility(
+    (normalizedSettings as { tabCloseButtonVisibility?: unknown }).tabCloseButtonVisibility,
+  );
+  normalizedSettings.fileTreeSortOrder = normalizeFileTreeSortOrder(
+    (normalizedSettings as { fileTreeSortOrder?: unknown }).fileTreeSortOrder,
+  );
+  normalizedSettings.activityRailWidth = normalizeBoundedWidth(
+    normalizedSettings.activityRailWidth,
+    defaultSettings.activityRailWidth,
+    ACTIVITY_RAIL_WIDTH_MIN,
+    ACTIVITY_RAIL_WIDTH_MAX,
+  );
+  normalizedSettings.sidebarWidth = normalizeBoundedWidth(
+    normalizedSettings.sidebarWidth,
+    defaultSettings.sidebarWidth,
+    SIDEBAR_WIDTH_MIN,
+    SIDEBAR_WIDTH_MAX,
+  );
+  normalizedSettings.rightSidebarWidth = normalizeBoundedWidth(
+    normalizedSettings.rightSidebarWidth,
+    defaultSettings.rightSidebarWidth,
+    SIDEBAR_WIDTH_MIN,
+    SIDEBAR_WIDTH_MAX,
+  );
   normalizedSettings.externalEditor = normalizeExternalEditor(
     (normalizedSettings as { externalEditor?: unknown }).externalEditor,
     normalizedSettings.customEditorCommand,
   );
-  normalizedSettings.editorEngine = normalizeEditorEngine(
-    (normalizedSettings as { editorEngine?: unknown }).editorEngine,
-  );
+  delete (normalizedSettings as { editorEngine?: unknown }).editorEngine;
   normalizedSettings.fileTreeIndentSize = normalizeFileTreeIndentSize(
     normalizedSettings.fileTreeIndentSize,
   );
-  normalizedSettings.fileTreeDensity = normalizeFileTreeDensity(normalizedSettings.fileTreeDensity);
+  delete (normalizedSettings as { fileTreeDensity?: unknown }).fileTreeDensity;
+  delete (normalizedSettings as Settings & { headerTrailingItemsOrder?: unknown })
+    .headerTrailingItemsOrder;
   normalizedSettings.lastSettingsTab = normalizeSettingsSection(
     (normalizedSettings as { lastSettingsTab?: unknown }).lastSettingsTab,
   );
@@ -386,30 +566,21 @@ export function normalizeSettings(settings: Settings): Settings {
     normalizedSettings.keybindingPreset = "none";
   }
 
-  if (
-    normalizedSettings.iconTheme === "colorful-material" ||
-    normalizedSettings.iconTheme === "seti"
-  ) {
-    normalizedSettings.iconTheme = "symbols";
-  }
+  normalizedSettings.iconTheme = normalizeIconTheme(normalizedSettings.iconTheme);
 
-  normalizedSettings.headerTrailingItemsOrder = normalizeItemOrder(
-    normalizedSettings.headerTrailingItemsOrder,
-    HEADER_TRAILING_ITEM_IDS,
-  );
   normalizedSettings.sidebarActivityItemsOrder = normalizeItemOrder(
     normalizedSettings.sidebarActivityItemsOrder,
     SIDEBAR_ACTIVITY_ITEM_IDS,
   );
-  normalizedSettings.footerLeadingItemsOrder = normalizeItemOrder(
-    normalizedSettings.footerLeadingItemsOrder,
-    FOOTER_LEADING_ITEM_IDS,
+  normalizedSettings.hiddenSidebarActivityItems = normalizeStringList(
+    normalizedSettings.hiddenSidebarActivityItems,
+  ).filter((itemId) => itemId !== "search" && itemId !== "review");
+  normalizedSettings.pinnedSidebarExtensionItems = normalizeStringList(
+    normalizedSettings.pinnedSidebarExtensionItems,
   );
-  normalizedSettings.footerTrailingItemsOrder = normalizeItemOrder(
-    normalizedSettings.footerTrailingItemsOrder,
-    FOOTER_TRAILING_ITEM_IDS,
+  normalizedSettings.collapsedActivityRailSections = normalizeStringList(
+    normalizedSettings.collapsedActivityRailSections,
   );
-
   return normalizedSettings;
 }
 
@@ -445,24 +616,70 @@ export function normalizeSettingValue<K extends keyof Settings>(
     return normalizeRenderWhitespace(value) as Settings[K];
   }
 
-  if (key === "editorEngine") {
-    return normalizeEditorEngine(value) as Settings[K];
+  if (key === "editorCursorStyle") {
+    return normalizeEditorCursorStyle(value) as Settings[K];
+  }
+
+  if (key === "editorCursorBlinking") {
+    return normalizeEditorCursorBlinking(value) as Settings[K];
+  }
+
+  if (key === "terminalCursorInactiveStyle") {
+    return normalizeTerminalCursorInactiveStyle(value) as Settings[K];
+  }
+
+  if (key === "tabCloseButtonVisibility") {
+    return normalizeTabCloseButtonVisibility(value) as Settings[K];
+  }
+
+  if (key === "fileTreeSortOrder") {
+    return normalizeFileTreeSortOrder(value) as Settings[K];
+  }
+
+  if (key === "activityRailWidth") {
+    return normalizeBoundedWidth(
+      value,
+      defaultSettings.activityRailWidth,
+      ACTIVITY_RAIL_WIDTH_MIN,
+      ACTIVITY_RAIL_WIDTH_MAX,
+    ) as Settings[K];
+  }
+
+  if (key === "sidebarWidth" || key === "rightSidebarWidth") {
+    const fallback =
+      key === "sidebarWidth" ? defaultSettings.sidebarWidth : defaultSettings.rightSidebarWidth;
+    return normalizeBoundedWidth(
+      value,
+      fallback,
+      SIDEBAR_WIDTH_MIN,
+      SIDEBAR_WIDTH_MAX,
+    ) as Settings[K];
+  }
+
+  if (
+    key === "hiddenSidebarActivityItems" ||
+    key === "pinnedSidebarExtensionItems" ||
+    key === "collapsedActivityRailSections"
+  ) {
+    return normalizeStringList(value) as Settings[K];
+  }
+
+  if (key === "hiddenGitSidebarItems") {
+    return normalizeStringList(value).filter((itemId): itemId is GitSidebarItemId =>
+      GIT_SIDEBAR_ITEM_IDS.includes(itemId as GitSidebarItemId),
+    ) as Settings[K];
   }
 
   if (key === "fileTreeIndentSize") {
     return normalizeFileTreeIndentSize(value as number) as Settings[K];
   }
 
-  if (key === "fileTreeDensity") {
-    return normalizeFileTreeDensity(value as string) as Settings[K];
-  }
-
   if (key === "lastSettingsTab") {
     return normalizeSettingsSection(value) as Settings[K];
   }
 
-  if (key === "iconTheme" && (value === "colorful-material" || value === "seti")) {
-    return "symbols" as Settings[K];
+  if (key === "iconTheme") {
+    return normalizeIconTheme(value as string) as Settings[K];
   }
 
   if (key === "keybindingPreset" && !isKeybindingPreset(value as string)) {
@@ -473,8 +690,20 @@ export function normalizeSettingValue<K extends keyof Settings>(
     return normalizeAISkills(value as Settings["aiSkills"]) as Settings[K];
   }
 
+  if (key === "v0DesignSystems") {
+    return normalizeLegacyV0DesignSystems(value) as Settings[K];
+  }
+
+  if (key === "activeV0DesignSystemId") {
+    return ((value as string)?.trim() || "") as Settings[K];
+  }
+
   if (key === "aiCustomBaseUrl") {
     return normalizeBaseUrl(value as string) as Settings[K];
+  }
+
+  if (key === "ollamaBaseUrl") {
+    return normalizeOllamaBaseUrl(value as string) as Settings[K];
   }
 
   if (key === "aiCustomModelId") {

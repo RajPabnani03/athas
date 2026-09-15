@@ -1,26 +1,26 @@
 import type { Message } from "@/features/ai/types/ai-chat.types";
 
-export const FOLLOW_UP_ACTIONS_START = "[FOLLOW_UP_ACTIONS]";
-export const FOLLOW_UP_ACTIONS_END = "[/FOLLOW_UP_ACTIONS]";
+const FOLLOW_UP_ACTIONS_START = "[FOLLOW_UP_ACTIONS]";
+const FOLLOW_UP_ACTIONS_END = "[/FOLLOW_UP_ACTIONS]";
 
-export const FOLLOW_UP_ACTION_ICONS = [
+const FOLLOW_UP_ACTION_ICONS = [
   "ArrowRight",
   "Bug",
   "CheckCircle",
   "FileText",
   "GitBranch",
-  "MagnifyingGlass",
+  "Search",
   "Play",
-  "RocketLaunch",
+  "Rocket",
   "ShieldCheck",
   "Stack",
   "Terminal",
-  "UploadSimple",
+  "Upload",
   "WarningCircle",
   "Wrench",
 ] as const;
 
-export type FollowUpActionIcon = (typeof FOLLOW_UP_ACTION_ICONS)[number];
+type FollowUpActionIcon = (typeof FOLLOW_UP_ACTION_ICONS)[number];
 
 export interface ChatFollowUpAction {
   id: string;
@@ -47,7 +47,7 @@ Rules for follow-up actions:
 - Generate 1-3 actions that fit the work you just completed or the next likely user intent.
 - Each action must be a short UI button, not a sentence.
 - Each prompt must be the exact message to send if the user clicks it.
-- Pick an icon from this Phosphor icon set only: ${FOLLOW_UP_ACTION_ICONS.join(", ")}.
+- Pick an icon from this app icon set only: ${FOLLOW_UP_ACTION_ICONS.join(", ")}.
 - Do not mention the follow-up block in the visible response.`;
 }
 
@@ -107,6 +107,21 @@ export function extractFollowUpActions(content: string): {
   return {
     content: visibleContent,
     actions: parseFollowUpActions(match[1] || ""),
+  };
+}
+
+export function normalizeMessageFollowUpActions(message: Message): Message {
+  if (message.role !== "assistant" || typeof message.content !== "string") return message;
+
+  const extracted = extractFollowUpActions(message.content);
+  const contentChanged = extracted.content !== message.content;
+  if (!contentChanged && extracted.actions.length === 0) return message;
+
+  return {
+    ...message,
+    content: extracted.content,
+    followUpActions:
+      contentChanged || extracted.actions.length > 0 ? extracted.actions : message.followUpActions,
   };
 }
 

@@ -1,7 +1,7 @@
 import type { CodeEditorRef } from "@/features/editor/components/code-editor";
 import type { FileEntry } from "./app.types";
 
-export interface WorkspaceFolder {
+interface WorkspaceFolder {
   path: string;
   name: string;
   isPrimary?: boolean;
@@ -30,6 +30,7 @@ export interface FsActions {
   addFolderToWorkspace: (path?: string) => Promise<boolean>;
   removeFolderFromWorkspace: (path: string) => Promise<boolean>;
   handleOpenRemoteProject: (connectionId: string, connectionName: string) => Promise<boolean>;
+  handleOpenWslProject: (distro: string, linuxPath: string) => Promise<boolean>;
   closeFolder: () => Promise<boolean>;
   resetWorkspace: () => Promise<void>;
   switchToProject: (projectId: string) => Promise<boolean>;

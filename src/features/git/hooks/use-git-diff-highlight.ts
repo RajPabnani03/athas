@@ -6,7 +6,12 @@ import {
 } from "@/features/editor/lib/wasm-parser/extension-assets";
 import { tokenizeByLine } from "@/features/editor/lib/wasm-parser/tokenizer";
 import type { HighlightToken } from "@/features/editor/types/wasm-parser/wasm-parser.types";
+import { buildLineOffsetMap } from "@/features/editor/utils/html";
 import { getLanguageIdFromPath } from "@/features/editor/utils/language-id";
+import {
+  hasLineBasedSyntaxFallback,
+  tokenizeLineBasedSyntax,
+} from "@/features/editor/utils/line-based-syntax";
 import type { GitDiffLine } from "../types/git.types";
 
 function getLanguageId(filePath: string): string | null {
@@ -67,28 +72,150 @@ function mapTokensToDiffLines(
   return result;
 }
 
+function findLineIndexForOffset(lineOffsets: number[], offset: number): number {
+  let low = 0;
+  let high = Math.max(0, lineOffsets.length - 1);
+  let line = 0;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const lineOffset = lineOffsets[mid] ?? 0;
+
+    if (lineOffset <= offset) {
+      line = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return line;
+}
+
+function tokenizeLineBasedContentByLine(
+  content: string,
+  languageId: string,
+): Map<number, HighlightToken[]> {
+  const tokens = tokenizeLineBasedSyntax(content, languageId);
+  if (tokens.length === 0) return new Map();
+
+  const lineOffsets = buildLineOffsetMap(content);
+  const tokensByLine = new Map<number, HighlightToken[]>();
+
+  for (const token of tokens) {
+    const line = findLineIndexForOffset(lineOffsets, token.start);
+    const lineStart = lineOffsets[line] ?? 0;
+    const nextLineStart = lineOffsets[line + 1];
+    const lineEnd =
+      nextLineStart === undefined ? content.length : Math.max(lineStart, nextLineStart - 1);
+    const startColumn = Math.max(0, token.start - lineStart);
+    const endColumn = Math.min(lineEnd - lineStart, token.end - lineStart);
+
+    if (endColumn <= startColumn) continue;
+
+    const lineTokens = tokensByLine.get(line) ?? [];
+    lineTokens.push({
+      type: token.class_name,
+      startIndex: token.start,
+      endIndex: token.end,
+      startPosition: { row: line, column: startColumn },
+      endPosition: { row: line, column: endColumn },
+    });
+    tokensByLine.set(line, lineTokens);
+  }
+
+  return tokensByLine;
+}
+
+export function createLineBasedDiffTokenMap(
+  lines: GitDiffLine[],
+  filePath: string,
+): Map<number, HighlightToken[]> {
+  const languageId = getLanguageId(filePath);
+  if (!languageId || !hasLineBasedSyntaxFallback(languageId)) return new Map();
+
+  const oldContent = reconstructContent(lines, "old");
+  const newContent = reconstructContent(lines, "new");
+  const oldTokensByLine = tokenizeLineBasedContentByLine(oldContent.content, languageId);
+  const newTokensByLine = tokenizeLineBasedContentByLine(newContent.content, languageId);
+  const oldTokenMap = mapTokensToDiffLines(oldTokensByLine, oldContent.lineMapping);
+  const newTokenMap = mapTokensToDiffLines(newTokensByLine, newContent.lineMapping);
+  const merged = new Map<number, HighlightToken[]>();
+
+  for (const [index, tokens] of oldTokenMap) {
+    merged.set(index, tokens);
+  }
+  for (const [index, tokens] of newTokenMap) {
+    merged.set(index, tokens);
+  }
+
+  return merged;
+}
+
+interface DiffTokenState {
+  key: string;
+  tokenMap: Map<number, HighlightToken[]>;
+}
+
+interface DiffHighlightInput {
+  key: string;
+  languageId: string | null;
+  oldContent: ReconstructedContent;
+  newContent: ReconstructedContent;
+  fallbackTokenMap: Map<number, HighlightToken[]>;
+}
+
+function appendHighlightHash(hash: number, value: string) {
+  let nextHash = hash;
+  for (let index = 0; index < value.length; index++) {
+    nextHash = Math.imul(nextHash ^ value.charCodeAt(index), 16_777_619);
+  }
+  return nextHash >>> 0;
+}
+
+export function createDiffHighlightKey(lines: GitDiffLine[], filePath: string) {
+  let hash = appendHighlightHash(2_166_136_261, filePath);
+
+  for (const line of lines) {
+    hash = appendHighlightHash(hash, line.line_type);
+    hash = appendHighlightHash(hash, line.content);
+    hash = appendHighlightHash(hash, String(line.old_line_number ?? ""));
+    hash = appendHighlightHash(hash, String(line.new_line_number ?? ""));
+  }
+
+  return `${filePath}:${lines.length}:${hash.toString(16)}`;
+}
+
+function createDiffHighlightInput(lines: GitDiffLine[], filePath: string): DiffHighlightInput {
+  return {
+    key: createDiffHighlightKey(lines, filePath),
+    languageId: getLanguageId(filePath),
+    oldContent: reconstructContent(lines, "old"),
+    newContent: reconstructContent(lines, "new"),
+    fallbackTokenMap: createLineBasedDiffTokenMap(lines, filePath),
+  };
+}
+
 export function useDiffHighlighting(
   lines: GitDiffLine[],
   filePath: string,
 ): Map<number, HighlightToken[]> {
-  const [tokenMap, setTokenMap] = useState<Map<number, HighlightToken[]>>(new Map());
-
-  const languageId = useMemo(() => getLanguageId(filePath), [filePath]);
-
-  const { oldContent, newContent } = useMemo(() => {
-    const old = reconstructContent(lines, "old");
-    const newC = reconstructContent(lines, "new");
-    return { oldContent: old, newContent: newC };
-  }, [lines]);
+  const input = useMemo(() => createDiffHighlightInput(lines, filePath), [filePath, lines]);
+  const [tokenState, setTokenState] = useState<DiffTokenState>({
+    key: "",
+    tokenMap: new Map(),
+  });
 
   useEffect(() => {
+    const { key, languageId, oldContent, newContent, fallbackTokenMap } = input;
     if (!languageId) {
-      setTokenMap(new Map());
+      setTokenState({ key, tokenMap: new Map() });
       return;
     }
 
     const lang = languageId;
     let cancelled = false;
+    setTokenState({ key, tokenMap: fallbackTokenMap });
 
     async function tokenize() {
       try {
@@ -139,9 +266,13 @@ export function useDiffHighlighting(
           merged.set(index, tokens);
         }
 
-        setTokenMap(merged);
+        setTokenState({
+          key,
+          tokenMap: merged.size > 0 ? merged : fallbackTokenMap,
+        });
       } catch {
-        setTokenMap(new Map());
+        if (cancelled) return;
+        setTokenState({ key, tokenMap: fallbackTokenMap });
       }
     }
 
@@ -150,7 +281,7 @@ export function useDiffHighlighting(
     return () => {
       cancelled = true;
     };
-  }, [languageId, oldContent, newContent]);
+  }, [input]);
 
-  return tokenMap;
+  return tokenState.key === input.key ? tokenState.tokenMap : input.fallbackTokenMap;
 }

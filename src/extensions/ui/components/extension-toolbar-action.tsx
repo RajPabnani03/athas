@@ -13,14 +13,8 @@ export function ExtensionToolbarAction({ action }: ExtensionToolbarActionProps) 
   }
 
   return (
-    <Tooltip content={action.title} side="bottom">
-      <Button
-        onClick={action.onClick}
-        variant="ghost"
-        className="rounded text-text-lighter"
-        aria-label={action.title}
-        compact
-      >
+    <Tooltip content={action.title}>
+      <Button onClick={action.onClick} variant="ghost" aria-label={action.title} iconOnly>
         <DynamicIcon name={action.icon} />
       </Button>
     </Tooltip>

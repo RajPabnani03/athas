@@ -1,21 +1,43 @@
 import {
-  ArchiveIcon as Archive,
-  DownloadIcon as Download,
-  FolderOpenIcon as FolderOpen,
-  GitPullRequestIcon as GitPullRequest,
-  ArrowClockwiseIcon as RefreshCw,
-  ArrowCounterClockwiseIcon as RotateCcw,
-  HardDrivesIcon as Server,
-  GearSixIcon as Settings,
-  TagIcon as Tag,
-  UploadIcon as Upload,
-} from "@phosphor-icons/react";
+  ArchiveIcon,
+  ArrowClockwiseIcon,
+  ArrowCounterClockwiseIcon,
+  DotsIcon,
+  DownloadIcon,
+  EyeIcon,
+  FolderOpenIcon,
+  GitBranchIcon,
+  GitPullRequestIcon,
+  HardDrivesIcon,
+  SettingsIcon,
+  TagIcon,
+  UploadIcon,
+} from "@/ui/icons";
 import { useState } from "react";
+import {
+  GIT_SIDEBAR_ITEM_IDS,
+  GIT_SIDEBAR_TAB_IDS,
+  type GitSidebarItemId,
+  type GitSidebarTabId,
+} from "@/features/layout/config/item-order";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
-import { ContextMenu, type ContextMenuItem } from "@/ui/context-menu";
-import { LoadingIndicator } from "@/ui/loading";
-import { showConfirmDialog } from "@/features/dialogs/services/dialog-service";
-import { toast } from "@/ui/toast";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/ui/dropdown";
+import { SidebarIconButton } from "@/ui/sidebar";
+import { Spinner } from "@/ui/spinner";
+import { showConfirmDialog } from "@/ui/dialog";
+import { toast } from "sonner";
 import {
   fetchChanges,
   pullChanges,
@@ -24,15 +46,16 @@ import {
 } from "../api/git-remotes-api";
 import { discardAllChanges, initRepository } from "../api/git-status-api";
 import { useGitStore } from "../stores/git.store";
-import { type GitActionsMenuAnchorRect } from "../utils/git-actions-menu-position";
+import { SOURCE_CONTROL_ITEM_ICONS, SOURCE_CONTROL_ITEM_LABELS } from "./source-control-items";
 
 interface GitActionsMenuProps {
-  isOpen: boolean;
-  anchorRect: GitActionsMenuAnchorRect | null;
-  onClose: () => void;
   hasGitRepo: boolean;
+  hiddenItemIds: GitSidebarItemId[];
+  onItemVisibleChange: (itemId: GitSidebarItemId, visible: boolean) => void;
   repoPath?: string;
   onRefresh?: () => void;
+  onOpenBranchManager?: () => void;
+  onShowBranchDiff?: () => void;
   onOpenRemoteManager?: () => void;
   onOpenTagManager?: () => void;
   onViewStashes?: () => void;
@@ -43,12 +66,13 @@ interface GitActionsMenuProps {
 }
 
 const GitActionsMenu = ({
-  isOpen,
-  anchorRect,
-  onClose,
   hasGitRepo,
+  hiddenItemIds,
+  onItemVisibleChange,
   repoPath,
   onRefresh,
+  onOpenBranchManager,
+  onShowBranchDiff,
   onOpenRemoteManager,
   onOpenTagManager,
   onViewStashes,
@@ -58,7 +82,7 @@ const GitActionsMenu = ({
   isInitializingRepository,
 }: GitActionsMenuProps) => {
   const [isLoading, setIsLoading] = useState(false);
-  const { isRefreshing } = useGitStore();
+  const isRefreshing = useGitStore((state) => state.isRefreshing);
   const confirmBeforeDiscard = useSettingsStore((state) => state.settings.confirmBeforeDiscard);
 
   const handleAction = async (
@@ -72,13 +96,11 @@ const GitActionsMenu = ({
   ) => {
     if (!repoPath) return;
 
-    let toastId: string | null = null;
+    let toastId: string | number | null = null;
     setIsLoading(true);
     try {
       if (messages?.loading) {
-        toastId = toast.show({
-          message: messages.loading,
-          type: "info",
+        toastId = toast.info(messages.loading, {
           duration: 0,
         });
       }
@@ -149,7 +171,6 @@ const GitActionsMenu = ({
   const handleInitRepository = () => {
     if (onInitializeRepository) {
       void onInitializeRepository();
-      onClose();
       return;
     }
 
@@ -162,133 +183,154 @@ const GitActionsMenu = ({
 
   const handleRemoteManager = () => {
     onOpenRemoteManager?.();
-    onClose();
+  };
+
+  const handleBranchManager = () => {
+    onOpenBranchManager?.();
+  };
+
+  const handleShowBranchDiff = () => {
+    onShowBranchDiff?.();
   };
 
   const handleTagManager = () => {
     onOpenTagManager?.();
-    onClose();
   };
 
   const handleViewStashes = () => {
     onViewStashes?.();
-    onClose();
   };
 
   const handleSelectRepository = async () => {
     await onSelectRepository?.();
-    onClose();
   };
 
-  if (!isOpen || !anchorRect) {
-    return null;
-  }
-
-  const items: ContextMenuItem[] = hasGitRepo
-    ? [
-        {
-          id: "select-repository",
-          label: isSelectingRepository ? "Selecting..." : "Select Repository",
-          icon: <FolderOpen />,
-          disabled: isSelectingRepository,
-          onClick: () => void handleSelectRepository(),
-        },
-        { id: "sep-1", label: "", separator: true, onClick: () => {} },
-        {
-          id: "push",
-          label: "Push Changes",
-          icon: <Upload />,
-          disabled: isLoading,
-          onClick: handlePush,
-        },
-        { id: "sep-2", label: "", separator: true, onClick: () => {} },
-        {
-          id: "pull",
-          label: "Pull Changes",
-          icon: <Download />,
-          disabled: isLoading,
-          onClick: handlePull,
-        },
-        {
-          id: "fetch",
-          label: "Fetch",
-          icon: <GitPullRequest />,
-          disabled: isLoading,
-          onClick: handleFetch,
-        },
-        { id: "sep-3", label: "", separator: true, onClick: () => {} },
-        {
-          id: "manage-remotes",
-          label: "Manage Remotes",
-          icon: <Server />,
-          onClick: handleRemoteManager,
-        },
-        {
-          id: "manage-tags",
-          label: "Manage Tags",
-          icon: <Tag />,
-          onClick: handleTagManager,
-        },
-        {
-          id: "view-stashes",
-          label: "View Stashes",
-          icon: <Archive />,
-          onClick: handleViewStashes,
-        },
-        { id: "sep-4", label: "", separator: true, onClick: () => {} },
-        {
-          id: "refresh",
-          label: "Refresh Status",
-          icon: isRefreshing ? (
-            <LoadingIndicator label="Refreshing status" compact />
-          ) : (
-            <RefreshCw />
-          ),
-          disabled: isRefreshing,
-          onClick: () => void handleRefresh(),
-        },
-        { id: "sep-5", label: "", separator: true, onClick: () => {} },
-        {
-          id: "discard-all",
-          label: "Discard All Changes",
-          icon: <RotateCcw />,
-          disabled: isLoading,
-          className: "text-error",
-          onClick: () => void handleDiscardAllChanges(),
-        },
-      ]
-    : [
-        {
-          id: "init-repository",
-          label: isInitializingRepository ? "Initializing..." : "Initialize Repository",
-          icon: <Settings />,
-          disabled: isLoading || isInitializingRepository,
-          onClick: handleInitRepository,
-        },
-        { id: "sep-1", label: "", separator: true, onClick: () => {} },
-        {
-          id: "refresh",
-          label: "Refresh Status",
-          icon: isRefreshing ? (
-            <LoadingIndicator label="Refreshing status" compact />
-          ) : (
-            <RefreshCw />
-          ),
-          disabled: isRefreshing,
-          onClick: () => void handleRefresh(),
-        },
-      ];
-
   return (
-    <ContextMenu
-      isOpen={isOpen}
-      position={{
-        x: anchorRect.right,
-        y: anchorRect.bottom + 6,
-      }}
-      items={items}
-      onClose={onClose}
-    />
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<SidebarIconButton tooltip="Git actions" aria-label="Git actions" />}
+      >
+        <DotsIcon />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" size="default">
+        {hasGitRepo ? (
+          <>
+            <DropdownMenuItem
+              disabled={isSelectingRepository}
+              onClick={() => void handleSelectRepository()}
+            >
+              <FolderOpenIcon />
+              {isSelectingRepository ? "Selecting..." : "Select repository"}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleBranchManager}>
+              <GitBranchIcon />
+              Manage branches
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleShowBranchDiff}>
+              <GitPullRequestIcon />
+              Show branch diff
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={isLoading} onClick={handlePush}>
+              <UploadIcon />
+              Push changes
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={isLoading} onClick={handlePull}>
+              <DownloadIcon optical="md" />
+              Pull changes
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={isLoading} onClick={handleFetch}>
+              <GitPullRequestIcon />
+              Fetch
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={handleRemoteManager}>
+              <HardDrivesIcon />
+              Manage remotes
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleTagManager}>
+              <TagIcon />
+              Manage tags
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleViewStashes}>
+              <ArchiveIcon />
+              View stashes
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        ) : (
+          <>
+            <DropdownMenuItem
+              disabled={isLoading || isInitializingRepository}
+              onClick={handleInitRepository}
+            >
+              <SettingsIcon />
+              {isInitializingRepository ? "Initializing..." : "Initialize repository"}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <EyeIcon />
+            Visibility
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent size="compact">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Views</DropdownMenuLabel>
+              {GIT_SIDEBAR_TAB_IDS.map((itemId) => (
+                <DropdownMenuCheckboxItem
+                  key={itemId}
+                  checked={!hiddenItemIds.includes(itemId)}
+                  closeOnClick={false}
+                  onCheckedChange={(checked) => onItemVisibleChange(itemId, checked)}
+                >
+                  {SOURCE_CONTROL_ITEM_ICONS[itemId]}
+                  {SOURCE_CONTROL_ITEM_LABELS[itemId]}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Repository</DropdownMenuLabel>
+              {GIT_SIDEBAR_ITEM_IDS.filter(
+                (itemId): itemId is Extract<GitSidebarItemId, "remotes" | "tags" | "stashes"> =>
+                  !GIT_SIDEBAR_TAB_IDS.includes(itemId as GitSidebarTabId),
+              ).map((itemId) => (
+                <DropdownMenuCheckboxItem
+                  key={itemId}
+                  checked={!hiddenItemIds.includes(itemId)}
+                  closeOnClick={false}
+                  onCheckedChange={(checked) => onItemVisibleChange(itemId, checked)}
+                >
+                  {SOURCE_CONTROL_ITEM_ICONS[itemId]}
+                  {SOURCE_CONTROL_ITEM_LABELS[itemId]}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+
+        <DropdownMenuItem disabled={isRefreshing} onClick={() => void handleRefresh()}>
+          {isRefreshing ? <Spinner label="Refreshing status" compact /> : <ArrowClockwiseIcon />}
+          Refresh status
+        </DropdownMenuItem>
+        {hasGitRepo ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={isLoading}
+              onClick={() => void handleDiscardAllChanges()}
+            >
+              <ArrowCounterClockwiseIcon />
+              Discard all changes
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 };
 

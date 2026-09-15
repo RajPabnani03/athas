@@ -1,17 +1,27 @@
-import { CaretLeftIcon as CaretLeft, PaletteIcon as Palette } from "@phosphor-icons/react";
-import type React from "react";
+import { ChevronLeftIcon } from "@/ui/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  getIconThemeAppearancePreview,
+  type AppearancePreview,
+} from "@/extensions/appearance/appearance-preview";
+import { AppearancePreviewGraphic } from "@/extensions/appearance/components/appearance-preview";
 import { useRegisteredIconThemes } from "@/extensions/icon-themes/use-registered-icon-themes";
-import { Button } from "@/ui/button";
-import { CommandEmpty, CommandHeader, CommandInput, CommandItem, CommandList } from "@/ui/command";
-import Badge from "@/ui/badge";
+import {
+  CommandEmpty,
+  CommandHeader,
+  CommandHeaderAction,
+  CommandInput,
+  CommandItemBadge,
+  CommandItemRow,
+  CommandList,
+} from "@/ui/command";
 import { matchesSearchQuery } from "@/utils/search-match";
 
 interface IconThemeInfo {
   id: string;
   name: string;
   description: string;
-  icon?: React.ReactNode;
+  preview?: AppearancePreview;
 }
 
 interface IconThemeSelectorContentProps {
@@ -45,7 +55,7 @@ export const IconThemeSelectorContent = ({
         id: theme.id,
         name: theme.name,
         description: theme.description,
-        icon: <Palette />,
+        preview: getIconThemeAppearancePreview(theme),
       })),
     [registeredThemes],
   );
@@ -163,40 +173,47 @@ export const IconThemeSelectorContent = ({
   return (
     <>
       <CommandHeader onClose={handleClose}>
-        <div className="flex w-full items-center gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            className="rounded"
-            onClick={handleBack}
-            aria-label="Back to commands"
-            compact
-          >
-            <CaretLeft className="text-text-lighter" />
-          </Button>
-          <CommandInput
-            ref={inputRef}
-            value={query}
-            onChange={setQuery}
-            onKeyDown={handleKeyDown}
-            placeholder="Search icon themes..."
-            className="flex-1"
-          />
-        </div>
+        <CommandHeaderAction type="button" onClick={handleBack} aria-label="Back to commands">
+          <ChevronLeftIcon />
+        </CommandHeaderAction>
+        <CommandInput
+          ref={inputRef}
+          value={query}
+          onChange={setQuery}
+          onKeyDown={handleKeyDown}
+          placeholder="Search icons..."
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded="true"
+          aria-controls="icon-theme-selector-results"
+          aria-activedescendant={
+            filteredThemes.length ? `icon-theme-selector-option-${selectedIndex}` : undefined
+          }
+        />
       </CommandHeader>
 
-      <CommandList ref={resultsRef}>
+      <CommandList
+        ref={resultsRef}
+        id="icon-theme-selector-results"
+        role="listbox"
+        aria-label="Icons"
+      >
         {filteredThemes.length === 0 ? (
-          <CommandEmpty>No icon themes found</CommandEmpty>
+          <CommandEmpty>No icons found</CommandEmpty>
         ) : (
           filteredThemes.map((theme, index) => {
             const isSelected = index === selectedIndex;
-            const isCurrent = theme.id === currentTheme;
+            const isCurrent = theme.id === initialTheme;
             const isPreviewing = previewTheme !== null;
 
             return (
-              <CommandItem
+              <CommandItemRow
                 key={theme.id}
+                as="div"
+                id={`icon-theme-selector-option-${index}`}
+                role="option"
+                tabIndex={-1}
+                aria-selected={isSelected}
                 data-index={index}
                 onClick={() => {
                   didCommitRef.current = true;
@@ -217,20 +234,18 @@ export const IconThemeSelectorContent = ({
                   }
                 }}
                 isSelected={isSelected}
-                className="gap-3 px-2 py-1.5"
-              >
-                <div className="shrink-0 text-text-lighter">{theme.icon || <Palette />}</div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 truncate ui-text-xs">
-                    <span className="truncate">{theme.name}</span>
-                    {isCurrent && !isPreviewing && (
-                      <Badge variant="accent" className="px-1 py-0.5">
-                        current
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              </CommandItem>
+                icon={
+                  theme.preview ? <AppearancePreviewGraphic preview={theme.preview} /> : undefined
+                }
+                contentLayout="stacked"
+                title={theme.name}
+                description={theme.description}
+                accessory={
+                  isCurrent && !isPreviewing ? (
+                    <CommandItemBadge>current</CommandItemBadge>
+                  ) : undefined
+                }
+              />
             );
           })
         )}
@@ -240,5 +255,3 @@ export const IconThemeSelectorContent = ({
 };
 
 IconThemeSelectorContent.displayName = "IconThemeSelectorContent";
-
-export default IconThemeSelectorContent;

@@ -1,8 +1,10 @@
 import { useEffect } from "react";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
-import type { AgentContent, PaneContent } from "@/features/panes/types/pane-content.types";
+import type { AgentContent } from "@/features/panes/types/pane-content.types";
 import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
 import AIChat from "./chat/ai-chat";
+import { AgentWindowPlaceholder } from "@/features/ai/detached/agent-window-placeholder";
+import { useAgentWindowStore } from "@/features/ai/detached/agent-window.store";
 
 interface AgentTabProps {
   buffer: AgentContent;
@@ -10,29 +12,34 @@ interface AgentTabProps {
 }
 
 export function AgentTab({ buffer, isActive = true }: AgentTabProps) {
-  const buffers = useBufferStore.use.buffers();
+  const windowStatus = useAgentWindowStore((state) => state.sessions[buffer.sessionId]);
+  const contextBuffers = useBufferStore((state) => (isActive ? state.buffers : []));
+  const activeBuffer = useBufferStore(
+    (state) => state.buffers.find((candidate) => candidate.id === buffer.id) ?? buffer,
+  );
   const updateBuffer = useBufferStore.use.actions().updateBuffer;
   const chatTitle = useAIChatStore(
     (state) => state.chats.find((chat) => chat.id === buffer.sessionId)?.title,
   );
-  const activeBuffer = buffers.find((b) => b.id === buffer.id) ?? (buffer as PaneContent);
+  const tabTitle = chatTitle || "New Session";
 
   useEffect(() => {
-    if (!chatTitle || chatTitle === buffer.name) return;
-    updateBuffer({ ...buffer, name: chatTitle });
-  }, [buffer, chatTitle, updateBuffer]);
+    if (tabTitle === buffer.name) return;
+    updateBuffer({ ...buffer, name: tabTitle });
+  }, [buffer, tabTitle, updateBuffer]);
+
+  if (windowStatus) return <AgentWindowPlaceholder chatId={buffer.sessionId} />;
 
   return (
     <div className="size-full overflow-hidden">
-      <div className="mx-auto size-full max-w-4xl">
-        <AIChat
-          mode="chat"
-          chatId={buffer.sessionId}
-          activeBuffer={activeBuffer}
-          buffers={buffers}
-          isActiveSurface={isActive}
-        />
-      </div>
+      <AIChat
+        mode="chat"
+        surfaceId={`agent-session:${buffer.sessionId}`}
+        chatId={buffer.sessionId}
+        activeBuffer={activeBuffer}
+        buffers={contextBuffers}
+        isActiveSurface={isActive}
+      />
     </div>
   );
 }

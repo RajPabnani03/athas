@@ -37,14 +37,27 @@ describe("buffer auto eviction", () => {
     const result = evictLeastRecentAutoClosableBuffer(
       [
         buffer("terminal", "terminal", { sessionId: "terminal-1" }),
-        buffer("web", "webViewer", { url: "https://athas.dev" }),
         buffer("agent", "agent", { sessionId: "agent-1" }),
       ],
       1,
     );
 
     expect(result.evictedBuffer).toBeNull();
-    expect(result.buffers.map((item) => item.id)).toEqual(["terminal", "web", "agent"]);
+    expect(result.buffers.map((item) => item.id)).toEqual(["terminal", "agent"]);
+  });
+
+  it("does not evict singleton tool buffers", () => {
+    const result = evictLeastRecentAutoClosableBuffer(
+      [
+        buffer("search", "globalSearch"),
+        buffer("diagnostics", "diagnostics"),
+        buffer("references", "references"),
+      ],
+      1,
+    );
+
+    expect(result.evictedBuffer).toBeNull();
+    expect(result.buffers.map((item) => item.id)).toEqual(["search", "diagnostics", "references"]);
   });
 
   it("can ignore preview buffers for editor-file opens", () => {

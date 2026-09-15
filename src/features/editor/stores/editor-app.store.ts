@@ -2,21 +2,21 @@ import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { extensionRegistry } from "@/extensions/registry/extension-registry";
+import { parseCollaborationNoteBufferPath } from "@/features/collaboration/lib/collaboration-sidebar-model";
 import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
 import { useFileWatcherStore } from "@/features/file-system/stores/file-watcher.store";
-import { gitDiffCache } from "@/features/git/utils/git-diff-cache";
+import { emitGitChanged } from "@/features/git/events/git-events";
 import { recordLocalHistoryFile } from "@/features/local-history/api/local-history-api";
-import {
-  isEditorContent,
-  type EditorContent,
-  type PaneContent,
-} from "@/features/panes/types/pane-content.types";
+import { isEditorContent } from "@/features/panes/types/pane-content.types";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { createSelectors } from "@/utils/zustand-selectors";
 import { writeFile } from "@/features/file-system/controllers/platform";
-import type { Position, Range } from "../types/editor.types";
+import type { EditorContentChangeOptions, Position, Range } from "../types/editor.types";
+import { getBufferById } from "../utils/buffer-index";
+import { getDirtyWritableEditorBuffers } from "../utils/editor-buffer-selectors";
 import { trackBufferHistoryChange } from "./buffer-history-tracking";
 import { useBufferStore } from "./buffer.store";
+import { queueEditorViewContentChange } from "./view.store";
 
 async function recordLocalHistoryBeforeWrite(
   path: string,
@@ -33,13 +33,12 @@ async function saveEditorBufferById(bufferId: string): Promise<boolean> {
   const { buffers } = useBufferStore.getState();
   const { markBufferDirty, updateBufferContent, updateBufferPath } =
     useBufferStore.getState().actions;
-  const { updateSettingsFromJSON } = useSettingsStore.getState();
-  const { markPendingSave } = useFileWatcherStore.getState();
-  const activeBuffer = buffers.find((buffer) => buffer.id === bufferId);
+  const { updateSettingsFromJSON } = useSettingsStore.getState().actions;
+  const { markPendingSave } = useFileWatcherStore.getState().actions;
+  const activeBuffer = getBufferById(buffers, bufferId);
   if (!activeBuffer || !isEditorContent(activeBuffer)) return false;
+  if (activeBuffer.readOnly) return false;
 
-  const { parseCollaborationNoteBufferPath } =
-    await import("@/features/collaboration/lib/collaboration-sidebar-model");
   const collaborationNoteTarget = parseCollaborationNoteBufferPath(activeBuffer.path);
 
   if (activeBuffer.path.startsWith("untitled:")) {
@@ -58,11 +57,13 @@ async function saveEditorBufferById(bufferId: string): Promise<boolean> {
   }
 
   if (collaborationNoteTarget) {
-    const { updateCollaborationChannelNote } = await import("@/features/window/services/auth-api");
-    const { useAuthStore } = await import("@/features/window/stores/auth.store");
-    const { updateCollaborationNoteFile } =
-      await import("@/features/collaboration/lib/collaboration-sidebar-model");
-    const { subscription, setCollaborationSnapshot } = useAuthStore.getState();
+    const [{ updateCollaborationChannelNote }, { useAuthStore }, { updateCollaborationNoteFile }] =
+      await Promise.all([
+        import("@/features/window/services/auth-api"),
+        import("@/features/window/stores/auth.store"),
+        import("@/features/collaboration/lib/collaboration-sidebar-model"),
+      ]);
+    const { subscription, actions } = useAuthStore.getState();
     const collaboration = subscription?.collaboration;
     const channelNote = collaboration?.channelNotes.find(
       (note) => note.channelId === collaborationNoteTarget.channelId,
@@ -81,7 +82,7 @@ async function saveEditorBufferById(bufferId: string): Promise<boolean> {
         fileContent: activeBuffer.content,
       }),
     });
-    setCollaborationSnapshot(nextCollaboration);
+    actions.setCollaborationSnapshot(nextCollaboration);
     markBufferDirty(activeBuffer.id, false);
     return true;
   }
@@ -173,14 +174,12 @@ async function saveEditorBufferById(bufferId: string): Promise<boolean> {
 
     const rootFolderPath = useFileSystemStore.getState().rootFolderPath;
     if (rootFolderPath) {
-      gitDiffCache.invalidate(rootFolderPath, activeBuffer.path);
-      setTimeout(() => {
-        window.dispatchEvent(
-          new CustomEvent("git-status-updated", {
-            detail: { filePath: activeBuffer.path },
-          }),
-        );
-      }, 50);
+      emitGitChanged({
+        repoPath: rootFolderPath,
+        filePath: activeBuffer.path,
+        scopes: ["working-tree"],
+        source: "save",
+      });
     }
     return true;
   } catch (error) {
@@ -188,12 +187,6 @@ async function saveEditorBufferById(bufferId: string): Promise<boolean> {
     markBufferDirty(activeBuffer.id, true);
     return false;
   }
-}
-
-function getDirtyEditorBuffers(buffers: PaneContent[]): EditorContent[] {
-  return buffers.filter(
-    (buffer): buffer is EditorContent => isEditorContent(buffer) && buffer.isDirty,
-  );
 }
 
 interface AppState {
@@ -213,9 +206,9 @@ interface AppActions {
     previousContent?: string,
     previousCursorPosition?: Position,
     previousSelection?: Range,
-    options?: { contentAlreadyApplied?: boolean; skipUndoGrouping?: boolean },
+    options?: EditorContentChangeOptions,
   ) => Promise<void>;
-  handleSave: () => Promise<void>;
+  handleSave: () => Promise<boolean>;
   handleSaveAll: () => Promise<number>;
   openQuickEdit: (params: {
     text: string;
@@ -241,19 +234,26 @@ export const useEditorAppStore = createSelectors(
           previousContent?: string,
           previousCursorPosition?: Position,
           previousSelection?: Range,
-          options?: { contentAlreadyApplied?: boolean; skipUndoGrouping?: boolean },
+          options?: EditorContentChangeOptions,
         ) => {
           const { activeBufferId, buffers } = useBufferStore.getState();
           const { updateBufferContent, markBufferDirty } = useBufferStore.getState().actions;
           const { settings } = useSettingsStore.getState();
-          const { markPendingSave } = useFileWatcherStore.getState();
+          const { markPendingSave } = useFileWatcherStore.getState().actions;
           const contentAlreadyApplied = options?.contentAlreadyApplied === true;
 
-          const activeBuffer = buffers.find((b) => b.id === activeBufferId);
+          const activeBuffer = getBufferById(buffers, activeBufferId);
           if (!activeBuffer || !isEditorContent(activeBuffer)) return;
-          const { parseCollaborationNoteBufferPath } =
-            await import("@/features/collaboration/lib/collaboration-sidebar-model");
           const collaborationNoteTarget = parseCollaborationNoteBufferPath(activeBuffer.path);
+
+          if (!contentAlreadyApplied && activeBufferId && options?.contentChange) {
+            queueEditorViewContentChange(
+              activeBufferId,
+              activeBuffer.content,
+              content,
+              options.contentChange,
+            );
+          }
 
           if (activeBufferId) {
             trackBufferHistoryChange({
@@ -264,6 +264,7 @@ export const useEditorAppStore = createSelectors(
               previousCursorPosition,
               previousSelection,
               skipUndoGrouping: options?.skipUndoGrouping,
+              contentChange: options?.contentChange,
             });
           }
 
@@ -298,14 +299,12 @@ export const useEditorAppStore = createSelectors(
 
                   const rootFolderPath = useFileSystemStore.getState().rootFolderPath;
                   if (rootFolderPath) {
-                    gitDiffCache.invalidate(rootFolderPath, activeBuffer.path);
-                    setTimeout(() => {
-                      window.dispatchEvent(
-                        new CustomEvent("git-status-updated", {
-                          detail: { filePath: activeBuffer.path },
-                        }),
-                      );
-                    }, 50);
+                    emitGitChanged({
+                      repoPath: rootFolderPath,
+                      filePath: activeBuffer.path,
+                      scopes: ["working-tree"],
+                      source: "auto-save",
+                    });
                   }
                 } catch (error) {
                   console.error("Error saving file:", error);
@@ -322,22 +321,21 @@ export const useEditorAppStore = createSelectors(
 
         handleSave: async () => {
           const { activeBufferId, buffers } = useBufferStore.getState();
-          const activeBuffer = buffers.find((b) => b.id === activeBufferId);
-          if (!activeBuffer || !isEditorContent(activeBuffer)) return;
+          const activeBuffer = getBufferById(buffers, activeBufferId);
+          if (!activeBuffer || !isEditorContent(activeBuffer) || activeBuffer.readOnly)
+            return false;
 
-          await saveEditorBufferById(activeBuffer.id);
+          return saveEditorBufferById(activeBuffer.id);
         },
 
         handleSaveAll: async () => {
-          const dirtyBufferIds = getDirtyEditorBuffers(useBufferStore.getState().buffers).map(
-            (buffer) => buffer.id,
-          );
+          const dirtyBufferIds = getDirtyWritableEditorBuffers(
+            useBufferStore.getState().buffers,
+          ).map((buffer) => buffer.id);
           const saveResults = await Promise.all(
             dirtyBufferIds.map(async (bufferId) => {
               const saved = await saveEditorBufferById(bufferId);
-              const nextBuffer = useBufferStore
-                .getState()
-                .buffers.find((buffer) => buffer.id === bufferId);
+              const nextBuffer = getBufferById(useBufferStore.getState().buffers, bufferId);
               return saved && (!nextBuffer || !isEditorContent(nextBuffer) || !nextBuffer.isDirty);
             }),
           );

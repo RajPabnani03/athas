@@ -1,54 +1,85 @@
-import {
-  ListBulletsIcon as ListBullets,
-  MagnifyingGlassIcon as Search,
-  TreeStructureIcon as TreeStructure,
-} from "@phosphor-icons/react";
+import { ListIcon, SitemapIcon } from "@/ui/icons";
 import {
   memo,
   type KeyboardEvent,
   type PointerEvent,
-  type ReactNode,
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { cva } from "class-variance-authority";
+import { fuzzyScore } from "@/features/quick-open/utils/fuzzy-search";
+import { EmptyState } from "@/ui/empty";
 import {
-  SidebarHeaderIconButton,
+  SidebarHeader,
+  SidebarIconButton,
+  SidebarSearchPopover,
   SidebarListItem,
-  SidebarSearchFilterRow,
   SidebarSectionLabel,
 } from "@/ui/sidebar";
+import { SidebarTree, SidebarTreeRow } from "@/features/sidebar/components/sidebar-tree";
+import {
+  buildPathTree,
+  compactPathTreeBranch,
+  type PathTreeNode,
+} from "@/features/sidebar/lib/path-tree";
 import { cn } from "@/utils/cn";
+import { ScrollArea } from "@/ui/scroll-area";
 import { getBaseName, getDirName, normalizePath } from "@/utils/path-helpers";
-import { FileExplorerIcon } from "./file-explorer-icon";
+import { ThemedFileIcon } from "@/extensions/icon-themes/components/themed-file-icon";
+import {
+  clampFileNavigatorWidth,
+  DEFAULT_FILE_NAVIGATOR_WIDTH,
+  getFileNavigatorLayout,
+} from "@/features/file-explorer/lib/file-navigator-layout";
 
 export type FileNavigatorViewMode = "flat" | "tree";
+type FileNavigatorSearchMode = "substring" | "fuzzy";
+type FileNavigatorSurface = "sidebar" | "plain" | "inset" | "review" | "panel";
+export type FileNavigatorTone =
+  | "neutral"
+  | "subtle"
+  | "added"
+  | "deleted"
+  | "modified"
+  | "renamed"
+  | "error"
+  | "info"
+  | "warning";
 
-const DEFAULT_NAVIGATOR_WIDTH = 224;
-const MIN_NAVIGATOR_WIDTH = 176;
-const MAX_NAVIGATOR_WIDTH = 420;
 const RESIZE_STEP = 16;
+const MAX_NAVIGATOR_SYNC_ITEMS = 5_000;
+const FLAT_NAVIGATOR_VIRTUALIZATION_THRESHOLD = 100;
+const COMPACT_FLAT_NAVIGATOR_ROW_HEIGHT = 28;
+const DETAILED_FLAT_NAVIGATOR_ROW_HEIGHT = 48;
+const FLAT_NAVIGATOR_OVERSCAN = 10;
 
 export interface FileNavigatorItem {
   key: string;
   path: string;
   label?: string;
   iconPath?: string;
-  iconClassName?: string;
+  iconTone?: FileNavigatorTone;
   metadata?: Array<{
-    label: ReactNode;
-    className?: string;
+    label: string | number;
+    tone?: FileNavigatorTone;
   }>;
 }
 
-interface FileNavigatorNode {
-  id: string;
-  name: string;
-  path: string;
-  isDir: boolean;
-  children: FileNavigatorNode[];
-  item?: FileNavigatorItem;
-}
+const fileNavigatorToneClass: Record<FileNavigatorTone, string> = {
+  neutral: "text-foreground",
+  subtle: "text-subtle-foreground",
+  added: "text-git-added",
+  deleted: "text-git-deleted",
+  modified: "text-git-modified",
+  renamed: "text-git-renamed",
+  error: "text-destructive",
+  info: "text-info",
+  warning: "text-warning",
+};
 
 interface FileNavigatorSidebarProps {
   items: FileNavigatorItem[];
@@ -58,24 +89,42 @@ interface FileNavigatorSidebarProps {
   ariaLabel?: string;
   viewMode?: FileNavigatorViewMode;
   onViewModeChange?: (viewMode: FileNavigatorViewMode) => void;
+  surface?: FileNavigatorSurface;
+  searchMode?: FileNavigatorSearchMode;
+  compactRows?: boolean;
+  searchResetKey?: string;
+  resizeEdge?: "left" | "right";
 }
 
-function createDirectoryNode(name: string, path: string): FileNavigatorNode {
-  return {
-    id: `dir:${path}`,
-    name,
-    path,
-    isDir: true,
-    children: [],
-  };
-}
-
-function clampNavigatorWidth(width: number) {
-  return Math.max(MIN_NAVIGATOR_WIDTH, Math.min(width, MAX_NAVIGATOR_WIDTH));
-}
+const fileNavigatorSurfaceVariants = cva(
+  "relative flex h-full min-h-0 min-w-0 shrink flex-col overflow-hidden",
+  {
+    variants: {
+      surface: {
+        sidebar: "border-border/70 border-r bg-surface/20",
+        plain: "bg-transparent",
+        inset: "rounded-xl border border-border/70 bg-surface/20",
+        review: "border-border/60 border-r bg-surface/10",
+        panel: "bg-surface/55",
+      },
+    },
+    defaultVariants: {
+      surface: "sidebar",
+    },
+  },
+);
 
 function getItemSearchText(item: FileNavigatorItem) {
   return [item.label, item.path, item.key, item.iconPath].filter(Boolean).join(" ").toLowerCase();
+}
+
+function getFuzzyItemSearchScore(item: FileNavigatorItem, query: string) {
+  const { fileName, directoryPath } = getFlatItemParts(item);
+  const fields = [item.label, fileName, item.path, directoryPath, item.key, item.iconPath].filter(
+    (value): value is string => Boolean(value),
+  );
+
+  return Math.max(...fields.map((field) => fuzzyScore(field, query)));
 }
 
 function getFlatItemParts(item: FileNavigatorItem) {
@@ -90,51 +139,6 @@ function getFlatItemParts(item: FileNavigatorItem) {
   };
 }
 
-function buildFileTree(items: FileNavigatorItem[]): FileNavigatorNode[] {
-  const root: FileNavigatorNode = createDirectoryNode("", "");
-
-  for (const item of items) {
-    const segments = item.path.split(/[\\/]/).filter(Boolean);
-    if (segments.length === 0) continue;
-
-    let current = root;
-    let currentPath = "";
-
-    for (const segment of segments.slice(0, -1)) {
-      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-      let child = current.children.find((node) => node.isDir && node.name === segment);
-
-      if (!child) {
-        child = createDirectoryNode(segment, currentPath);
-        current.children.push(child);
-      }
-
-      current = child;
-    }
-
-    const fileName = segments[segments.length - 1] ?? item.path;
-    current.children.push({
-      id: `file:${item.key}`,
-      name: fileName,
-      path: item.path,
-      isDir: false,
-      children: [],
-      item,
-    });
-  }
-
-  const sortNodes = (nodes: FileNavigatorNode[]) => {
-    nodes.sort((a, b) => {
-      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-    for (const node of nodes) sortNodes(node.children);
-  };
-
-  sortNodes(root.children);
-  return root.children;
-}
-
 const FileNavigatorMetadata = memo(function FileNavigatorMetadata({
   item,
 }: {
@@ -145,7 +149,7 @@ const FileNavigatorMetadata = memo(function FileNavigatorMetadata({
   return (
     <span className="flex shrink-0 items-center gap-1 tabular-nums">
       {item.metadata.map((metadata, index) => (
-        <span key={index} className={metadata.className}>
+        <span key={index} className={fileNavigatorToneClass[metadata.tone ?? "neutral"]}>
           {metadata.label}
         </span>
       ))}
@@ -157,10 +161,12 @@ const FileNavigatorFlatRow = memo(function FileNavigatorFlatRow({
   item,
   selectedKey,
   onSelect,
+  compactRows,
 }: {
   item: FileNavigatorItem;
   selectedKey: string | null;
   onSelect: (key: string) => void;
+  compactRows?: boolean;
 }) {
   const isSelected = selectedKey === item.key;
   const { fileName, directoryPath, title } = getFlatItemParts(item);
@@ -169,27 +175,20 @@ const FileNavigatorFlatRow = memo(function FileNavigatorFlatRow({
     <SidebarListItem
       onClick={() => onSelect(item.key)}
       aria-current={isSelected ? "true" : undefined}
+      data-file-navigator-key={item.key}
       title={title}
       active={isSelected}
-      className="h-7 min-h-0 gap-1.5 rounded px-2 py-0 ui-text-xs hover:bg-hover/40"
       leading={
-        <FileExplorerIcon
+        <ThemedFileIcon
           fileName={item.iconPath ?? item.path}
           isDir={false}
-          size={14}
-          className={cn("shrink-0", item.iconClassName)}
+          className={cn("shrink-0", fileNavigatorToneClass[item.iconTone ?? "neutral"])}
         />
       }
       trailing={<FileNavigatorMetadata item={item} />}
+      description={compactRows ? undefined : directoryPath}
     >
-      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-        <span className="min-w-0 max-w-[58%] shrink-0 truncate font-medium text-text">
-          {fileName}
-        </span>
-        {directoryPath ? (
-          <span className="min-w-0 flex-1 truncate text-text-lighter">{directoryPath}</span>
-        ) : null}
-      </span>
+      {fileName}
     </SidebarListItem>
   );
 });
@@ -199,65 +198,81 @@ const FileNavigatorNodeRow = memo(function FileNavigatorNodeRow({
   depth,
   selectedKey,
   onSelect,
+  collapsedNodeIds,
+  onToggle,
+  compactRows,
 }: {
-  node: FileNavigatorNode;
+  node: PathTreeNode<FileNavigatorItem>;
   depth: number;
   selectedKey: string | null;
   onSelect: (key: string) => void;
+  collapsedNodeIds: ReadonlySet<string>;
+  onToggle: (nodeId: string) => void;
+  compactRows?: boolean;
 }) {
-  if (node.isDir) {
+  if (node.type === "branch") {
+    const compacted = compactPathTreeBranch(node);
+    const branch = compacted.branch;
+    const expanded = !collapsedNodeIds.has(branch.id);
+
     return (
       <div>
-        <SidebarSectionLabel
-          style={{ paddingLeft: 8 + depth * 12 }}
+        <SidebarTreeRow
+          depth={depth}
+          expanded={expanded}
+          onToggle={() => onToggle(branch.id)}
+          onClick={() => onToggle(branch.id)}
+          label={compacted.label}
           leading={
-            <FileExplorerIcon
-              fileName={node.name}
+            <ThemedFileIcon
+              fileName={branch.name}
               isDir
-              size={14}
-              className="shrink-0 text-text-lighter"
+              isExpanded={expanded}
+              className="shrink-0 text-subtle-foreground"
             />
           }
-        >
-          {node.name}
-        </SidebarSectionLabel>
-        {node.children.map((child) => (
-          <FileNavigatorNodeRow
-            key={child.id}
-            node={child}
-            depth={depth + 1}
-            selectedKey={selectedKey}
-            onSelect={onSelect}
-          />
-        ))}
+          title={branch.path}
+          className={cn(compactRows && "py-1")}
+        />
+        {expanded
+          ? branch.children.map((child) => (
+              <FileNavigatorNodeRow
+                key={child.id}
+                node={child}
+                depth={depth + 1}
+                selectedKey={selectedKey}
+                onSelect={onSelect}
+                collapsedNodeIds={collapsedNodeIds}
+                onToggle={onToggle}
+                compactRows={compactRows}
+              />
+            ))
+          : null}
       </div>
     );
   }
 
   const item = node.item;
-  if (!item) return null;
-
   const isSelected = selectedKey === item.key;
 
   return (
-    <SidebarListItem
-      style={{ paddingLeft: 8 + depth * 12 }}
+    <SidebarTreeRow
+      depth={depth}
       onClick={() => onSelect(item.key)}
-      aria-current={isSelected ? "true" : undefined}
       active={isSelected}
-      className="h-7 min-h-0 gap-1.5 rounded px-2 py-0 ui-text-xs hover:bg-hover/40"
+      title={item.path}
+      reserveDisclosureSpace
+      label={node.name}
       leading={
-        <FileExplorerIcon
+        <ThemedFileIcon
           fileName={item.iconPath ?? node.name}
           isDir={false}
-          size={14}
-          className={cn("shrink-0", item.iconClassName)}
+          className={cn("shrink-0", fileNavigatorToneClass[item.iconTone ?? "neutral"])}
         />
       }
       trailing={<FileNavigatorMetadata item={item} />}
-    >
-      {node.name}
-    </SidebarListItem>
+      className={cn(compactRows && "py-1")}
+    />
   );
 });
 
@@ -269,35 +284,143 @@ export const FileNavigatorSidebar = memo(function FileNavigatorSidebar({
   ariaLabel = "Files",
   viewMode = "tree",
   onViewModeChange,
+  surface = "sidebar",
+  searchMode = "substring",
+  compactRows = false,
+  searchResetKey,
+  resizeEdge = "right",
 }: FileNavigatorSidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [width, setWidth] = useState(DEFAULT_NAVIGATOR_WIDTH);
+  const navigatorRef = useRef<HTMLElement>(null);
+  const navigatorScrollRef = useRef<HTMLDivElement>(null);
+  const [preferredWidth, setPreferredWidth] = useState(DEFAULT_FILE_NAVIGATOR_WIDTH);
+  const [parentWidth, setParentWidth] = useState<number>();
   const [isResizing, setIsResizing] = useState(false);
-  const filteredItems = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return items;
+  const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    setSearchQuery("");
+  }, [searchResetKey]);
 
-    return items.filter((item) => getItemSearchText(item).includes(query));
-  }, [items, searchQuery]);
-  const tree = useMemo(() => buildFileTree(filteredItems), [filteredItems]);
-  const flatItems = useMemo(
-    () => [...filteredItems].sort((left, right) => left.path.localeCompare(right.path)),
-    [filteredItems],
+  useEffect(() => {
+    const parent = navigatorRef.current?.parentElement;
+    if (!parent || typeof ResizeObserver === "undefined") return;
+
+    const updateParentWidth = () => setParentWidth(parent.clientWidth);
+    const resizeObserver = new ResizeObserver(updateParentWidth);
+    resizeObserver.observe(parent);
+    updateParentWidth();
+
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  const searchableItems = useMemo(() => items.slice(0, MAX_NAVIGATOR_SYNC_ITEMS), [items]);
+  const hiddenItemCount = Math.max(0, items.length - searchableItems.length);
+  const filteredItems = useMemo(() => {
+    const trimmedQuery = searchQuery.trim();
+    if (!trimmedQuery) return searchableItems;
+
+    if (searchMode === "fuzzy") {
+      const scoredItems: Array<{ item: FileNavigatorItem; score: number }> = [];
+      for (const item of searchableItems) {
+        const score = getFuzzyItemSearchScore(item, trimmedQuery);
+        if (score > 0) {
+          scoredItems.push({ item, score });
+        }
+      }
+
+      scoredItems.sort(
+        (left, right) => right.score - left.score || left.item.path.localeCompare(right.item.path),
+      );
+      return scoredItems.map(({ item }) => item);
+    }
+
+    const query = trimmedQuery.toLowerCase();
+    if (!query) return searchableItems;
+
+    return searchableItems.filter((item) => getItemSearchText(item).includes(query));
+  }, [searchableItems, searchMode, searchQuery]);
+  const tree = useMemo(
+    () =>
+      viewMode === "tree"
+        ? buildPathTree(filteredItems, {
+            getPath: (item) => item.path,
+            getKey: (item) => item.key,
+          })
+        : [],
+    [filteredItems, viewMode],
   );
+  const flatItems = useMemo(() => {
+    if (viewMode !== "flat") return [];
+    return searchMode === "fuzzy" && searchQuery.trim()
+      ? filteredItems
+      : [...filteredItems].sort((left, right) => left.path.localeCompare(right.path));
+  }, [filteredItems, searchMode, searchQuery, viewMode]);
+  const shouldVirtualizeFlatItems =
+    viewMode === "flat" && flatItems.length > FLAT_NAVIGATOR_VIRTUALIZATION_THRESHOLD;
+  const flatItemIndexByKey = useMemo(() => {
+    const indexByKey = new Map<string, number>();
+    for (let index = 0; index < flatItems.length; index++) {
+      const item = flatItems[index];
+      if (item) indexByKey.set(item.key, index);
+    }
+    return indexByKey;
+  }, [flatItems]);
+  const flatItemVirtualizer = useVirtualizer({
+    count: flatItems.length,
+    enabled: shouldVirtualizeFlatItems,
+    getScrollElement: () => navigatorScrollRef.current,
+    getItemKey: (index) => flatItems[index]?.key ?? index,
+    estimateSize: () =>
+      compactRows ? COMPACT_FLAT_NAVIGATOR_ROW_HEIGHT : DETAILED_FLAT_NAVIGATOR_ROW_HEIGHT,
+    overscan: FLAT_NAVIGATOR_OVERSCAN,
+  });
+
+  useEffect(() => {
+    if (viewMode !== "flat" || !selectedKey) return;
+    const selectedIndex = flatItemIndexByKey.get(selectedKey);
+    if (selectedIndex === undefined) return;
+
+    if (shouldVirtualizeFlatItems) {
+      flatItemVirtualizer.scrollToIndex(selectedIndex, { align: "auto", behavior: "auto" });
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      const selectedElement = Array.from(
+        navigatorScrollRef.current?.querySelectorAll<HTMLElement>("[data-file-navigator-key]") ??
+          [],
+      ).find((element) => element.dataset.fileNavigatorKey === selectedKey);
+      selectedElement?.scrollIntoView({ behavior: "auto", block: "nearest" });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [flatItemIndexByKey, flatItemVirtualizer, selectedKey, shouldVirtualizeFlatItems, viewMode]);
+
+  const navigatorLayout = getFileNavigatorLayout(preferredWidth, parentWidth);
 
   const resizeTo = useCallback((nextWidth: number) => {
-    setWidth(clampNavigatorWidth(nextWidth));
+    setPreferredWidth(clampFileNavigatorWidth(nextWidth));
+  }, []);
+
+  const handleToggleNode = useCallback((nodeId: string) => {
+    setCollapsedNodeIds((current) => {
+      const next = new Set(current);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
   }, []);
 
   const handleResizeStart = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       event.preventDefault();
       const startX = event.clientX;
-      const startWidth = width;
+      const startWidth = navigatorLayout.width;
       setIsResizing(true);
 
       const handlePointerMove = (moveEvent: globalThis.PointerEvent) => {
-        resizeTo(startWidth + moveEvent.clientX - startX);
+        const delta = moveEvent.clientX - startX;
+        resizeTo(startWidth + (resizeEdge === "right" ? delta : -delta));
       };
 
       const handlePointerUp = () => {
@@ -313,7 +436,7 @@ export const FileNavigatorSidebar = memo(function FileNavigatorSidebar({
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
     },
-    [resizeTo, width],
+    [navigatorLayout.width, resizeEdge, resizeTo],
   );
 
   const handleResizeKeyDown = useCallback(
@@ -321,89 +444,143 @@ export const FileNavigatorSidebar = memo(function FileNavigatorSidebar({
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 
       event.preventDefault();
-      resizeTo(width + (event.key === "ArrowRight" ? RESIZE_STEP : -RESIZE_STEP));
+      const direction = event.key === "ArrowRight" ? 1 : -1;
+      resizeTo(
+        navigatorLayout.width + (resizeEdge === "right" ? direction : -direction) * RESIZE_STEP,
+      );
     },
-    [resizeTo, width],
+    [navigatorLayout.width, resizeEdge, resizeTo],
   );
 
   return (
     <aside
+      ref={navigatorRef}
       className={cn(
-        "relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border/70 bg-secondary-bg/20",
+        fileNavigatorSurfaceVariants({ surface }),
+        surface === "panel" &&
+          (resizeEdge === "left" ? "border-border/70 border-l" : "border-border/70 border-r"),
         className,
       )}
-      style={{ width }}
+      style={{ width: navigatorLayout.width }}
       aria-label={ariaLabel}
     >
       {onViewModeChange ? (
-        <SidebarSearchFilterRow
-          value={searchQuery}
-          onChange={setSearchQuery}
-          searchIcon={Search}
-          placeholder="Search"
-          searchAriaLabel="Search files"
-          className="border-b border-border/60"
-          actions={
-            <div className="inline-flex shrink-0 rounded border border-border/70 bg-primary-bg p-0.5">
-              <SidebarHeaderIconButton
-                className={cn("size-5 rounded", viewMode === "flat" && "bg-selected text-text")}
-                onClick={() => onViewModeChange("flat")}
-                aria-label="Show flat file list"
-                aria-pressed={viewMode === "flat"}
-                tooltip="Flat list"
-                tooltipSide="bottom"
-              >
-                <ListBullets size={13} />
-              </SidebarHeaderIconButton>
-              <SidebarHeaderIconButton
-                className={cn("size-5 rounded", viewMode === "tree" && "bg-selected text-text")}
-                onClick={() => onViewModeChange("tree")}
-                aria-label="Show file tree"
-                aria-pressed={viewMode === "tree"}
-                tooltip="File tree"
-                tooltipSide="bottom"
-              >
-                <TreeStructure size={13} />
-              </SidebarHeaderIconButton>
-            </div>
-          }
-        />
+        <SidebarHeader>
+          <SidebarSearchPopover
+            value={searchQuery}
+            onChange={setSearchQuery}
+            aria-label="Search files"
+          />
+          <div
+            className="ml-auto flex shrink-0 items-center gap-chrome"
+            role="group"
+            aria-label="File navigator view"
+          >
+            <SidebarIconButton
+              active={viewMode === "flat"}
+              onClick={() => onViewModeChange("flat")}
+              tooltip="Flat list"
+              aria-label="Flat list"
+            >
+              <ListIcon />
+            </SidebarIconButton>
+            <SidebarIconButton
+              active={viewMode === "tree"}
+              onClick={() => onViewModeChange("tree")}
+              tooltip="File tree"
+              aria-label="File tree"
+            >
+              <SitemapIcon />
+            </SidebarIconButton>
+          </div>
+        </SidebarHeader>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-auto p-1">
+      <ScrollArea
+        fill="flex"
+        contentClassName={surface === "panel" ? "px-chrome-inline py-2" : "p-1"}
+        reserveScrollbarGutter
+        scrollbarVisibility={surface === "panel" ? "always" : "hover"}
+        viewportProps={{ ref: navigatorScrollRef }}
+      >
+        {hiddenItemCount > 0 ? (
+          <SidebarSectionLabel>
+            Showing {searchableItems.length.toLocaleString()} of {items.length.toLocaleString()}
+          </SidebarSectionLabel>
+        ) : null}
         {filteredItems.length === 0 ? (
-          <SidebarSectionLabel>No files match</SidebarSectionLabel>
+          <EmptyState layout="sidebar" message="No files match" />
         ) : viewMode === "flat" ? (
-          flatItems.map((item) => (
-            <FileNavigatorFlatRow
-              key={item.key}
-              item={item}
-              selectedKey={selectedKey}
-              onSelect={onSelect}
-            />
-          ))
+          shouldVirtualizeFlatItems ? (
+            <div
+              className="relative min-w-0"
+              style={{ height: flatItemVirtualizer.getTotalSize() }}
+              data-virtualized-file-navigator=""
+            >
+              {flatItemVirtualizer.getVirtualItems().map((virtualItem) => {
+                const item = flatItems[virtualItem.index];
+                if (!item) return null;
+
+                return (
+                  <div
+                    key={virtualItem.key}
+                    className="absolute inset-x-0 top-0"
+                    style={{
+                      height: virtualItem.size,
+                      transform: `translateY(${virtualItem.start}px)`,
+                    }}
+                  >
+                    <FileNavigatorFlatRow
+                      item={item}
+                      selectedKey={selectedKey}
+                      onSelect={onSelect}
+                      compactRows={compactRows}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            flatItems.map((item) => (
+              <FileNavigatorFlatRow
+                key={item.key}
+                item={item}
+                selectedKey={selectedKey}
+                onSelect={onSelect}
+                compactRows={compactRows}
+              />
+            ))
+          )
         ) : (
-          tree.map((node) => (
-            <FileNavigatorNodeRow
-              key={node.id}
-              node={node}
-              depth={0}
-              selectedKey={selectedKey}
-              onSelect={onSelect}
-            />
-          ))
+          <SidebarTree label={ariaLabel}>
+            {tree.map((node) => (
+              <FileNavigatorNodeRow
+                key={node.id}
+                node={node}
+                depth={0}
+                selectedKey={selectedKey}
+                onSelect={onSelect}
+                collapsedNodeIds={collapsedNodeIds}
+                onToggle={handleToggleNode}
+                compactRows={compactRows}
+              />
+            ))}
+          </SidebarTree>
         )}
-      </div>
+      </ScrollArea>
       <div
-        className="absolute top-0 right-[-4px] z-20 h-full w-2 cursor-col-resize transition-colors hover:bg-accent/20"
+        className={cn(
+          "absolute top-0 z-20 h-full w-2 cursor-col-resize transition-colors hover:bg-primary/20",
+          resizeEdge === "right" ? "-right-1" : "-left-1",
+        )}
         onPointerDown={handleResizeStart}
         onKeyDown={handleResizeKeyDown}
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize file navigator"
-        aria-valuemin={MIN_NAVIGATOR_WIDTH}
-        aria-valuemax={MAX_NAVIGATOR_WIDTH}
-        aria-valuenow={Math.round(width)}
+        aria-valuemin={navigatorLayout.minWidth}
+        aria-valuemax={navigatorLayout.maxWidth}
+        aria-valuenow={navigatorLayout.width}
         tabIndex={0}
       />
       {isResizing ? (

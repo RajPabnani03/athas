@@ -1,54 +1,16 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { SidebarView } from "@/features/layout/utils/sidebar-pane-utils";
-import type { AIWorkspaceSessionSnapshot } from "@/features/ai/types/ai-chat-store.types";
-import type { PersistedEditorViewState } from "@/features/editor/types/editor-session.types";
+import type { AIWorkspaceSessionSnapshot } from "@/features/ai/stores/ai-chat/ai-chat-store.types";
 import type { PaneNode } from "@/features/panes/types/pane.types";
 import type { PersistedTerminal } from "@/features/terminal/types/terminal.types";
 import type { BottomPaneTab } from "@/features/window/stores/ui-state/types/ui-state.types";
+import type {
+  BufferSession,
+  WorkspaceFolderSession,
+} from "@/features/workspace/types/workspace-session.types";
 import { createSelectors } from "@/utils/zustand-selectors";
-
-interface EditorBufferSession {
-  type: "editor";
-  id?: string;
-  path: string;
-  name: string;
-  isPinned: boolean;
-  isPreview?: boolean;
-  workspaceScope?: "workspace" | "external";
-  editorState?: PersistedEditorViewState;
-}
-
-interface TerminalBufferSession {
-  type: "terminal";
-  path: string;
-  name: string;
-  isPinned: boolean;
-  sessionId: string;
-  initialCommand?: string;
-  workingDirectory?: string;
-  remoteConnectionId?: string;
-}
-
-interface WebViewerBufferSession {
-  type: "webViewer";
-  path: string;
-  name: string;
-  isPinned: boolean;
-  url: string;
-  zoomLevel?: number;
-  profileKey?: string;
-  history?: string[];
-  historyIndex?: number;
-}
-
-export type BufferSession = EditorBufferSession | TerminalBufferSession | WebViewerBufferSession;
-
-export interface WorkspaceFolderSession {
-  path: string;
-  name: string;
-  isPrimary?: boolean;
-}
+import { createSafeJSONStorage } from "@/utils/zustand-storage";
 
 export interface ProjectSession {
   projectPath: string;
@@ -56,6 +18,7 @@ export interface ProjectSession {
   activeBufferPath: string | null;
   buffers: BufferSession[];
   terminals: PersistedTerminal[];
+  terminalLayouts?: PaneNode[];
   aiSession: AIWorkspaceSessionSnapshot | null;
   uiState: ProjectUiSession | null;
   lastSaved: number;
@@ -69,7 +32,7 @@ export interface ProjectUiSession {
   paneState?: ProjectPaneSession | null;
 }
 
-export interface ProjectPaneGroupSession {
+interface ProjectPaneGroupSession {
   id: string;
   type: "group";
   bufferPaths: string[];
@@ -80,7 +43,7 @@ export interface ProjectPaneGroupSession {
   locked?: boolean;
 }
 
-export interface ProjectPaneSplitSession {
+interface ProjectPaneSplitSession {
   id: string;
   type: "split";
   direction: Extract<PaneNode, { type: "split" }>["direction"];
@@ -100,19 +63,23 @@ export interface ProjectPaneSession {
 
 interface SessionState {
   sessions: Record<string, ProjectSession>;
-  saveSession: (
-    projectPath: string,
-    buffers: BufferSession[],
-    activeBufferPath: string | null,
-    terminals?: PersistedTerminal[],
-    aiSession?: AIWorkspaceSessionSnapshot | null,
-    workspaceFolders?: WorkspaceFolderSession[],
-  ) => void;
-  getSession: (projectPath: string) => ProjectSession | null;
-  saveUiState: (projectPath: string, uiState: ProjectUiSession) => void;
-  getUiState: (projectPath: string) => ProjectUiSession | null;
-  clearSession: (projectPath: string) => void;
-  clearAllSessions: () => void;
+  actions: {
+    saveSession: (
+      projectPath: string,
+      buffers: BufferSession[],
+      activeBufferPath: string | null,
+      terminals?: PersistedTerminal[],
+      aiSession?: AIWorkspaceSessionSnapshot | null,
+      workspaceFolders?: WorkspaceFolderSession[],
+      uiState?: ProjectUiSession,
+      terminalLayouts?: PaneNode[],
+    ) => void;
+    getSession: (projectPath: string) => ProjectSession | null;
+    saveUiState: (projectPath: string, uiState: ProjectUiSession) => void;
+    getUiState: (projectPath: string) => ProjectUiSession | null;
+    clearSession: (projectPath: string) => void;
+    clearAllSessions: () => void;
+  };
 }
 
 export function buildSavedProjectSession({
@@ -123,6 +90,8 @@ export function buildSavedProjectSession({
   terminals,
   aiSession,
   workspaceFolders,
+  uiState,
+  terminalLayouts,
   now,
 }: {
   previousSession?: ProjectSession;
@@ -132,6 +101,8 @@ export function buildSavedProjectSession({
   terminals?: PersistedTerminal[];
   aiSession?: AIWorkspaceSessionSnapshot | null;
   workspaceFolders?: WorkspaceFolderSession[];
+  uiState?: ProjectUiSession;
+  terminalLayouts?: PaneNode[];
   now: number;
 }): ProjectSession {
   return {
@@ -142,8 +113,10 @@ export function buildSavedProjectSession({
     activeBufferPath,
     buffers,
     terminals: terminals === undefined ? (previousSession?.terminals ?? []) : terminals,
+    terminalLayouts:
+      terminalLayouts === undefined ? previousSession?.terminalLayouts : terminalLayouts,
     aiSession: aiSession === undefined ? (previousSession?.aiSession ?? null) : aiSession,
-    uiState: previousSession?.uiState ?? null,
+    uiState: uiState === undefined ? (previousSession?.uiState ?? null) : uiState,
     lastSaved: now,
   };
 }
@@ -184,67 +157,92 @@ const useSessionStoreBase = create<SessionState>()(
     (set, get) => ({
       sessions: {},
 
-      saveSession: (
-        projectPath,
-        buffers,
-        activeBufferPath,
-        terminals,
-        aiSession,
-        workspaceFolders,
-      ) => {
-        set((state) => ({
-          sessions: {
-            ...state.sessions,
-            [projectPath]: buildSavedProjectSession({
-              previousSession: state.sessions[projectPath],
-              projectPath,
-              buffers,
-              activeBufferPath,
-              terminals,
-              aiSession,
-              workspaceFolders,
-              now: Date.now(),
-            }),
-          },
-        }));
-      },
+      actions: {
+        saveSession: (
+          projectPath,
+          buffers,
+          activeBufferPath,
+          terminals,
+          aiSession,
+          workspaceFolders,
+          uiState,
+          terminalLayouts,
+        ) => {
+          set((state) => ({
+            sessions: {
+              ...state.sessions,
+              [projectPath]: buildSavedProjectSession({
+                previousSession: state.sessions[projectPath],
+                projectPath,
+                buffers,
+                activeBufferPath,
+                terminals,
+                aiSession,
+                workspaceFolders,
+                uiState,
+                terminalLayouts,
+                now: Date.now(),
+              }),
+            },
+          }));
+        },
 
-      getSession: (projectPath) => {
-        return get().sessions[projectPath] || null;
-      },
+        getSession: (projectPath) => {
+          const session = get().sessions[projectPath];
+          if (!session) return null;
+          const buffers = session.buffers.filter(
+            (buffer) => buffer.type === "editor" || buffer.type === "terminal",
+          );
+          if (buffers.length === session.buffers.length) return session;
+          return {
+            ...session,
+            buffers,
+            activeBufferPath: buffers.some((buffer) => buffer.path === session.activeBufferPath)
+              ? session.activeBufferPath
+              : (buffers[0]?.path ?? null),
+          };
+        },
 
-      saveUiState: (projectPath, uiState) => {
-        set((state) => ({
-          sessions: {
-            ...state.sessions,
-            [projectPath]: buildSavedProjectUiSession({
-              previousSession: state.sessions[projectPath],
-              projectPath,
-              uiState,
-              now: Date.now(),
-            }),
-          },
-        }));
-      },
+        saveUiState: (projectPath, uiState) => {
+          set((state) => ({
+            sessions: {
+              ...state.sessions,
+              [projectPath]: buildSavedProjectUiSession({
+                previousSession: state.sessions[projectPath],
+                projectPath,
+                uiState,
+                now: Date.now(),
+              }),
+            },
+          }));
+        },
 
-      getUiState: (projectPath) => {
-        return get().sessions[projectPath]?.uiState ?? null;
-      },
+        getUiState: (projectPath) => {
+          return get().sessions[projectPath]?.uiState ?? null;
+        },
 
-      clearSession: (projectPath) => {
-        set((state) => {
-          const { [projectPath]: _, ...rest } = state.sessions;
-          return { sessions: rest };
-        });
-      },
+        clearSession: (projectPath) => {
+          set((state) => {
+            const { [projectPath]: _, ...rest } = state.sessions;
+            return { sessions: rest };
+          });
+        },
 
-      clearAllSessions: () => {
-        set({ sessions: {} });
+        clearAllSessions: () => {
+          set({ sessions: {} });
+        },
       },
     }),
     {
       name: "athas-tab-sessions",
       version: 1,
+      storage: createSafeJSONStorage<Pick<SessionState, "sessions">>(),
+      partialize: ({ sessions }) => ({ sessions }),
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...(persistedState as Pick<SessionState, "sessions">),
+        actions: currentState.actions,
+      }),
     },
   ),
 );

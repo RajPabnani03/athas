@@ -2,31 +2,36 @@ import type { StateCreator } from "zustand";
 import type { CommandPaletteViewId } from "@/features/command-palette/types/view.types";
 import type { SettingsTab } from "./types/ui-state.types";
 
-export interface ModalState {
+export type ProjectPickerInitialStep = "picker" | "addRemote";
+
+interface ModalState {
   isQuickOpenVisible: boolean;
   isCommandPaletteVisible: boolean;
   commandPaletteInitialView: CommandPaletteViewId;
-  isAgentLauncherVisible: boolean;
   isGlobalSearchVisible: boolean;
   isSettingsDialogVisible: boolean;
   isBranchManagerVisible: boolean;
   isProjectPickerVisible: boolean;
+  projectPickerInitialStep: ProjectPickerInitialStep;
   isDatabaseConnectionVisible: boolean;
   settingsInitialTab: SettingsTab | null;
+  settingsInitialSection: string | null;
+  settingsNavigationRequestId: number;
 }
 
-export interface ModalActions {
+interface ModalActions {
   setIsQuickOpenVisible: (v: boolean) => void;
   setIsCommandPaletteVisible: (v: boolean) => void;
   openCommandPaletteView: (view: CommandPaletteViewId) => void;
-  setIsAgentLauncherVisible: (v: boolean) => void;
   setIsGlobalSearchVisible: (v: boolean) => void;
   setIsSettingsDialogVisible: (v: boolean) => void;
   setIsBranchManagerVisible: (v: boolean) => void;
   setIsProjectPickerVisible: (v: boolean) => void;
+  openProjectPicker: (initialStep?: ProjectPickerInitialStep) => void;
   setIsDatabaseConnectionVisible: (v: boolean) => void;
   setSettingsInitialTab: (tab: SettingsTab) => void;
-  openSettingsDialog: (tab?: SettingsTab) => void;
+  setSettingsInitialSection: (section: string | null) => void;
+  openSettingsDialog: (tab?: SettingsTab, section?: string) => void;
   hasOpenModal: () => boolean;
   closeTopModal: () => boolean;
 }
@@ -38,13 +43,15 @@ export const createModalSlice: StateCreator<ModalSlice, [], [], ModalSlice> = (s
   isQuickOpenVisible: false,
   isCommandPaletteVisible: false,
   commandPaletteInitialView: "root",
-  isAgentLauncherVisible: false,
   isGlobalSearchVisible: false,
   isSettingsDialogVisible: false,
   isBranchManagerVisible: false,
   isProjectPickerVisible: false,
+  projectPickerInitialStep: "picker",
   isDatabaseConnectionVisible: false,
   settingsInitialTab: null,
+  settingsInitialSection: null,
+  settingsNavigationRequestId: 0,
 
   // Actions
   hasOpenModal: () => {
@@ -52,7 +59,6 @@ export const createModalSlice: StateCreator<ModalSlice, [], [], ModalSlice> = (s
     return (
       state.isQuickOpenVisible ||
       state.isCommandPaletteVisible ||
-      state.isAgentLauncherVisible ||
       state.isGlobalSearchVisible ||
       state.isSettingsDialogVisible ||
       state.isBranchManagerVisible ||
@@ -66,10 +72,6 @@ export const createModalSlice: StateCreator<ModalSlice, [], [], ModalSlice> = (s
     // Priority order: most recently opened first
     if (state.isCommandPaletteVisible) {
       set({ isCommandPaletteVisible: false });
-      return true;
-    }
-    if (state.isAgentLauncherVisible) {
-      set({ isAgentLauncherVisible: false });
       return true;
     }
     if (state.isGlobalSearchVisible) {
@@ -104,7 +106,6 @@ export const createModalSlice: StateCreator<ModalSlice, [], [], ModalSlice> = (s
       set({
         isQuickOpenVisible: true,
         isCommandPaletteVisible: false,
-        isAgentLauncherVisible: false,
         isGlobalSearchVisible: false,
         isSettingsDialogVisible: false,
         isBranchManagerVisible: false,
@@ -122,7 +123,6 @@ export const createModalSlice: StateCreator<ModalSlice, [], [], ModalSlice> = (s
         isCommandPaletteVisible: true,
         commandPaletteInitialView: "root",
         isQuickOpenVisible: false,
-        isAgentLauncherVisible: false,
         isGlobalSearchVisible: false,
         isSettingsDialogVisible: false,
         isBranchManagerVisible: false,
@@ -139,7 +139,6 @@ export const createModalSlice: StateCreator<ModalSlice, [], [], ModalSlice> = (s
       isCommandPaletteVisible: true,
       commandPaletteInitialView: view,
       isQuickOpenVisible: false,
-      isAgentLauncherVisible: false,
       isGlobalSearchVisible: false,
       isSettingsDialogVisible: false,
       isBranchManagerVisible: false,
@@ -148,30 +147,12 @@ export const createModalSlice: StateCreator<ModalSlice, [], [], ModalSlice> = (s
     });
   },
 
-  setIsAgentLauncherVisible: (v: boolean) => {
-    if (v) {
-      set({
-        isAgentLauncherVisible: true,
-        isQuickOpenVisible: false,
-        isCommandPaletteVisible: false,
-        isGlobalSearchVisible: false,
-        isSettingsDialogVisible: false,
-        isBranchManagerVisible: false,
-        isProjectPickerVisible: false,
-        isDatabaseConnectionVisible: false,
-      });
-    } else {
-      set({ isAgentLauncherVisible: v });
-    }
-  },
-
   setIsGlobalSearchVisible: (v: boolean) => {
     if (v) {
       set({
         isGlobalSearchVisible: true,
         isQuickOpenVisible: false,
         isCommandPaletteVisible: false,
-        isAgentLauncherVisible: false,
         isSettingsDialogVisible: false,
         isBranchManagerVisible: false,
         isProjectPickerVisible: false,
@@ -184,16 +165,7 @@ export const createModalSlice: StateCreator<ModalSlice, [], [], ModalSlice> = (s
 
   setIsSettingsDialogVisible: (v: boolean) => {
     if (v) {
-      set({
-        isSettingsDialogVisible: true,
-        isQuickOpenVisible: false,
-        isCommandPaletteVisible: false,
-        isAgentLauncherVisible: false,
-        isGlobalSearchVisible: false,
-        isBranchManagerVisible: false,
-        isProjectPickerVisible: false,
-        isDatabaseConnectionVisible: false,
-      });
+      get().openSettingsDialog();
     } else {
       set({ isSettingsDialogVisible: v });
     }
@@ -205,7 +177,6 @@ export const createModalSlice: StateCreator<ModalSlice, [], [], ModalSlice> = (s
         isBranchManagerVisible: true,
         isQuickOpenVisible: false,
         isCommandPaletteVisible: false,
-        isAgentLauncherVisible: false,
         isGlobalSearchVisible: false,
         isSettingsDialogVisible: false,
         isProjectPickerVisible: false,
@@ -218,18 +189,23 @@ export const createModalSlice: StateCreator<ModalSlice, [], [], ModalSlice> = (s
 
   setIsProjectPickerVisible: (v: boolean) => {
     if (v) {
-      set({
-        isProjectPickerVisible: true,
-        isQuickOpenVisible: false,
-        isCommandPaletteVisible: false,
-        isGlobalSearchVisible: false,
-        isSettingsDialogVisible: false,
-        isBranchManagerVisible: false,
-        isDatabaseConnectionVisible: false,
-      });
+      get().openProjectPicker();
     } else {
       set({ isProjectPickerVisible: v });
     }
+  },
+
+  openProjectPicker: (initialStep = "picker") => {
+    set({
+      isProjectPickerVisible: true,
+      projectPickerInitialStep: initialStep,
+      isQuickOpenVisible: false,
+      isCommandPaletteVisible: false,
+      isGlobalSearchVisible: false,
+      isSettingsDialogVisible: false,
+      isBranchManagerVisible: false,
+      isDatabaseConnectionVisible: false,
+    });
   },
 
   setIsDatabaseConnectionVisible: (v: boolean) => {
@@ -248,9 +224,19 @@ export const createModalSlice: StateCreator<ModalSlice, [], [], ModalSlice> = (s
     }
   },
 
-  setSettingsInitialTab: (tab: SettingsTab) => set({ settingsInitialTab: tab }),
+  setSettingsInitialTab: (tab: SettingsTab) =>
+    set((state) => ({
+      settingsInitialTab: tab,
+      settingsInitialSection: null,
+      settingsNavigationRequestId: state.settingsNavigationRequestId + 1,
+    })),
+  setSettingsInitialSection: (section: string | null) =>
+    set((state) => ({
+      settingsInitialSection: section,
+      settingsNavigationRequestId: state.settingsNavigationRequestId + 1,
+    })),
 
-  openSettingsDialog: (tab?: SettingsTab) =>
+  openSettingsDialog: (tab?: SettingsTab, section?: string) => {
     set({
       isSettingsDialogVisible: true,
       isQuickOpenVisible: false,
@@ -260,5 +246,8 @@ export const createModalSlice: StateCreator<ModalSlice, [], [], ModalSlice> = (s
       isProjectPickerVisible: false,
       isDatabaseConnectionVisible: false,
       settingsInitialTab: tab ?? null,
-    }),
+      settingsInitialSection: section ?? null,
+      settingsNavigationRequestId: get().settingsNavigationRequestId + 1,
+    });
+  },
 });

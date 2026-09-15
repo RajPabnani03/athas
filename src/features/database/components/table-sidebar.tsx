@@ -1,19 +1,13 @@
+import { BroadcastIcon, EyeIcon, HashIcon, PlusIcon, TableIcon } from "@/ui/icons";
 import {
-  DatabaseIcon as Database,
-  EyeIcon as Eye,
-  HashIcon as Hash,
-  PlusIcon as Plus,
-  RadioButtonIcon as Radio,
-  TableIcon as Table,
-} from "@phosphor-icons/react";
-import {
-  SidebarHeader,
-  SidebarHeaderIconButton,
+  SidebarIconButton,
   SidebarListItem,
   SidebarPanel,
+  SidebarScrollArea,
   SidebarSectionLabel,
+  SidebarTitleBar,
 } from "@/ui/sidebar";
-import { cn } from "@/utils/cn";
+import { EmptyState } from "@/ui/empty";
 import { getDatabaseObjectOwner, groupDatabaseObjects } from "../lib/database-catalog";
 import type { DatabaseObjectKind, TableInfo } from "../types/common.types";
 import SqlHistoryList from "./sql-history-list";
@@ -45,69 +39,51 @@ export default function TableSidebar({
 }: TableSidebarProps) {
   const objectGroups = groupDatabaseObjects(tables);
   const groupIcon = {
-    table: Table,
-    view: Eye,
-    materialized_view: Eye,
-    subscription: Radio,
-    index: Hash,
-  } satisfies Record<DatabaseObjectKind, typeof Table>;
+    table: TableIcon,
+    view: EyeIcon,
+    materialized_view: EyeIcon,
+    subscription: BroadcastIcon,
+    index: HashIcon,
+  } satisfies Record<DatabaseObjectKind, typeof TableIcon>;
 
   return (
-    <SidebarPanel className="w-64 overflow-hidden">
-      <SidebarHeader className="group h-9 justify-between border-b border-border/60 px-2">
-        <SidebarSectionLabel
-          className="h-auto flex-1 px-0 ui-text-sm"
-          leading={<Database />}
-          trailing={`(${tables.length})`}
-        >
-          Objects
-        </SidebarSectionLabel>
-        <SidebarHeaderIconButton
-          onClick={onCreateTable}
-          className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-          aria-label="Create table"
-          tooltip="Create table"
-          tooltipSide="bottom"
-        >
-          <Plus />
-        </SidebarHeaderIconButton>
-      </SidebarHeader>
-      <div className="custom-scrollbar flex-1 space-y-1 overflow-y-auto p-2">
-        {objectGroups.map((group, index) => {
-          const Icon = groupIcon[group.kind];
-          return (
-            <div key={group.kind}>
-              <SidebarSectionLabel className={cn("px-2.5 py-1 uppercase", index > 0 && "mt-2")}>
-                {group.label}
-              </SidebarSectionLabel>
-              {group.objects.map((t) => {
-                const owner = getDatabaseObjectOwner(t);
-                return (
-                  <SidebarListItem
-                    key={t.name}
-                    onClick={() => onSelectTable(t.name)}
-                    onContextMenu={(e) => onTableContextMenu(e, t.name, group.kind)}
-                    className={cn(
-                      "h-auto items-start gap-1.5 rounded-lg px-2.5 py-1.5 ui-text-xs leading-[1.35]",
-                    )}
-                    contentClassName="min-w-0"
-                    active={selectedTable === t.name}
-                    aria-label={`Select ${group.kind} ${t.name}`}
-                    leading={<Icon className="mt-0.5 shrink-0" />}
-                  >
-                    <span className="flex min-w-0 flex-col items-start leading-[1.35]">
-                      <span className="max-w-full truncate">{t.name}</span>
-                      {owner && (
-                        <span className="max-w-full truncate text-text-lighter">on {owner}</span>
-                      )}
-                    </span>
-                  </SidebarListItem>
-                );
-              })}
-            </div>
-          );
-        })}
-      </div>
+    <SidebarPanel className="w-64 shrink-0">
+      <SidebarTitleBar title={`Objects (${tables.length})`}>
+        <SidebarIconButton onClick={onCreateTable} aria-label="Create table" tooltip="Create table">
+          <PlusIcon />
+        </SidebarIconButton>
+      </SidebarTitleBar>
+      <SidebarScrollArea>
+        <div className="space-y-1">
+          {objectGroups.length === 0 ? (
+            <EmptyState layout="sidebar" message="No database objects" />
+          ) : null}
+          {objectGroups.map((group, index) => {
+            const Icon = groupIcon[group.kind];
+            return (
+              <div key={group.kind} className={index > 0 ? "mt-chrome-loose" : undefined}>
+                <SidebarSectionLabel>{group.label}</SidebarSectionLabel>
+                {group.objects.map((table) => {
+                  const owner = getDatabaseObjectOwner(table);
+                  return (
+                    <SidebarListItem
+                      key={table.name}
+                      onClick={() => onSelectTable(table.name)}
+                      onContextMenu={(event) => onTableContextMenu(event, table.name, group.kind)}
+                      active={selectedTable === table.name}
+                      aria-label={`Select ${group.kind} ${table.name}`}
+                      leading={<Icon />}
+                      description={owner ? `on ${owner}` : undefined}
+                    >
+                      {table.name}
+                    </SidebarListItem>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </SidebarScrollArea>
       <SqlHistoryList
         queries={sqlHistory}
         compact

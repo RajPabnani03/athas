@@ -5,17 +5,19 @@ import { IdeSettingsImportDialog } from "@/features/file-system/components/ide-s
 import { useToast } from "@/features/layout/contexts/toast-context";
 import { TypedConfirmAction } from "@/features/settings/components/typed-confirm-action";
 import { useUpdater } from "@/features/settings/hooks/use-updater";
+import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
 import Command, {
   CommandEmpty,
   CommandHeader,
   CommandInput,
-  CommandItem,
+  CommandItemRow,
   CommandList,
 } from "@/ui/command";
+import { Progress } from "@/ui/progress";
 import { writeClipboardText } from "@/utils/clipboard";
 import { matchesSearchQuery } from "@/utils/search-match";
-import { SettingRow } from "../settings-section";
+import Section, { SettingBlock, SettingsView, SettingRow } from "../settings-section";
 
 const REPORT_BUG_CHANNELS = [
   {
@@ -133,8 +135,7 @@ export const GeneralSettings = () => {
   };
 
   const buildBugReport = async () => {
-    const version = await getVersion();
-    const os = await import("@tauri-apps/plugin-os");
+    const [version, os] = await Promise.all([getVersion(), import("@tauri-apps/plugin-os")]);
     const plat = os.platform();
     const ver = os.version();
 
@@ -163,122 +164,129 @@ export const GeneralSettings = () => {
     }
   };
 
+  const updateStatus = downloading
+    ? `Athas ${appVersion || "..."} · Downloading ${downloadProgress?.percentage ?? 0}%`
+    : installing
+      ? `Athas ${appVersion || "..."} · Installing update...`
+      : available
+        ? `Athas ${appVersion || "..."} · Version ${updateInfo?.version} available`
+        : error
+          ? `Athas ${appVersion || "..."} · Failed to check for updates`
+          : `Athas ${appVersion || "..."} · App is up to date`;
+  const cliStatus = cliChecking
+    ? "Checking..."
+    : cliInstalled
+      ? "CLI command is installed at $HOME/.local/bin/athas"
+      : "CLI command is not installed.";
+
   return (
-    <div className="space-y-4">
-      <SettingRow
-        label="Version"
-        description="Check for updates and install the latest app version."
-      >
-        <div className="flex flex-wrap justify-end gap-2">
-          {available ? (
-            <Button
-              onClick={downloadAndInstall}
-              disabled={downloading || installing}
-              variant="default"
-              compact
-            >
-              {downloading
-                ? "Downloading..."
-                : installing
-                  ? "Installing..."
-                  : `Install ${updateInfo?.version ?? "update"}`}
-            </Button>
-          ) : (
-            <Button
-              onClick={handleCheckForUpdates}
-              disabled={checking || downloading || installing}
-              variant="default"
-              compact
-            >
-              {checking ? "Checking..." : "Check"}
-            </Button>
-          )}
-        </div>
-      </SettingRow>
-
-      <div className="ui-font ui-text-xs -mt-3 px-1 text-text-lighter/75">
-        {downloading
-          ? `Athas ${appVersion || "..."} · Downloading ${downloadProgress?.percentage ?? 0}%`
-          : installing
-            ? `Athas ${appVersion || "..."} · Installing update...`
-            : available
-              ? `Athas ${appVersion || "..."} · Version ${updateInfo?.version} available`
-              : error
-                ? `Athas ${appVersion || "..."} · Failed to check for updates`
-                : `Athas ${appVersion || "..."} · App is up to date`}
-      </div>
-
-      {downloading && downloadProgress && (
-        <div className="px-3">
-          <div className="h-1 w-full overflow-hidden rounded-full bg-secondary-bg">
-            <div
-              className="h-full bg-accent transition-[width] duration-[var(--app-duration-slow)] ease-[var(--app-ease-smooth)]"
-              style={{ width: `${downloadProgress.percentage}%` }}
-            />
+    <SettingsView>
+      <Section title="Application">
+        <SettingRow
+          label="Version"
+          description={
+            <span className="flex flex-col gap-0.5">
+              <span>Check for updates and install the latest app version.</span>
+              <span className="text-subtle-foreground/75">{updateStatus}</span>
+            </span>
+          }
+        >
+          <div className="flex flex-wrap justify-end gap-2">
+            {available ? (
+              <Button
+                onClick={downloadAndInstall}
+                disabled={downloading || installing}
+                variant="default"
+              >
+                {downloading
+                  ? "Downloading..."
+                  : installing
+                    ? "Installing..."
+                    : `Install ${updateInfo?.version ?? "update"}`}
+              </Button>
+            ) : (
+              <Button
+                onClick={handleCheckForUpdates}
+                disabled={checking || downloading || installing}
+                variant="default"
+              >
+                {checking ? "Checking..." : "Check"}
+              </Button>
+            )}
           </div>
-        </div>
-      )}
+        </SettingRow>
 
-      {error && <div className="ui-font ui-text-sm px-3 text-error">{error}</div>}
-
-      <SettingRow
-        label="Terminal Command"
-        description="Install the `athas` command to open folders and files from your terminal."
-      >
-        <div className="flex gap-2">
-          {cliInstalled ? (
-            <TypedConfirmAction
-              actionLabel="Uninstall"
-              busyLabel="Uninstalling..."
-              isBusy={cliInstalling}
-              onConfirm={handleUninstallCli}
+        {downloading && downloadProgress ? (
+          <SettingBlock>
+            <Progress
+              value={downloadProgress.percentage}
+              aria-label="Athas update download progress"
             />
-          ) : (
-            <>
-              <Button
-                onClick={() => void handleInstallCli()}
-                disabled={cliInstalling || cliChecking}
-                variant="default"
-                compact
-              >
-                {cliInstalling ? "Installing..." : "Install"}
-              </Button>
-              <Button
-                onClick={handleCopyInstallCommand}
-                disabled={cliChecking}
-                variant="default"
-                tooltip="Copy install command to clipboard"
-                compact
-              >
-                Copy
-              </Button>
-            </>
-          )}
-        </div>
-      </SettingRow>
+          </SettingBlock>
+        ) : null}
 
-      <div className="ui-font ui-text-xs -mt-3 px-1 text-text-lighter/75">
-        {cliChecking
-          ? "Checking..."
-          : cliInstalled
-            ? "CLI command is installed at $HOME/.local/bin/athas"
-            : "CLI command is not installed."}
-      </div>
+        {error ? (
+          <SettingBlock>
+            <Alert tone="error">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          </SettingBlock>
+        ) : null}
 
-      <SettingRow label="Import Settings" description="Import matching setup from another editor.">
-        <Button onClick={() => setIsImportDialogOpen(true)} variant="default" compact>
-          Import
-        </Button>
-      </SettingRow>
+        <SettingRow
+          label="Terminal Command"
+          description={
+            <span className="flex flex-col gap-0.5">
+              <span>Install the athas command to open folders and files from your terminal.</span>
+              <span className="text-subtle-foreground/75">{cliStatus}</span>
+            </span>
+          }
+        >
+          <div className="flex gap-2">
+            {cliInstalled ? (
+              <TypedConfirmAction
+                actionLabel="Uninstall"
+                busyLabel="Uninstalling..."
+                isBusy={cliInstalling}
+                onConfirm={handleUninstallCli}
+              />
+            ) : (
+              <>
+                <Button
+                  onClick={() => void handleInstallCli()}
+                  disabled={cliInstalling || cliChecking}
+                  variant="default"
+                >
+                  {cliInstalling ? "Installing..." : "Install"}
+                </Button>
+                <Button
+                  onClick={handleCopyInstallCommand}
+                  disabled={cliChecking}
+                  variant="default"
+                  tooltip="Copy install command to clipboard"
+                >
+                  Copy
+                </Button>
+              </>
+            )}
+          </div>
+        </SettingRow>
 
-      <SettingRow
-        label="Report a Bug"
-        description="Choose where to report an issue with environment details."
-      >
-        <Button onClick={() => setIsReportBugDialogOpen(true)} variant="default" compact>
-          Open
-        </Button>
-      </SettingRow>
+        <SettingRow label="Import Settings" description="Import matching setup from another editor">
+          <Button onClick={() => setIsImportDialogOpen(true)} variant="default">
+            Import
+          </Button>
+        </SettingRow>
+
+        <SettingRow
+          label="Report a Bug"
+          description="Choose where to report an issue with environment details"
+        >
+          <Button onClick={() => setIsReportBugDialogOpen(true)} variant="default">
+            Open
+          </Button>
+        </SettingRow>
+      </Section>
 
       {isImportDialogOpen && (
         <IdeSettingsImportDialog onClose={() => setIsImportDialogOpen(false)} />
@@ -289,7 +297,7 @@ export const GeneralSettings = () => {
           onSelect={(channel) => void handleReportBug(channel)}
         />
       )}
-    </div>
+    </SettingsView>
   );
 };
 
@@ -342,7 +350,7 @@ function ReportBugCommandDialog({
   };
 
   return (
-    <Command isVisible onClose={onClose} title="Report a Bug" className="w-[520px]">
+    <Command isVisible onClose={onClose} title="Report a Bug" className="w-130">
       <CommandHeader onClose={onClose}>
         <CommandInput
           ref={inputRef}
@@ -357,18 +365,14 @@ function ReportBugCommandDialog({
           <CommandEmpty>No report channel matches "{query}".</CommandEmpty>
         ) : (
           channels.map((channel, index) => (
-            <CommandItem
+            <CommandItemRow
               key={channel.id}
               isSelected={index === selectedIndex}
               onClick={() => onSelect(channel)}
               onMouseEnter={() => setSelectedIndex(index)}
-              className="h-8 items-center justify-between px-3"
-            >
-              <span className="ui-font ui-text-sm text-text">{channel.label}</span>
-              <span className="ui-font ui-text-sm shrink-0 text-text-lighter">
-                {channel.detail}
-              </span>
-            </CommandItem>
+              title={channel.label}
+              description={channel.detail}
+            />
           ))
         )}
       </CommandList>

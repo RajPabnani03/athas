@@ -1,6 +1,6 @@
 #!/bin/bash
-# Simple wrapper that preserves LD_LIBRARY_PATH from hooks
 cd "$(dirname "$0")"
+
 if [ -x ./usr/bin/athas ]; then
   exec ./usr/bin/athas "$@"
 fi

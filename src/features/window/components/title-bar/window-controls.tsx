@@ -1,16 +1,11 @@
-import {
-  CornersInIcon as CornersIn,
-  CornersOutIcon as CornersOut,
-  MinusIcon as Minus,
-  XIcon as X,
-} from "@phosphor-icons/react";
-import { chromeControl } from "@/features/layout/components/chrome-control-styles";
+import type { Window as TauriWindow } from "@tauri-apps/api/window";
+import { ArrowsInIcon, ArrowsOutIcon, MinusIcon, XIcon } from "@/ui/icons";
+import { requestWindowClose } from "@/features/window/utils/request-window-close";
 import { Button } from "@/ui/button";
-import Tooltip from "@/ui/tooltip";
-import { cn } from "@/utils/cn";
+import { ChromeGroup } from "@/ui/chrome";
 
 interface WindowControlsProps {
-  currentWindow: any;
+  currentWindow: TauriWindow | null;
   isMaximized: boolean;
   onMaximizedChange: (isMaximized: boolean) => void;
 }
@@ -32,52 +27,59 @@ export function WindowControls({
     try {
       await currentWindow?.toggleMaximize();
       const maximized = await currentWindow?.isMaximized();
-      onMaximizedChange(maximized);
+      if (typeof maximized === "boolean") {
+        onMaximizedChange(maximized);
+      }
     } catch (error) {
       console.error("Error toggling maximize:", error);
     }
   };
 
-  const handleClose = async () => {
-    try {
-      await currentWindow?.close();
-    } catch (error) {
-      console.error("Error closing window:", error);
-    }
+  const handleClose = () => {
+    requestWindowClose();
   };
 
   return (
-    <div className="flex items-center gap-1">
-      <Tooltip content="Minimize" side="bottom">
+    <ChromeGroup gap="tight">
+      <span className="inline-flex min-w-0 pointer-events-auto">
         <Button
           onClick={handleMinimize}
           variant="ghost"
-          className={cn("pointer-events-auto", chromeControl())}
-          compact
+          iconOnly
+          size="chrome"
+          tooltip="Minimize"
+          commandId="window.minimize.alt"
+          aria-label="Minimize"
         >
-          <Minus weight="bold" />
+          <MinusIcon optical="md" />
         </Button>
-      </Tooltip>
-      <Tooltip content={isMaximized ? "Restore" : "Maximize"} side="bottom">
+      </span>
+      <span className="inline-flex min-w-0 pointer-events-auto">
         <Button
           onClick={handleToggleMaximize}
           variant="ghost"
-          className={cn("pointer-events-auto", chromeControl())}
-          compact
+          iconOnly
+          size="chrome"
+          tooltip={isMaximized ? "Restore" : "Maximize"}
+          commandId="window.maximize"
+          aria-label={isMaximized ? "Restore" : "Maximize"}
         >
-          {isMaximized ? <CornersIn weight="duotone" /> : <CornersOut weight="duotone" />}
+          {isMaximized ? <ArrowsInIcon /> : <ArrowsOutIcon />}
         </Button>
-      </Tooltip>
-      <Tooltip content="Close" side="bottom">
+      </span>
+      <span className="inline-flex min-w-0 pointer-events-auto group">
         <Button
           onClick={handleClose}
           variant="danger"
-          className={cn("pointer-events-auto group hover:text-white", chromeControl())}
-          compact
+          iconOnly
+          size="chrome"
+          tooltip="Close"
+          commandId="workbench.closeWindow"
+          aria-label="Close"
         >
-          <X weight="bold" />
+          <XIcon optical="md" />
         </Button>
-      </Tooltip>
-    </div>
+      </span>
+    </ChromeGroup>
   );
 }

@@ -1,12 +1,9 @@
 import { extensionRegistry } from "@/extensions/registry/extension-registry";
-import { EDITOR_CONSTANTS } from "@/features/editor/config/constants";
 import { editorAPI } from "@/features/editor/extensions/api";
-import { formatHoverContents } from "@/features/editor/lsp/hover-content";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { useFoldStore } from "@/features/editor/stores/fold.store";
 import { useInlineEditToolbarStore } from "@/features/editor/stores/inline-edit-toolbar.store";
 import { useEditorStateStore } from "@/features/editor/stores/state.store";
-import { useEditorUIStore } from "@/features/editor/stores/ui.store";
 import {
   readEditorClipboardText,
   writeEditorClipboardText,
@@ -18,8 +15,8 @@ import {
   resolveSelectPreviousOccurrenceAction,
   type OccurrenceRange,
 } from "@/features/editor/utils/select-next-occurrence";
-import { showChoiceDialog } from "@/features/dialogs/services/dialog-service";
-import { toast } from "@/ui/toast";
+import { showChoiceDialog } from "@/ui/dialog";
+import { toast } from "sonner";
 import { isEditorKeyboardTarget } from "../utils/editor-keyboard-target";
 
 type EditorSelection = NonNullable<ReturnType<typeof editorAPI.getSelection>>;
@@ -191,43 +188,6 @@ function selectAllEditorOccurrenceRanges(ranges: OccurrenceRange[]): void {
   }
 }
 
-function getKeyboardHoverPosition(): {
-  position: { top: number; left: number };
-  opensUpward: boolean;
-} {
-  const cursorElement = document.querySelector<HTMLElement>("[data-editor-primary-cursor]");
-  const targetElement =
-    cursorElement ??
-    editorAPI.getTextareaRef() ??
-    document.querySelector<HTMLElement>("[data-large-editor-scroll]");
-  const rect = targetElement?.getBoundingClientRect();
-  const margin = EDITOR_CONSTANTS.HOVER_TOOLTIP_MARGIN;
-  const gap = 6;
-
-  if (!rect) {
-    return {
-      position: { top: margin, left: margin },
-      opensUpward: false,
-    };
-  }
-
-  const tooltipWidth = EDITOR_CONSTANTS.DROPDOWN_MAX_WIDTH;
-  const tooltipHeight = EDITOR_CONSTANTS.HOVER_TOOLTIP_HEIGHT;
-  const spaceAbove = rect.top - margin;
-  const spaceBelow = window.innerHeight - rect.bottom - margin;
-  const opensUpward = !!cursorElement && spaceAbove >= Math.min(tooltipHeight, spaceBelow);
-  const top = opensUpward ? rect.top - gap : rect.bottom + gap;
-  const left = cursorElement ? rect.left : rect.left + EDITOR_CONSTANTS.EDITOR_PADDING_LEFT;
-
-  return {
-    position: {
-      top: Math.max(margin, Math.min(top, window.innerHeight - margin)),
-      left: Math.max(margin, Math.min(left, window.innerWidth - tooltipWidth - margin)),
-    },
-    opensUpward,
-  };
-}
-
 export function selectAllActiveEditor(): void {
   if (!shouldUseEditorModelCommand()) {
     document.execCommand("selectAll");
@@ -359,6 +319,10 @@ export function insertActiveEditorCursorsAtLineEnds(): void {
   editorAPI.insertCursorsAtLineEnds();
 }
 
+export function removeActiveEditorSecondaryCursors(): void {
+  editorAPI.removeSecondaryCursors();
+}
+
 export function triggerActiveEditorSuggest(): void {
   window.dispatchEvent(new CustomEvent("editor-trigger-suggest"));
 }
@@ -485,34 +449,7 @@ export async function formatActiveEditorSelection(): Promise<void> {
 }
 
 export async function showHoverForActiveEditor(): Promise<void> {
-  const activeBuffer = getActiveEditorBuffer();
-
-  if (!activeBuffer) {
-    toast.warning("No editable file for hover.");
-    return;
-  }
-
-  const cursorPosition = editorAPI.getCursorPosition();
-  const { LspClient } = await import("@/features/editor/lsp/lsp-client");
-  const hover = await LspClient.getInstance().getHover(
-    activeBuffer.path,
-    cursorPosition.line,
-    cursorPosition.column,
-  );
-  const content = hover?.contents ? formatHoverContents(hover.contents) : "";
-
-  if (!content) {
-    toast.info("No hover information available.");
-    return;
-  }
-
-  const hoverPosition = getKeyboardHoverPosition();
-  const editorUIActions = useEditorUIStore.getState().actions;
-  editorUIActions.setIsHovering(true);
-  editorUIActions.setHoverInfo({
-    content,
-    ...hoverPosition,
-  });
+  window.dispatchEvent(new CustomEvent("editor-show-hover"));
 }
 
 export async function runQuickFixForActiveEditor(): Promise<void> {
@@ -523,9 +460,11 @@ export async function runQuickFixForActiveEditor(): Promise<void> {
     return;
   }
 
-  const { useDiagnosticsStore } = await import("@/features/diagnostics/stores/diagnostics.store");
-  const { selectDiagnosticForQuickFix, selectPreferredCodeAction } =
-    await import("@/features/diagnostics/utils/quick-fix");
+  const [{ useDiagnosticsStore }, { selectDiagnosticForQuickFix, selectPreferredCodeAction }] =
+    await Promise.all([
+      import("@/features/diagnostics/stores/diagnostics.store"),
+      import("@/features/diagnostics/utils/quick-fix"),
+    ]);
   const diagnostics = useDiagnosticsStore
     .getState()
     .actions.getDiagnosticsForFile(activeBuffer.path);

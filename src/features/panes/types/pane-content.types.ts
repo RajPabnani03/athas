@@ -1,6 +1,8 @@
 import type { DatabaseType } from "@/features/database/types/provider.types";
 import type { MultiFileDiff } from "@/features/git/types/git-diff.types";
 import type { GitDiff } from "@/features/git/types/git.types";
+import type { OnboardingMode } from "@/features/onboarding/lib/onboarding-state";
+import type { GitHubActionNotificationTarget } from "@/features/github/types/github.types";
 
 // ── Token entry for syntax highlighting cache ───────────────────────
 
@@ -17,7 +19,6 @@ export type PaneContentType =
   | "editor"
   | "terminal"
   | "agent"
-  | "webViewer"
   | "newTab"
   | "diff"
   | "image"
@@ -26,14 +27,24 @@ export type PaneContentType =
   | "database"
   | "pullRequest"
   | "githubIssue"
+  | "githubDelivery"
   | "githubAction"
+  | "githubForm"
+  | "customView"
+  | "markdownDocument"
   | "markdownPreview"
   | "htmlPreview"
   | "csvPreview"
+  | "svgPreview"
   | "externalEditor"
   | "globalSearch"
   | "diagnostics"
   | "references"
+  | "continuousAgents"
+  | "workspaces"
+  | "settings"
+  | "extensions"
+  | "extension"
   | "onboarding";
 
 // ── Base fields shared by every content type ────────────────────────
@@ -56,6 +67,7 @@ export interface EditorContent extends PaneContentBase {
   savedContent: string;
   isDirty: boolean;
   isVirtual: boolean;
+  readOnly?: boolean;
   language?: string;
   languageOverride?: string;
   tokens: TokenEntry[];
@@ -64,6 +76,7 @@ export interface EditorContent extends PaneContentBase {
 export interface TerminalContent extends PaneContentBase {
   type: "terminal";
   sessionId: string;
+  shell?: string;
   initialCommand?: string;
   workingDirectory?: string;
   remoteConnectionId?: string;
@@ -72,17 +85,6 @@ export interface TerminalContent extends PaneContentBase {
 export interface AgentContent extends PaneContentBase {
   type: "agent";
   sessionId: string;
-}
-
-export interface WebViewerContent extends PaneContentBase {
-  type: "webViewer";
-  url: string;
-  title?: string;
-  favicon?: string;
-  zoomLevel?: number;
-  profileKey?: string;
-  history?: string[];
-  historyIndex?: number;
 }
 
 export interface NewTabContent extends PaneContentBase {
@@ -96,19 +98,19 @@ export interface DiffContent extends PaneContentBase {
   diffData?: GitDiff | MultiFileDiff;
 }
 
-export interface ImageContent extends PaneContentBase {
+interface ImageContent extends PaneContentBase {
   type: "image";
 }
 
-export interface PdfContent extends PaneContentBase {
+interface PdfContent extends PaneContentBase {
   type: "pdf";
 }
 
-export interface BinaryContent extends PaneContentBase {
+interface BinaryContent extends PaneContentBase {
   type: "binary";
 }
 
-export interface DatabaseContent extends PaneContentBase {
+interface DatabaseContent extends PaneContentBase {
   type: "database";
   databaseType: DatabaseType;
   connectionId?: string;
@@ -116,11 +118,12 @@ export interface DatabaseContent extends PaneContentBase {
 
 export interface PullRequestContent extends PaneContentBase {
   type: "pullRequest";
+  repoPath?: string;
   prNumber: number;
   authorAvatarUrl?: string;
 }
 
-export interface GitHubIssueContent extends PaneContentBase {
+interface GitHubIssueContent extends PaneContentBase {
   type: "githubIssue";
   repoPath?: string;
   issueNumber: number;
@@ -128,11 +131,42 @@ export interface GitHubIssueContent extends PaneContentBase {
   url?: string;
 }
 
-export interface GitHubActionContent extends PaneContentBase {
+interface GitHubActionContent extends PaneContentBase {
   type: "githubAction";
   repoPath?: string;
-  runId: number;
+  runId?: number;
+  notification?: GitHubActionNotificationTarget;
   url?: string;
+}
+
+export interface GitHubDeliveryContent extends PaneContentBase {
+  type: "githubDelivery";
+  kind: "releases" | "deployments";
+  repoPath: string;
+  resourceId?: number;
+}
+
+export type GitHubActionOpenTarget =
+  | { runId: number; notification?: never }
+  | { runId?: never; notification: GitHubActionNotificationTarget };
+
+export interface GitHubFormContent extends PaneContentBase {
+  type: "githubForm";
+  repoPath: string;
+  formKind: "pull-request" | "issue" | "action";
+  operation: "create";
+  defaultHead?: string;
+}
+
+export interface CustomViewContent extends PaneContentBase {
+  type: "customView";
+  projectPath: string;
+  viewId?: string;
+}
+
+export interface MarkdownDocumentContent extends PaneContentBase {
+  type: "markdownDocument";
+  content: string;
 }
 
 export interface MarkdownPreviewContent extends PaneContentBase {
@@ -153,26 +187,53 @@ export interface CsvPreviewContent extends PaneContentBase {
   sourceFilePath: string;
 }
 
-export interface ExternalEditorContent extends PaneContentBase {
+export interface SvgPreviewContent extends PaneContentBase {
+  type: "svgPreview";
+  content: string;
+  sourceFilePath: string;
+}
+
+interface ExternalEditorContent extends PaneContentBase {
   type: "externalEditor";
   terminalConnectionId: string;
 }
 
-export interface GlobalSearchContent extends PaneContentBase {
+interface GlobalSearchContent extends PaneContentBase {
   type: "globalSearch";
 }
 
-export interface DiagnosticsContent extends PaneContentBase {
+interface DiagnosticsContent extends PaneContentBase {
   type: "diagnostics";
 }
 
-export interface ReferencesContent extends PaneContentBase {
+interface ReferencesContent extends PaneContentBase {
   type: "references";
 }
 
-export interface OnboardingContent extends PaneContentBase {
+interface ContinuousAgentsContent extends PaneContentBase {
+  type: "continuousAgents";
+}
+
+interface WorkspacesContent extends PaneContentBase {
+  type: "workspaces";
+}
+
+interface SettingsContent extends PaneContentBase {
+  type: "settings";
+}
+
+export interface ExtensionsContent extends PaneContentBase {
+  type: "extensions";
+}
+
+export interface ExtensionContent extends PaneContentBase {
+  type: "extension";
+  extensionId: string;
+}
+
+interface OnboardingContent extends PaneContentBase {
   type: "onboarding";
-  mode: import("@/features/onboarding/lib/onboarding-state").OnboardingMode;
+  mode: OnboardingMode;
   currentVersion: string;
   previousVersion?: string;
 }
@@ -183,7 +244,6 @@ export type PaneContent =
   | EditorContent
   | TerminalContent
   | AgentContent
-  | WebViewerContent
   | NewTabContent
   | DiffContent
   | ImageContent
@@ -192,14 +252,24 @@ export type PaneContent =
   | DatabaseContent
   | PullRequestContent
   | GitHubIssueContent
+  | GitHubDeliveryContent
   | GitHubActionContent
+  | GitHubFormContent
+  | CustomViewContent
+  | MarkdownDocumentContent
   | MarkdownPreviewContent
   | HtmlPreviewContent
   | CsvPreviewContent
+  | SvgPreviewContent
   | ExternalEditorContent
   | GlobalSearchContent
   | DiagnosticsContent
   | ReferencesContent
+  | ContinuousAgentsContent
+  | WorkspacesContent
+  | SettingsContent
+  | ExtensionsContent
+  | ExtensionContent
   | OnboardingContent;
 
 // ── Type guards ─────────────────────────────────────────────────────
@@ -208,65 +278,28 @@ export function isEditorContent(c: PaneContent): c is EditorContent {
   return c.type === "editor";
 }
 
-export function isTerminalContent(c: PaneContent): c is TerminalContent {
-  return c.type === "terminal";
-}
-
-export function isAgentContent(c: PaneContent): c is AgentContent {
-  return c.type === "agent";
-}
-
-export function isWebViewerContent(c: PaneContent): c is WebViewerContent {
-  return c.type === "webViewer";
-}
-
-export function isNewTabContent(c: PaneContent): c is NewTabContent {
-  return c.type === "newTab";
-}
-
-export function isDiffContent(c: PaneContent): c is DiffContent {
-  return c.type === "diff";
-}
-
-export function isDatabaseContent(c: PaneContent): c is DatabaseContent {
-  return c.type === "database";
-}
-
-export function isPullRequestContent(c: PaneContent): c is PullRequestContent {
-  return c.type === "pullRequest";
-}
-
-export function isGitHubIssueContent(c: PaneContent): c is GitHubIssueContent {
-  return c.type === "githubIssue";
-}
-
-export function isGitHubActionContent(c: PaneContent): c is GitHubActionContent {
-  return c.type === "githubAction";
-}
-
-export function isExternalEditorContent(c: PaneContent): c is ExternalEditorContent {
-  return c.type === "externalEditor";
-}
-
 // ── Helpers ─────────────────────────────────────────────────────────
-
-/** Content types that represent real files on disk and should be persisted to session. */
-export function isPersistableContent(c: PaneContent): c is EditorContent {
-  return c.type === "editor" && !c.isVirtual;
-}
 
 /** Content types that are virtual (not backed by a real file on disk). */
 const VIRTUAL_TYPES: ReadonlySet<PaneContentType> = new Set([
   "terminal",
   "agent",
-  "webViewer",
   "newTab",
   "pullRequest",
   "githubIssue",
+  "githubDelivery",
   "githubAction",
+  "githubForm",
+  "customView",
+  "markdownDocument",
   "globalSearch",
   "diagnostics",
   "references",
+  "continuousAgents",
+  "workspaces",
+  "settings",
+  "extensions",
+  "extension",
   "onboarding",
 ]);
 
@@ -287,15 +320,19 @@ export function hasTextContent(
 ): c is
   | EditorContent
   | DiffContent
+  | MarkdownDocumentContent
   | MarkdownPreviewContent
   | HtmlPreviewContent
-  | CsvPreviewContent {
+  | CsvPreviewContent
+  | SvgPreviewContent {
   return (
     c.type === "editor" ||
     c.type === "diff" ||
+    c.type === "markdownDocument" ||
     c.type === "markdownPreview" ||
     c.type === "htmlPreview" ||
-    c.type === "csvPreview"
+    c.type === "csvPreview" ||
+    c.type === "svgPreview"
   );
 }
 
@@ -314,11 +351,13 @@ export type OpenContentSpec =
       content: string;
       isVirtual?: boolean;
       isPreview?: boolean;
+      readOnly?: boolean;
       language?: string;
     }
   | {
       type: "terminal";
       name?: string;
+      shell?: string;
       command?: string;
       workingDirectory?: string;
       remoteConnectionId?: string;
@@ -326,14 +365,6 @@ export type OpenContentSpec =
       path?: string;
     }
   | { type: "agent"; sessionId?: string }
-  | {
-      type: "webViewer";
-      url: string;
-      zoomLevel?: number;
-      profileKey?: string;
-      history?: string[];
-      historyIndex?: number;
-    }
   | { type: "newTab" }
   | {
       type: "diff";
@@ -355,9 +386,11 @@ export type OpenContentSpec =
   | {
       type: "pullRequest";
       prNumber: number;
+      repoPath?: string;
       authorAvatarUrl?: string;
       name?: string;
       selectedFilePath?: string;
+      initialView?: "activity" | "files";
     }
   | {
       type: "githubIssue";
@@ -368,11 +401,35 @@ export type OpenContentSpec =
       url?: string;
     }
   | {
+      type: "githubDelivery";
+      kind: "releases" | "deployments";
+      repoPath: string;
+      resourceId?: number;
+      name?: string;
+    }
+  | ({
       type: "githubAction";
-      runId: number;
       repoPath?: string;
       name?: string;
       url?: string;
+    } & GitHubActionOpenTarget)
+  | {
+      type: "githubForm";
+      repoPath: string;
+      formKind: "pull-request" | "issue" | "action";
+      operation: "create";
+      defaultHead?: string;
+    }
+  | {
+      type: "customView";
+      projectPath: string;
+      viewId?: string;
+      name?: string;
+    }
+  | {
+      type: "markdownDocument";
+      documentId: string;
+      content?: string;
     }
   | {
       type: "markdownPreview";
@@ -396,6 +453,13 @@ export type OpenContentSpec =
       sourceFilePath: string;
     }
   | {
+      type: "svgPreview";
+      path: string;
+      name: string;
+      content: string;
+      sourceFilePath: string;
+    }
+  | {
       type: "externalEditor";
       path: string;
       name: string;
@@ -409,6 +473,23 @@ export type OpenContentSpec =
     }
   | {
       type: "references";
+    }
+  | {
+      type: "continuousAgents";
+    }
+  | {
+      type: "workspaces";
+    }
+  | {
+      type: "settings";
+    }
+  | {
+      type: "extensions";
+    }
+  | {
+      type: "extension";
+      extensionId: string;
+      name: string;
     }
   | {
       type: "onboarding";

@@ -1,11 +1,13 @@
-import { CaretRightIcon as CaretRight } from "@phosphor-icons/react";
+import { ChevronRightIcon } from "@/ui/icons";
 import { useEffect, useState } from "react";
-import { LoadingIndicator } from "@/ui/loading";
+import { EmptyState } from "@/ui/empty";
+import { showPromptDialog } from "@/ui/dialog";
+import { Spinner } from "@/ui/spinner";
 import { cn } from "@/utils/cn";
-import { sendDebugAdapterRequest } from "../services/debug-adapter-service";
+import { sendDebugAdapterRequest, setDebugVariable } from "../services/debug-adapter-service";
 import { useDebuggerStore } from "../stores/debugger.store";
 import type { DebugRequestContext, DebugScope, DebugVariable } from "../types/debugger.types";
-import { DebugEmptyState, EMPTY_DEBUG_SECTION_MESSAGES } from "./debugger-panels";
+import { EMPTY_DEBUG_SECTION_MESSAGES } from "./debugger-panels";
 
 interface DebugVariablesPanelProps {
   activeSessionId?: string;
@@ -13,6 +15,7 @@ interface DebugVariablesPanelProps {
   scopes: DebugScope[];
   variablesByReference: Record<number, DebugVariable[]>;
   pendingRequests: Record<number, DebugRequestContext>;
+  canSetVariables: boolean;
 }
 
 export function DebugVariablesPanel({
@@ -21,6 +24,7 @@ export function DebugVariablesPanel({
   scopes,
   variablesByReference,
   pendingRequests,
+  canSetVariables,
 }: DebugVariablesPanelProps) {
   const debuggerActions = useDebuggerStore.use.actions();
   const [expandedVariableReferences, setExpandedVariableReferences] = useState<Set<number>>(
@@ -67,6 +71,30 @@ export function DebugVariablesPanel({
     }
   };
 
+  const editVariable = async (variable: DebugVariable, parentReference: number) => {
+    if (!activeSessionId || !canSetVariables) return;
+
+    const value = await showPromptDialog(`Set ${variable.name}:`, {
+      title: "Set Variable",
+      defaultValue: variable.value,
+    });
+    if (value === null) return;
+
+    const updatedVariable = await setDebugVariable(
+      activeSessionId,
+      parentReference,
+      variable.name,
+      value,
+    );
+    const variables = variablesByReference[parentReference] ?? [];
+    debuggerActions.setVariables(
+      parentReference,
+      variables.map((candidate) =>
+        candidate.name === variable.name ? updatedVariable : candidate,
+      ),
+    );
+  };
+
   const renderVariables = (variables: DebugVariable[], parentReference: number, depth = 0) =>
     variables.map((variable, index) => {
       const canExpand = variable.variablesReference > 0;
@@ -77,19 +105,19 @@ export function DebugVariablesPanel({
       return (
         <div key={`${parentReference}-${variable.name}-${index}`}>
           <div
-            className="grid grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)] gap-2 py-1 pr-3 ui-text-xs"
+            className="grid grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)] gap-2 py-1 pr-3 ui-text-sm"
             style={{ paddingLeft: 18 + depth * 12 }}
           >
             <button
               type="button"
               className={cn(
-                "flex min-w-0 items-center gap-1 text-left text-text-lighter",
-                canExpand && "hover:text-text",
+                "flex min-w-0 items-center gap-1 text-left text-subtle-foreground",
+                canExpand && "hover:text-foreground",
               )}
               disabled={!canExpand}
               onClick={() => void toggleVariableExpansion(variable.variablesReference)}
             >
-              <CaretRight
+              <ChevronRightIcon
                 size={10}
                 className={cn(
                   "shrink-0 transition-transform",
@@ -99,13 +127,19 @@ export function DebugVariablesPanel({
               />
               <span className="truncate">{variable.name}</span>
             </button>
-            <span className="truncate font-mono text-text">
+            <button
+              type="button"
+              className="truncate text-left font-mono text-foreground disabled:cursor-default"
+              disabled={!canSetVariables || isLoading}
+              title={canSetVariables ? `Set ${variable.name}` : undefined}
+              onDoubleClick={() => void editVariable(variable, parentReference)}
+            >
               {isLoading ? (
-                <LoadingIndicator label="Loading variable" compact />
+                <Spinner label="Loading variable" compact />
               ) : (
                 variable.value || variable.type || ""
               )}
-            </span>
+            </button>
           </div>
           {isExpanded && childVariables.length > 0
             ? renderVariables(childVariables, variable.variablesReference, depth + 1)
@@ -115,7 +149,7 @@ export function DebugVariablesPanel({
     });
 
   if (scopes.length === 0) {
-    return <DebugEmptyState>{EMPTY_DEBUG_SECTION_MESSAGES.variables}</DebugEmptyState>;
+    return <EmptyState layout="sidebar" message={EMPTY_DEBUG_SECTION_MESSAGES.variables} />;
   }
 
   return (
@@ -124,12 +158,12 @@ export function DebugVariablesPanel({
         const variables = variablesByReference[scope.variablesReference] ?? [];
         return (
           <div key={`${scope.name}-${scope.variablesReference}`}>
-            <div className="flex items-center justify-between px-3 py-1.5 ui-text-xs">
-              <span className="font-medium text-text">{scope.name}</span>
-              <span className="ui-text-xs text-text-lighter">{variables.length}</span>
+            <div className="flex items-center justify-between px-3 py-1.5 ui-text-sm">
+              <span className="font-medium text-foreground">{scope.name}</span>
+              <span className="ui-text-sm text-subtle-foreground">{variables.length}</span>
             </div>
             {variables.length === 0 ? (
-              <div className="px-6 pb-1.5 ui-text-xs text-text-lighter">Empty</div>
+              <div className="px-6 pb-1.5 ui-text-sm text-subtle-foreground">Empty</div>
             ) : (
               renderVariables(variables, scope.variablesReference)
             )}

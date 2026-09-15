@@ -1,3 +1,4 @@
+import { BUNDLED_FONTS } from "@/features/settings/config/bundled-fonts";
 import { useEffect, useState } from "react";
 import {
   DEFAULT_MONO_FONT_FAMILY,
@@ -9,25 +10,9 @@ import {
 } from "@/features/settings/lib/font-family-resolution";
 import { useFontStore } from "@/features/settings/stores/font.store";
 import type { FontInfo } from "@/features/settings/types/font.types";
-import { LoadingIndicator } from "@/ui/loading";
+import { Spinner } from "@/ui/spinner";
 import Select from "@/ui/select";
 import { cn } from "@/utils/cn";
-
-// Bundled fonts that are always available
-const BUNDLED_FONTS: FontInfo[] = [
-  {
-    name: "IBM Plex Sans Variable",
-    family: "IBM Plex Sans Variable",
-    style: "Regular",
-    is_monospace: false,
-  },
-  {
-    name: "JetBrains Mono Variable",
-    family: "JetBrains Mono Variable",
-    style: "Regular",
-    is_monospace: true,
-  },
-];
 
 interface FontSelectorProps {
   value: string;
@@ -85,7 +70,12 @@ export const FontSelector = ({
   // Convert fonts to dropdown options
   const fontOptions = fonts.map((font: FontInfo, index) => ({
     value: font.family,
-    label: index < uniqueBundledFonts.length ? `${font.family} (bundled)` : font.family,
+    label:
+      font.family === "system-ui"
+        ? "System UI (recommended)"
+        : index < uniqueBundledFonts.length
+          ? `${font.family} (bundled)`
+          : font.family,
   }));
 
   // Add custom font option only for real system fonts that validate successfully.
@@ -141,12 +131,12 @@ export const FontSelector = ({
   };
 
   if (isLoading) {
-    return <LoadingIndicator label="Loading fonts" showLabel compact className={className} />;
+    return <Spinner label="Loading fonts" showLabel compact className={className} />;
   }
 
   if (error) {
     return (
-      <div className={cn("ui-font ui-text-sm text-error", className)}>
+      <div className={cn("font-sans ui-text-sm text-destructive", className)}>
         Error loading fonts: {error}
       </div>
     );
@@ -159,7 +149,6 @@ export const FontSelector = ({
       onChange={handleFontChange}
       placeholder="Select font"
       className={className}
-      size="xs"
       variant="default"
       searchable
       searchableTrigger="input"

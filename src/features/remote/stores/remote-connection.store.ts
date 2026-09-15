@@ -54,7 +54,9 @@ class ConnectionStore {
     try {
       const { useWorkspaceTabsStore } =
         await import("@/features/window/stores/workspace-tabs.store");
-      useWorkspaceTabsStore.getState().renameRemoteProjectTabs(connectionId, connectionName);
+      useWorkspaceTabsStore
+        .getState()
+        .actions.renameRemoteProjectTabs(connectionId, connectionName);
     } catch (error) {
       console.warn("Failed to sync remote workspace tab name:", error);
     }
@@ -93,8 +95,10 @@ class ConnectionStore {
     const connection = await connectionsStore.get(connectionId);
     if (!connection) return null;
 
-    const password = await this.getPassword(connectionId);
-    const connectedIds = await this.getConnectedIds();
+    const [password, connectedIds] = await Promise.all([
+      this.getPassword(connectionId),
+      this.getConnectedIds(),
+    ]);
 
     return {
       ...connection,
@@ -105,9 +109,10 @@ class ConnectionStore {
 
   async getAllConnections() {
     const connectionsStore = await this.getConnectionsStore();
-    const connectedIds = await this.getConnectedIds();
-
-    const connectionIds: string[] = await connectionsStore.keys();
+    const [connectedIds, connectionIds] = await Promise.all([
+      this.getConnectedIds(),
+      connectionsStore.keys() as Promise<string[]>,
+    ]);
     const connections = await Promise.all(
       connectionIds.map(async (id) => {
         const connection = await connectionsStore.get(id);

@@ -1,5 +1,5 @@
 import { EditorUndoGroupTracker } from "@/features/editor/history/undo-group-tracker";
-import type { Position, Range } from "@/features/editor/types/editor.types";
+import type { EditorTextChange, Position, Range } from "@/features/editor/types/editor.types";
 import { useHistoryStore } from "@/features/editor/stores/history.store";
 
 const undoGroupTracker = new EditorUndoGroupTracker();
@@ -17,6 +17,39 @@ export function syncBufferHistoryContent(bufferId: string, content: string): voi
   undoGroupTracker.sync(bufferId, content);
 }
 
+export function trackImmediateBufferHistoryChange({
+  bufferId,
+  currentContent,
+  nextContent,
+  previousCursorPosition,
+  previousSelection,
+}: {
+  bufferId: string;
+  currentContent: string;
+  nextContent: string;
+  previousCursorPosition?: Position;
+  previousSelection?: Range;
+}): void {
+  if (currentContent === nextContent) {
+    undoGroupTracker.sync(bufferId, nextContent);
+    return;
+  }
+
+  flushPendingBufferHistory(bufferId, currentContent);
+  useHistoryStore.getState().actions.pushHistory(bufferId, {
+    content: currentContent,
+    cursorPosition: previousCursorPosition ? { ...previousCursorPosition } : undefined,
+    selection: previousSelection
+      ? {
+          start: { ...previousSelection.start },
+          end: { ...previousSelection.end },
+        }
+      : undefined,
+    timestamp: Date.now(),
+  });
+  undoGroupTracker.sync(bufferId, nextContent);
+}
+
 export function trackBufferHistoryChange({
   bufferId,
   currentContent,
@@ -25,6 +58,7 @@ export function trackBufferHistoryChange({
   previousCursorPosition,
   previousSelection,
   skipUndoGrouping,
+  contentChange,
 }: {
   bufferId: string;
   currentContent: string;
@@ -33,19 +67,15 @@ export function trackBufferHistoryChange({
   previousCursorPosition?: Position;
   previousSelection?: Range;
   skipUndoGrouping?: boolean;
+  contentChange?: EditorTextChange;
 }): void {
   if (skipUndoGrouping) {
-    undoGroupTracker.sync(bufferId, nextContent);
-    useHistoryStore.getState().actions.pushHistory(bufferId, {
-      content: previousContent ?? currentContent,
-      cursorPosition: previousCursorPosition ? { ...previousCursorPosition } : undefined,
-      selection: previousSelection
-        ? {
-            start: { ...previousSelection.start },
-            end: { ...previousSelection.end },
-          }
-        : undefined,
-      timestamp: Date.now(),
+    trackImmediateBufferHistoryChange({
+      bufferId,
+      currentContent: previousContent ?? currentContent,
+      nextContent,
+      previousCursorPosition,
+      previousSelection,
     });
     return;
   }
@@ -60,6 +90,7 @@ export function trackBufferHistoryChange({
   const historyEntries = undoGroupTracker.track(bufferId, contentBeforeChange, nextContent, {
     previousCursorPosition,
     previousSelection,
+    contentChange,
   });
   const { pushHistory } = useHistoryStore.getState().actions;
   for (const entry of historyEntries) {

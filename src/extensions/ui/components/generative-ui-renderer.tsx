@@ -1,132 +1,71 @@
-import type { GenerativeUIAction, GenerativeUIComponent } from "../types/generative-ui";
-import { ProGate } from "./pro-gate";
-import { Button } from "@/ui/button";
-import { cn } from "@/utils/cn";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { useCallback, useMemo, useState } from "react";
+import { ProGate } from "@/features/window/components/pro-gate";
+import { Alert, AlertDescription, AlertTitle } from "@/ui/alert";
+import {
+  normalizeGenerativeUIView,
+  OPEN_EXTERNAL_VIEW_COMMAND,
+} from "../services/generative-ui-adapter";
+import { useUIExtensionStore } from "../stores/ui-extension-store";
+import type { GenerativeUIView } from "../types/generative-ui";
+import type { ExtensionViewAction } from "../types/extension-view";
+import { ExtensionViewRenderer } from "./extension-view-renderer";
 
 interface GenerativeUIRendererProps {
-  component: GenerativeUIComponent;
+  component: GenerativeUIView;
 }
 
-function ActionButton({ action }: { action: GenerativeUIAction }) {
-  const handleClick = () => {
-    if (action.url) {
-      window.open(action.url, "_blank", "noopener,noreferrer");
-    }
-  };
-
-  const variant =
-    action.style === "primary" ? "accent" : action.style === "danger" ? "danger" : "default";
-
-  return (
-    <Button onClick={handleClick} variant={variant} aria-label={action.label} compact>
-      {action.label}
-    </Button>
-  );
-}
-
-function RenderComponent({ component }: { component: GenerativeUIComponent }) {
-  const { type, props, children, actions } = component;
-
-  const renderedChildren = children?.map((child, i) => (
-    <RenderComponent key={`${child.type}-${i}`} component={child} />
-  ));
-
-  const renderedActions = actions && actions.length > 0 && (
-    <div className="flex gap-2 pt-2">
-      {actions.map((action) => (
-        <ActionButton key={action.id} action={action} />
-      ))}
-    </div>
-  );
-
-  switch (type) {
-    case "card":
-      return (
-        <div className="rounded-lg border border-border bg-secondary-bg/50 p-3">
-          {typeof props.title === "string" && (
-            <h3 className="mb-1 font-medium ui-text-sm text-text">{props.title}</h3>
-          )}
-          {typeof props.description === "string" && (
-            <p className="text-text-lighter ui-text-xs">{props.description}</p>
-          )}
-          {renderedChildren}
-          {renderedActions}
-        </div>
-      );
-    case "list":
-      return (
-        <div className="space-y-1">
-          {(props.items as string[] | undefined)?.map((item, i) => (
-            <div
-              key={`item-${i}`}
-              className="rounded-md px-2 py-1 text-text ui-text-xs hover:bg-hover"
-            >
-              {item}
-            </div>
-          ))}
-          {renderedChildren}
-          {renderedActions}
-        </div>
-      );
-    case "table": {
-      const headers = (props.headers as string[]) ?? [];
-      const rows = (props.rows as string[][]) ?? [];
-      return (
-        <div className="overflow-x-auto">
-          <table className="w-full ui-text-xs">
-            {headers.length > 0 && (
-              <thead>
-                <tr className="border-border border-b">
-                  {headers.map((h, i) => (
-                    <th
-                      key={`h-${i}`}
-                      className="px-2 py-1 text-left font-medium text-text-lighter"
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-            )}
-            <tbody>
-              {rows.map((row, ri) => (
-                <tr key={`r-${ri}`} className="border-border/50 border-b last:border-0">
-                  {row.map((cell, ci) => (
-                    <td key={`c-${ri}-${ci}`} className="px-2 py-1 text-text">
-                      {cell}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {renderedActions}
-        </div>
-      );
-    }
-    case "form":
-      return (
-        <div className={cn("space-y-2", typeof props.className === "string" && props.className)}>
-          {renderedChildren}
-          {renderedActions}
-        </div>
-      );
-    case "custom":
-      return (
-        <div>
-          {renderedChildren}
-          {renderedActions}
-        </div>
-      );
-    default:
-      return null;
+function resolveExternalUrl(value: unknown): string {
+  if (typeof value !== "string") throw new Error("The external URL is missing.");
+  const url = new URL(value);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Only HTTP and HTTPS links can be opened from generated UI.");
   }
+  return url.toString();
 }
 
 export function GenerativeUIRenderer({ component }: GenerativeUIRendererProps) {
+  const [actionError, setActionError] = useState<string | null>(null);
+  const result = useMemo(() => {
+    try {
+      return { node: normalizeGenerativeUIView(component), error: null };
+    } catch (error) {
+      return {
+        node: null,
+        error: error instanceof Error ? error.message : "Generated UI is invalid.",
+      };
+    }
+  }, [component]);
+
+  const execute = useCallback(async (action: ExtensionViewAction, extraArgs: unknown[] = []) => {
+    setActionError(null);
+    const args = [...(action.args ?? []), ...extraArgs];
+    try {
+      if (action.command === OPEN_EXTERNAL_VIEW_COMMAND) {
+        await openUrl(resolveExternalUrl(args[0]));
+        return;
+      }
+
+      const command = useUIExtensionStore.getState().commands.get(action.command);
+      if (!command) throw new Error(`Generated UI command is not available: ${action.command}`);
+      await command.execute(...args);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Generated UI action failed.");
+    }
+  }, []);
+
+  const error = result.error ?? actionError;
+
   return (
     <ProGate>
-      <RenderComponent component={component} />
+      {error ? (
+        <Alert tone="error" role="alert">
+          <AlertTitle>Generated UI unavailable</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : result.node ? (
+        <ExtensionViewRenderer node={result.node} execute={execute} surface="embedded" />
+      ) : null}
     </ProGate>
   );
 }

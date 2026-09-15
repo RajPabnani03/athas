@@ -1,16 +1,22 @@
 import type React from "react";
-import { CaretLeftIcon as ChevronLeft } from "@phosphor-icons/react";
+import { ChevronLeftIcon } from "@/ui/icons";
 import { useRef, useState } from "react";
-import { EDITOR_CONSTANTS } from "@/features/editor/config/constants";
 import { logger } from "@/features/editor/utils/logger";
 import { extensionRegistry } from "@/extensions/registry/extension-registry";
-import { FileExplorerIcon } from "@/features/file-explorer/components/file-explorer-icon";
+import { ThemedFileIcon } from "@/extensions/icon-themes/components/themed-file-icon";
 import { readDirectory } from "@/features/file-system/controllers/platform";
 import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
 import type { FileEntry } from "@/features/file-system/types/app.types";
 import { useUIState } from "@/features/window/stores/ui-state.store";
-import { Button } from "@/ui/button";
-import { Dropdown, dropdownItemClassName } from "@/ui/dropdown";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  menuSeparator,
+  type MenuItem,
+  usePointAnchor,
+} from "@/ui/dropdown";
 import { getBaseName, getRelativePath, joinPath, normalizePath } from "@/utils/path-helpers";
 import { PathBreadcrumb } from "./path-breadcrumb";
 
@@ -31,7 +37,8 @@ export function FilePathBreadcrumb({
   interactive = true,
   className,
 }: FilePathBreadcrumbProps) {
-  const { rootFolderPath, handleFileSelect } = useFileSystemStore();
+  const rootFolderPath = useFileSystemStore((state) => state.rootFolderPath);
+  const handleFileSelect = useFileSystemStore((state) => state.handleFileSelect);
   const openCommandPaletteView = useUIState((state) => state.openCommandPaletteView);
   const [dropdown, setDropdown] = useState<{
     segmentIndex: number;
@@ -122,6 +129,30 @@ export function FilePathBreadcrumb({
     }
   };
 
+  const handleDropdownItemSelect = async (item: FileEntry) => {
+    if (item.isDir) {
+      try {
+        const items = await loadDirectoryEntries(item.path);
+        setDropdown((prev) =>
+          prev
+            ? {
+                ...prev,
+                items,
+                currentPath: item.path,
+                navigationStack: [...prev.navigationStack, prev.currentPath],
+              }
+            : null,
+        );
+      } catch (error) {
+        logger.error("Editor", "Failed to load folder contents:", error);
+      }
+      return;
+    }
+
+    await handleNavigate(item.path);
+    setDropdown(null);
+  };
+
   const handleSegmentClick = async (
     segmentIndex: number,
     event: React.MouseEvent<HTMLButtonElement>,
@@ -171,13 +202,41 @@ export function FilePathBreadcrumb({
     }
   };
 
+  const dropdownItems: MenuItem[] = dropdown
+    ? [
+        ...(dropdown.navigationStack.length > 0
+          ? [
+              {
+                id: "go-back",
+                label: "Go back",
+                icon: <ChevronLeftIcon className="text-subtle-foreground" />,
+                onClick: () => void handleGoBack(),
+              },
+              menuSeparator("go-back-separator"),
+            ]
+          : []),
+        ...dropdown.items.map((item) => ({
+          id: item.path,
+          label: item.name,
+          icon: (
+            <ThemedFileIcon
+              fileName={item.name}
+              isDir={item.isDir}
+              isExpanded={false}
+              className="text-subtle-foreground"
+            />
+          ),
+          onClick: () => void handleDropdownItemSelect(item),
+        })),
+      ]
+    : [];
+
   if (segments.length === 0) return null;
 
   return (
     <>
       <PathBreadcrumb
         segments={segments}
-        fullPath={filePath}
         interactive={interactive}
         onSegmentClick={interactive ? handleSegmentClick : undefined}
         setSegmentRef={
@@ -190,76 +249,52 @@ export function FilePathBreadcrumb({
         className={className}
       />
 
-      {interactive && dropdown && (
-        <Dropdown
-          isOpen={Boolean(dropdown)}
-          point={{ x: dropdown.x, y: dropdown.y }}
+      {interactive && dropdown ? (
+        <BreadcrumbDirectoryMenu
+          point={dropdown}
+          items={dropdownItems}
           onClose={() => setDropdown(null)}
-          className="breadcrumb-dropdown min-w-0"
-          style={{
-            zIndex: EDITOR_CONSTANTS.Z_INDEX.DROPDOWN,
-            maxHeight: `${EDITOR_CONSTANTS.BREADCRUMB_DROPDOWN_MAX_HEIGHT}px`,
-            minWidth: `${EDITOR_CONSTANTS.DROPDOWN_MIN_WIDTH}px`,
-          }}
-        >
-          {dropdown.navigationStack.length > 0 && (
-            <div className="border-border/70 border-b pb-0.5">
-              <Button
-                onClick={handleGoBack}
-                variant="ghost"
-                className={dropdownItemClassName("justify-start gap-2 font-normal")}
-                compact
-              >
-                <ChevronLeft className="size-4 shrink-0 text-text-lighter" weight="duotone" />
-                <span className="min-w-0 flex-1 truncate text-left ui-text-sm font-normal">
-                  Go back
-                </span>
-              </Button>
-            </div>
-          )}
-
-          {dropdown.items.map((item) => (
-            <Button
-              key={item.path}
-              onClick={async () => {
-                if (item.isDir) {
-                  try {
-                    const items = await loadDirectoryEntries(item.path);
-                    setDropdown((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            items,
-                            currentPath: item.path,
-                            navigationStack: [...prev.navigationStack, prev.currentPath],
-                          }
-                        : null,
-                    );
-                  } catch (error) {
-                    logger.error("Editor", "Failed to load folder contents:", error);
-                  }
-                } else {
-                  await handleNavigate(item.path);
-                  setDropdown(null);
-                }
-              }}
-              variant="ghost"
-              compact
-              className={dropdownItemClassName("justify-start gap-2 font-normal")}
-            >
-              <FileExplorerIcon
-                fileName={item.name}
-                isDir={item.isDir}
-                isExpanded={false}
-                className="shrink-0 text-text-lighter"
-              />
-              <span className="min-w-0 flex-1 truncate text-left ui-text-sm font-normal">
-                {item.name}
-              </span>
-            </Button>
-          ))}
-        </Dropdown>
-      )}
+        />
+      ) : null}
     </>
+  );
+}
+
+/**
+ * Directory drill-down opened at a breadcrumb segment. Items keep the menu open
+ * because selecting a folder navigates inside it rather than committing a choice.
+ */
+function BreadcrumbDirectoryMenu({
+  point,
+  items,
+  onClose,
+}: {
+  point: { x: number; y: number };
+  items: MenuItem[];
+  onClose: () => void;
+}) {
+  const anchor = usePointAnchor(point);
+
+  return (
+    <DropdownMenu open onOpenChange={(open) => !open && onClose()}>
+      <DropdownMenuContent
+        anchor={anchor}
+        positionMethod="fixed"
+        align="start"
+        viewport="list"
+        size="default"
+      >
+        {items.map((item) =>
+          item.separator ? (
+            <DropdownMenuSeparator key={item.id} />
+          ) : (
+            <DropdownMenuItem key={item.id} closeOnClick={false} onClick={item.onClick}>
+              {item.icon}
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            </DropdownMenuItem>
+          ),
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

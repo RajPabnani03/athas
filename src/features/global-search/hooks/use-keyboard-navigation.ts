@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   KEY_ARROW_DOWN,
   KEY_ARROW_UP,
@@ -6,7 +12,7 @@ import {
   KEY_ESCAPE,
   KEY_K,
 } from "../constants/keyboard-keys";
-import type { FileItem } from "../types/global-search.types";
+import type { FileItem } from "@/features/file-search/types/file-search.types";
 
 interface UseKeyboardNavigationProps {
   isVisible: boolean;
@@ -14,6 +20,8 @@ interface UseKeyboardNavigationProps {
   onClose: () => void;
   onSelect: (path: string) => void;
   scrollToIndex?: (index: number) => void;
+  listenGlobally?: boolean;
+  resetKey?: string;
 }
 
 export const useKeyboardNavigation = ({
@@ -22,71 +30,74 @@ export const useKeyboardNavigation = ({
   onClose,
   onSelect,
   scrollToIndex,
+  listenGlobally = true,
+  resetKey,
 }: UseKeyboardNavigationProps) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const prevResultsLengthRef = useRef(allResults.length);
+  const previousResetKeyRef = useRef(resetKey);
 
-  const allResultsRef = useRef(allResults);
-  const onCloseRef = useRef(onClose);
-  const onSelectRef = useRef(onSelect);
-  const scrollToIndexRef = useRef(scrollToIndex);
-
-  allResultsRef.current = allResults;
-  onCloseRef.current = onClose;
-  onSelectRef.current = onSelect;
-  scrollToIndexRef.current = scrollToIndex;
-
-  // Reset selected index when results length changes
   useEffect(() => {
-    if (prevResultsLengthRef.current !== allResults.length) {
+    if (resetKey !== undefined && previousResetKeyRef.current !== resetKey) {
       setSelectedIndex(0);
+      previousResetKeyRef.current = resetKey;
       prevResultsLengthRef.current = allResults.length;
+      return;
     }
-  }, [allResults.length]);
 
-  // Handle keyboard events
-  useEffect(() => {
-    if (!isVisible) return;
+    if (resetKey === undefined && prevResultsLengthRef.current !== allResults.length) {
+      setSelectedIndex(0);
+    } else {
+      setSelectedIndex((current) =>
+        allResults.length === 0 ? 0 : Math.min(current, allResults.length - 1),
+      );
+    }
+    prevResultsLengthRef.current = allResults.length;
+  }, [allResults.length, resetKey]);
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === KEY_ESCAPE || (e.key === KEY_K && (e.metaKey || e.ctrlKey))) {
-        e.preventDefault();
-        onCloseRef.current();
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent | ReactKeyboardEvent<HTMLElement>) => {
+      if (!isVisible || event.defaultPrevented) return;
+
+      if (event.key === KEY_ESCAPE || (event.key === KEY_K && (event.metaKey || event.ctrlKey))) {
+        event.preventDefault();
+        onClose();
         return;
       }
 
-      const totalItems = allResultsRef.current.length;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      const totalItems = allResults.length;
       if (totalItems === 0) return;
 
-      if (e.key === KEY_ARROW_DOWN) {
-        e.preventDefault();
+      if (event.key === KEY_ARROW_DOWN) {
+        event.preventDefault();
         setSelectedIndex((prev) => (prev + 1) % totalItems);
-      } else if (e.key === KEY_ARROW_UP) {
-        e.preventDefault();
+      } else if (event.key === KEY_ARROW_UP) {
+        event.preventDefault();
         setSelectedIndex((prev) => (prev - 1 + totalItems) % totalItems);
-      } else if (e.key === KEY_ENTER) {
-        e.preventDefault();
-        setSelectedIndex((current) => {
-          const item = allResultsRef.current[current];
-          if (item) {
-            onSelectRef.current(item.path);
-          }
-          return current;
-        });
+      } else if (event.key === KEY_ENTER) {
+        event.preventDefault();
+        const item = allResults[selectedIndex];
+        if (item) onSelect(item.path);
       }
-    };
+    },
+    [allResults, isVisible, onClose, onSelect, selectedIndex],
+  );
+
+  useEffect(() => {
+    if (!isVisible || !listenGlobally) return;
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isVisible]);
+  }, [handleKeyDown, isVisible, listenGlobally]);
 
-  // Auto-scroll selected item into view
   useEffect(() => {
     if (!isVisible) return;
 
-    if (scrollToIndexRef.current) {
-      scrollToIndexRef.current(selectedIndex);
+    if (scrollToIndex) {
+      scrollToIndex(selectedIndex);
       return;
     }
 
@@ -98,11 +109,11 @@ export const useKeyboardNavigation = ({
 
     if (selectedElement) {
       selectedElement.scrollIntoView({
-        behavior: "smooth",
+        behavior: "auto",
         block: "nearest",
       });
     }
-  }, [selectedIndex, isVisible]);
+  }, [isVisible, scrollToIndex, selectedIndex]);
 
-  return { selectedIndex, scrollContainerRef };
+  return { selectedIndex, scrollContainerRef, handleKeyDown };
 };

@@ -16,7 +16,8 @@
       "args": ["acp"],
       "install": {
         "runtime": "node",
-        "package": "opencode-ai",
+        "package": "opencode-ai@1.18.27",
+        "version": "1.18.27",
         "command": "opencode"
       }
     }

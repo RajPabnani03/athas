@@ -2,7 +2,7 @@ import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { codeInspectorPlugin } from "code-inspector-plugin";
-import { defineConfig } from "vite-plus";
+import { defaultExclude, defineConfig } from "vite-plus";
 
 const host = process.env.TAURI_DEV_HOST || "127.0.0.1";
 const isVitest = Boolean(process.env.VITEST);
@@ -11,6 +11,32 @@ const webviewTargets = ["chrome96", "edge96", "firefox94", "safari15"];
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  fmt: {
+    printWidth: 100,
+  },
+  lint: {
+    options: {
+      typeAware: true,
+      typeCheck: true,
+    },
+    rules: {
+      "typescript/await-thenable": "off",
+      "typescript/no-base-to-string": "off",
+      "typescript/no-duplicate-type-constituents": "off",
+      "typescript/no-floating-promises": "off",
+      "typescript/no-meaningless-void-operator": "off",
+      "typescript/no-misused-spread": "off",
+      "typescript/no-redundant-type-constituents": "off",
+      "typescript/no-useless-empty-export": "off",
+      "typescript/no-useless-default-assignment": "off",
+      "typescript/restrict-template-expressions": "off",
+      "typescript/unbound-method": "off",
+    },
+  },
+  staged: {
+    "*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}": "vp check --fix",
+    "*.{css,html,json,jsonc,md,mdx,toml,yaml,yml}": "vp fmt --write",
+  },
   build: {
     // Tauri uses the system WKWebView on macOS. macOS 12 can run an older
     // Safari 15-era WebKit, so do not inherit Vite's moving Baseline target.
@@ -37,10 +63,23 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    dedupe: ["react", "react-dom"],
   },
-
   test: {
     testTimeout: 15000,
+    // The runner's default exclude only covers node_modules/.git, so it would
+    // otherwise discover stale duplicate suites inside generated or vendored
+    // trees — notably the direnv-materialized copy of the source under
+    // .direnv/flake-inputs/<hash>-source/.
+    exclude: [
+      ...defaultExclude,
+      "**/.direnv/**",
+      "**/.delta/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/target/**",
+      "**/src-tauri/**",
+    ],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

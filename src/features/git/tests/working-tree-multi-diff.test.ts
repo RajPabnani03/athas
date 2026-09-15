@@ -2,6 +2,7 @@ import { describe, expect, test } from "vite-plus/test";
 import type { GitDiff, GitFile, GitStatus } from "../types/git.types";
 import {
   buildWorkingTreeMultiDiff,
+  createSingleFileWorkingTreeDiff,
   getDiffableWorkingTreeFiles,
   reconcileWorkingTreeFiles,
 } from "../utils/working-tree-multi-diff";
@@ -17,6 +18,38 @@ const createFile = (
 });
 
 describe("working-tree multi diff helpers", () => {
+  test("creates a one-file working-tree selection", () => {
+    const diff: GitDiff = {
+      file_path: "src/selected.ts",
+      is_new: false,
+      is_deleted: false,
+      is_renamed: false,
+      is_image: false,
+      additions: 4,
+      deletions: 2,
+      lines: [],
+    };
+
+    expect(
+      createSingleFileWorkingTreeDiff({
+        repoPath: "/repo",
+        fileKey: "unstaged:src/selected.ts",
+        diff,
+      }),
+    ).toMatchObject({
+      title: "Uncommitted Changes",
+      repoPath: "/repo",
+      commitHash: "working-tree",
+      files: [diff],
+      fileKeys: ["unstaged:src/selected.ts"],
+      initiallyExpandedFileKey: "unstaged:src/selected.ts",
+      totalFiles: 1,
+      totalAdditions: 4,
+      totalDeletions: 2,
+      isLoading: false,
+    });
+  });
+
   test("filters out untracked files and duplicate entries", () => {
     const status: GitStatus = {
       branch: "main",
@@ -91,5 +124,31 @@ describe("working-tree multi diff helpers", () => {
     expect(result.totalFiles).toBe(2);
     expect(result.totalAdditions).toBe(1);
     expect(result.totalDeletions).toBe(1);
+  });
+
+  test("keeps non-image binary changes in the working-tree diff", async () => {
+    const status: GitStatus = {
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      files: [createFile("payload.bin", false)],
+    };
+
+    const result = await buildWorkingTreeMultiDiff({
+      repoPath: "/repo",
+      status,
+      loadDiff: async () => ({
+        file_path: "payload.bin",
+        is_new: false,
+        is_deleted: false,
+        is_renamed: false,
+        is_binary: true,
+        is_image: false,
+        lines: [],
+      }),
+    });
+
+    expect(result.fileKeys).toEqual(["unstaged:payload.bin"]);
+    expect(result.totalFiles).toBe(1);
   });
 });

@@ -3,9 +3,20 @@ use athas_tooling::{
    LanguageToolConfigSet, LanguageToolStatus, ToolInstaller, ToolRegistry, ToolStatus, ToolType,
 };
 use serde_json::Value;
+#[cfg(debug_assertions)]
+use std::{
+   fs::OpenOptions,
+   io::Write,
+   time::{SystemTime, UNIX_EPOCH},
+};
 
 #[tauri::command]
 pub fn frontend_trace(level: String, scope: String, message: String, payload: Option<Value>) {
+   #[cfg(debug_assertions)]
+   if scope == "bench:file-open" {
+      append_file_open_benchmark(&level, &message, payload.as_ref());
+   }
+
    let payload_str = if scope.starts_with("bench:") {
       format_benchmark_payload(payload.as_ref())
    } else {
@@ -17,6 +28,25 @@ pub fn frontend_trace(level: String, scope: String, message: String, payload: Op
       "error" => log::error!("[frontend:{}] {}{}", scope, message, payload_str),
       _ => log::info!("[frontend:{}] {}{}", scope, message, payload_str),
    }
+}
+
+#[cfg(debug_assertions)]
+fn append_file_open_benchmark(level: &str, message: &str, payload: Option<&Value>) {
+   let path = std::env::temp_dir().join("athas-file-open-benchmark.jsonl");
+   let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+      return;
+   };
+   let timestamp_ms = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .map(|duration| duration.as_millis())
+      .unwrap_or_default();
+   let record = serde_json::json!({
+      "timestampMs": timestamp_ms,
+      "level": level,
+      "file": message,
+      "payload": payload,
+   });
+   let _ = writeln!(file, "{}", record);
 }
 
 fn format_payload(payload: Option<&Value>) -> String {
@@ -120,6 +150,12 @@ pub async fn install_language_tools(
    // Install LSP
    if let Some(config) = resolved_tools.get(&ToolType::Lsp) {
       status.lsp = Some(match ToolInstaller::install(&app_handle, config).await {
+         Ok(_) if language_id == "java" => {
+            match ToolInstaller::ensure_java_debug_bundle(&app_handle).await {
+               Ok(_) => ToolStatus::Installed,
+               Err(e) => ToolStatus::Failed(e.to_string()),
+            }
+         }
          Ok(_) => ToolStatus::Installed,
          Err(e) => ToolStatus::Failed(e.to_string()),
       });
@@ -168,9 +204,21 @@ pub async fn install_tool(
    })?;
 
    match ToolInstaller::install(&app_handle, &config).await {
+      Ok(_) if language_id == "java" && tool_type == ToolType::Lsp => {
+         match ToolInstaller::ensure_java_debug_bundle(&app_handle).await {
+            Ok(_) => Ok(ToolStatus::Installed),
+            Err(e) => Ok(ToolStatus::Failed(e.to_string())),
+         }
+      }
       Ok(_) => Ok(ToolStatus::Installed),
       Err(e) => Ok(ToolStatus::Failed(e.to_string())),
    }
+}
+
+#[tauri::command]
+pub fn get_java_debug_bundle_path(app_handle: AppHandle) -> Result<Option<String>, String> {
+   let path = ToolInstaller::java_debug_bundle_path(&app_handle).map_err(|e| e.to_string())?;
+   Ok(path.exists().then(|| path.to_string_lossy().to_string()))
 }
 
 /// Get the status of all tools for a language

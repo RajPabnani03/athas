@@ -1,26 +1,44 @@
 import type { CoreFeaturesState } from "./feature.types";
 import type { AIChatSkill } from "@/features/ai/types/skills.types";
 import type {
-  FooterLeadingItemId,
-  FooterTrailingItemId,
-  HeaderTrailingItemId,
+  GitSidebarItemId,
+  GitSidebarTabId,
   SidebarActivityItemId,
 } from "@/features/layout/config/item-order";
 
 export type Theme = string;
 export type RenderWhitespaceMode = "none" | "boundary" | "trailing" | "all";
-export type EditorEngine = "monaco" | "athas" | "nvim" | "helix" | "vim" | "custom";
+type EditorCursorStyle =
+  | "line"
+  | "block"
+  | "underline"
+  | "line-thin"
+  | "block-outline"
+  | "underline-thin";
+type EditorCursorBlinking = "blink" | "smooth" | "phase" | "expand" | "solid";
+type TerminalCursorInactiveStyle = "outline" | "block" | "bar" | "underline" | "none";
+export type TabCloseButtonVisibility = "active" | "hover" | "always";
+export type FileTreeSortOrder = "folders-first" | "name";
+export interface LegacyV0DesignSystemProfile {
+  readonly id: string;
+  readonly name: string;
+  readonly registryUrl: string;
+  readonly description?: string;
+  readonly homepage?: string;
+  readonly tailwindConfigPath?: string;
+  readonly globalsCssPath?: string;
+  readonly componentsJsonPath?: string;
+}
 export type SettingsSection =
+  | "sharing"
   | "account"
   | "general"
+  | "notifications"
   | "editor"
   | "git"
   | "appearance"
-  | "databases"
-  | "extensions"
   | "ai"
   | "keyboard"
-  | "features"
   | "collaboration"
   | "enterprise"
   | "advanced"
@@ -30,11 +48,9 @@ export type SettingsSection =
 export interface Settings {
   // General
   autoSave: boolean;
-  sidebarPosition: "left" | "right";
   quickOpenPreview: boolean;
   // Editor
   fontFamily: string;
-  editorEngine: EditorEngine;
   fontSize: number;
   editorLineHeight: number;
   tabSize: number;
@@ -44,20 +60,43 @@ export interface Settings {
   renderIndentGuides: boolean;
   highlightOccurrences: boolean;
   showMinimap: boolean;
+  showOutline: boolean;
+  editorFontLigatures: boolean;
+  editorItalicComments: boolean;
+  editorStickyScroll: boolean;
+  editorBracketPairColorization: boolean;
+  editorSmoothScrolling: boolean;
+  editorScrollBeyondLastLine: boolean;
+  editorCursorStyle: EditorCursorStyle;
+  editorCursorBlinking: EditorCursorBlinking;
+  inlayHints: boolean;
+  codeLens: boolean;
+  semanticTokens: boolean;
+  breadcrumbShowSymbols: boolean;
   // Terminal
   terminalFontFamily: string;
   terminalFontSize: number;
   terminalLineHeight: number;
   terminalLetterSpacing: number;
   terminalScrollback: number;
+  terminalMinimumContrastRatio: number;
+  terminalShellIntegration: boolean;
+  terminalCommandNotifications: boolean;
   terminalCursorStyle: "block" | "underline" | "bar";
   terminalCursorBlink: boolean;
   terminalCursorWidth: number;
+  terminalCursorInactiveStyle: TerminalCursorInactiveStyle;
+  terminalAltClickMovesCursor: boolean;
+  terminalMacOptionIsMeta: boolean;
+  terminalRightClickSelectsWord: boolean;
   terminalDefaultShellId: string;
   terminalDefaultProfileId: string;
   // UI
   uiFontFamily: string;
   uiFontSize: number;
+  reduceMotion: boolean;
+  showTabIcons: boolean;
+  tabCloseButtonVisibility: TabCloseButtonVisibility;
   // Theme
   theme: Theme;
   iconTheme: string;
@@ -67,33 +106,48 @@ export interface Settings {
   nativeMenuBar: boolean;
   compactMenuBar: boolean;
   windowTransparency: boolean;
-  sidebarTabsPosition: "top" | "left";
-  titleBarProjectMode: "tabs" | "window";
-  headerTrailingItemsOrder: HeaderTrailingItemId[];
   sidebarActivityItemsOrder: Array<SidebarActivityItemId | string>;
-  footerLeadingItemsOrder: FooterLeadingItemId[];
-  footerTrailingItemsOrder: FooterTrailingItemId[];
+  hiddenSidebarActivityItems: string[];
+  pinnedSidebarExtensionItems: string[];
   openFoldersInNewWindow: boolean;
   // AI
   aiProviderId: string;
   aiModelId: string;
   aiCustomBaseUrl: string;
   aiCustomModelId: string;
-  aiChatWidth: number;
-  isAIChatVisible: boolean;
   aiCompletion: boolean;
   aiAutocompleteProvider: "openrouter" | "custom";
   aiAutocompleteModelId: string;
   aiAutocompleteCustomBaseUrl: string;
   aiAutocompleteCustomModelId: string;
   aiDefaultSessionMode: string;
+  aiAgentNotifications: boolean;
   aiSkills: AIChatSkill[];
+  v0DesignSystems: LegacyV0DesignSystemProfile[];
+  activeV0DesignSystemId: string;
   ollamaBaseUrl: string;
   // Layout
+  activityRailExpanded: boolean;
+  activityRailWidth: number;
+  showActivityRailAgentHistory: boolean;
+  showActivityRailTerminals: boolean;
+  showActivityRailProjectIcons: boolean;
+  collapsedActivityRailSections: string[];
   sidebarWidth: number;
+  rightSidebarWidth: number;
   showGitHubPullRequests: boolean;
   showGitHubIssues: boolean;
   showGitHubActions: boolean;
+  showGitHubReleases: boolean;
+  showGitHubDeployments: boolean;
+  githubActionNotifications: boolean;
+  /**
+   * Which credential Athas authenticates GitHub with. "auto" prefers a pasted
+   * personal access token, then the Athas account token, then the `gh` CLI.
+   * Pin a source when the Athas token authenticates but cannot see the repos
+   * you need — an organization that has not approved the Athas OAuth app.
+   */
+  githubTokenSource: "auto" | "athas" | "pat" | "gh";
   // Keyboard
   keybindingPreset:
     | "none"
@@ -133,15 +187,22 @@ export interface Settings {
     | "icon-theme"
     | "snippet"
     | "database"
+    | "ai"
+    | "integration"
     | "skill"
     | "agent";
   maxOpenTabs: number;
   horizontalTabScroll: boolean;
   //// File tree
+  fileTreeSortOrder: FileTreeSortOrder;
   fileTreeIndentSize: number;
   compactFoldersInFileTree: boolean;
   hideRootFolderInFileTree: boolean;
-  fileTreeDensity: "compact" | "default" | "comfortable";
+  autoRevealActiveFileInFileTree: boolean;
+  showFileIconsInFileTree: boolean;
+  showFolderArrowsInFileTree: boolean;
+  showIndentGuidesInFileTree: boolean;
+  confirmBeforeFileDelete: boolean;
   showHiddenFilesInFileTree: boolean;
   showGitignoredFilesInFileTree: boolean;
   hiddenFilePatterns: string[];
@@ -157,11 +218,13 @@ export interface Settings {
   compactGitStatusBadges: boolean;
   collapseEmptyGitSections: boolean;
   rememberLastGitPanelMode: boolean;
-  gitLastPanelMode: "changes" | "history";
-  gitSidebarTabOrder: Array<"changes" | "history">;
-  githubSidebarSectionOrder: Array<"pull-requests" | "issues" | "actions">;
+  gitLastPanelMode: GitSidebarItemId;
+  gitSidebarTabOrder: GitSidebarTabId[];
+  hiddenGitSidebarItems: GitSidebarItemId[];
+  githubSidebarSectionOrder: Array<
+    "pull-requests" | "issues" | "actions" | "releases" | "deployments"
+  >;
   enableInlineGitBlame: boolean;
-  enableGitGutter: boolean;
   // Telemetry
   telemetry: boolean;
 }

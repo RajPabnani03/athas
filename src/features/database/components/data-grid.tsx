@@ -1,20 +1,22 @@
 import {
-  ArrowDownIcon as ArrowDown,
-  ArrowUpIcon as ArrowUp,
-  CalendarIcon as Calendar,
-  CopyIcon as Copy,
-  FileTextIcon as FileText,
-  FunnelIcon as Filter,
-  HashIcon as Hash,
-  KeyIcon as Key,
-  LinkIcon as Link,
-  PlusIcon as Plus,
-  TextTIcon as Type,
-} from "@phosphor-icons/react";
+  ArrowDownIcon,
+  ArrowUpIcon,
+  CalendarIcon,
+  CopyIcon,
+  FileTextIcon,
+  FilterIcon,
+  HashIcon,
+  KeyIcon,
+  LinkIcon,
+  PlusIcon,
+  TextIcon,
+} from "@/ui/icons";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Button } from "@/ui/button";
-import { ContextMenu, type ContextMenuItem } from "@/ui/context-menu";
+import { ContextMenuPopup, createContextMenuGroups } from "@/ui/context-menu";
+import type { MenuItem } from "@/ui/dropdown";
+import { EmptyState } from "@/ui/empty";
 import Input from "@/ui/input";
 import { cn } from "@/utils/cn";
 import { useCellCopy } from "../hooks/use-cell-copy";
@@ -37,28 +39,28 @@ import CellRenderer from "./cell-renderer";
 
 const MIN_COLUMN_WIDTH = 60;
 const DEFAULT_COLUMN_WIDTH = 150;
-const ESTIMATED_ROW_HEIGHT = 34;
+const DATA_GRID_ROW_HEIGHT = 34;
 
-const COLUMN_ICONS: Record<string, { icon: typeof Hash; color: string }> = {
-  int: { icon: Hash, color: "text-accent" },
-  num: { icon: Hash, color: "text-accent" },
-  text: { icon: Type, color: "text-text-lighter" },
-  varchar: { icon: Type, color: "text-text-lighter" },
-  char: { icon: Type, color: "text-text-lighter" },
-  date: { icon: Calendar, color: "text-accent" },
-  time: { icon: Calendar, color: "text-accent" },
-  blob: { icon: FileText, color: "text-text-lighter" },
-  binary: { icon: FileText, color: "text-text-lighter" },
+const COLUMN_ICONS: Record<string, { icon: typeof HashIcon; color: string }> = {
+  int: { icon: HashIcon, color: "text-primary" },
+  num: { icon: HashIcon, color: "text-primary" },
+  text: { icon: TextIcon, color: "text-subtle-foreground" },
+  varchar: { icon: TextIcon, color: "text-subtle-foreground" },
+  char: { icon: TextIcon, color: "text-subtle-foreground" },
+  date: { icon: CalendarIcon, color: "text-primary" },
+  time: { icon: CalendarIcon, color: "text-primary" },
+  blob: { icon: FileTextIcon, color: "text-subtle-foreground" },
+  binary: { icon: FileTextIcon, color: "text-subtle-foreground" },
 };
 
 function getColumnIcon(type: string, isPrimaryKey: boolean, isForeignKey: boolean) {
-  if (isPrimaryKey) return <Key className="text-text-lighter" />;
-  if (isForeignKey) return <Link className="text-accent" />;
+  if (isPrimaryKey) return <KeyIcon className="text-subtle-foreground" />;
+  if (isForeignKey) return <LinkIcon className="text-primary" />;
   const lowerType = type.toLowerCase();
   for (const [key, { icon: Icon, color }] of Object.entries(COLUMN_ICONS)) {
     if (lowerType.includes(key)) return <Icon className={color} />;
   }
-  return <Type className="text-text-lighter" />;
+  return <TextIcon className="text-subtle-foreground" />;
 }
 
 interface DataGridProps {
@@ -127,11 +129,7 @@ export default function DataGrid({
   const rowVirtualizer = useVirtualizer({
     count: queryResult.rows.length,
     getScrollElement: () => scrollContainerRef.current,
-    estimateSize: () => ESTIMATED_ROW_HEIGHT,
-    measureElement:
-      typeof window !== "undefined" && !navigator.userAgent.includes("Firefox")
-        ? (element) => element?.getBoundingClientRect().height
-        : undefined,
+    estimateSize: () => DATA_GRID_ROW_HEIGHT,
     overscan: 12,
   });
 
@@ -360,11 +358,11 @@ export default function DataGrid({
     }
   };
 
-  const cellMenuItems: ContextMenuItem[] = [
+  const cellMenuItems: MenuItem[] = [
     {
       id: "copy-value",
       label: cellMenu?.copyText ? "Copy selection" : "Copy value",
-      icon: <Copy />,
+      icon: <CopyIcon />,
       onClick: copyValue,
     },
     ...(cellMenu?.copyTextWithHeaders
@@ -372,7 +370,7 @@ export default function DataGrid({
           {
             id: "copy-selection-with-headers",
             label: "Copy selection with headers",
-            icon: <Copy />,
+            icon: <CopyIcon />,
             onClick: copyValueWithHeaders,
           },
         ]
@@ -389,37 +387,36 @@ export default function DataGrid({
   const tableColumnSpan = queryResult.columns.length + 1;
 
   if (queryResult.rows.length === 0) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <span className="ui-font ui-text-sm text-text-lighter">No data</span>
-      </div>
-    );
+    return <EmptyState message="No data" />;
   }
 
   return (
-    <div className="ui-font flex min-h-0 flex-1 flex-col">
+    <div className="font-sans flex min-h-0 flex-1 flex-col">
       <div className="group flex h-9 items-center justify-between border-border/70 border-b px-3">
-        <span className="ui-text-sm text-text-lighter">
+        <span className="ui-text-sm text-subtle-foreground">
           {queryResult.rows.length} {resultLabel}
         </span>
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={onCreateRow}
+        <span
           className={cn(
-            "rounded-md",
-            canCreateRows ? "opacity-0 group-hover:opacity-100" : "cursor-default opacity-30",
+            "inline-flex focus-within:opacity-100",
+            canCreateRows && "opacity-0 group-hover:opacity-100",
           )}
-          aria-label="Add row"
-          disabled={!canCreateRows}
-          compact
         >
-          <Plus className="text-text-lighter hover:text-text" />
-        </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onCreateRow}
+            aria-label="Add row"
+            disabled={!canCreateRows}
+            iconOnly
+          >
+            <PlusIcon className="text-subtle-foreground hover:text-foreground" />
+          </Button>
+        </span>
       </div>
       <div
         ref={scrollContainerRef}
-        className="custom-scrollbar flex-1 overflow-auto outline-none"
+        className="flex-1 overflow-auto outline-none"
         tabIndex={0}
         onKeyDown={handleGridKeyDown}
         aria-label="Database rows"
@@ -428,7 +425,7 @@ export default function DataGrid({
           <thead className="sticky top-0 z-10">
             <tr>
               <th
-                className="w-10 cursor-pointer border-border/70 border-b bg-secondary-bg px-2 py-1.5 text-left font-normal text-text-lighter hover:bg-hover"
+                className="w-10 border-border/70 border-b bg-surface px-2 py-1.5 text-left font-normal text-subtle-foreground hover:bg-accent"
                 onClick={handleSelectAllClick}
                 aria-label="Select all visible cells"
               >
@@ -443,48 +440,48 @@ export default function DataGrid({
                 return (
                   <th
                     key={i}
-                    className="group relative cursor-pointer whitespace-nowrap border-border/70 border-b bg-secondary-bg px-2 py-1.5 text-left font-normal transition-colors hover:bg-hover"
+                    className="group relative whitespace-nowrap border-border/70 border-b bg-surface px-2 py-1.5 text-left font-normal transition-colors hover:bg-accent"
                     style={{ width: colWidth, minWidth: 60 }}
                     onClick={() => canSortColumns && onColumnSort(col)}
                   >
                     <div className="flex flex-col gap-0.5 font-normal">
                       <div className="flex items-center gap-1.5">
                         {info && getColumnIcon(info.type, info.primary_key, foreignKeyMap.has(col))}
-                        <span className="flex min-w-0 items-center gap-1 text-text">
+                        <span className="flex min-w-0 items-center gap-1 text-foreground">
                           {col}
                           {sorted &&
                             (sortDirection === "asc" ? (
-                              <ArrowUp className="text-accent" />
+                              <ArrowUpIcon className="text-primary" />
                             ) : (
-                              <ArrowDown className="text-accent" />
+                              <ArrowDownIcon className="text-primary" />
                             ))}
                         </span>
                         {fk && (
                           <span
-                            className="ui-text-xs text-text-lighter"
+                            className="ui-text-sm text-subtle-foreground"
                             title={`FK: ${fk.to_table}.${fk.to_column}`}
                           >
                             FK
                           </span>
                         )}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (canFilterColumns) onAddColumnFilter(col);
-                          }}
-                          className={cn(
-                            "opacity-0 group-hover:opacity-100",
-                            !canFilterColumns && "pointer-events-none opacity-20",
-                          )}
-                          aria-label={`Filter by ${col}`}
-                        >
-                          <Filter className="text-text-lighter hover:text-text" />
-                        </Button>
+                        <span className="inline-flex opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (canFilterColumns) onAddColumnFilter(col);
+                            }}
+                            disabled={!canFilterColumns}
+                            aria-label={`Filter by ${col}`}
+                            iconOnly
+                          >
+                            <FilterIcon className="text-subtle-foreground hover:text-foreground" />
+                          </Button>
+                        </span>
                       </div>
                       {showColumnTypes && info && (
-                        <div className="ui-text-xs text-text-lighter">
+                        <div className="ui-text-sm text-subtle-foreground">
                           {info.type}
                           {info.primary_key && " PK"}
                           {info.notnull && " NN"}
@@ -493,7 +490,7 @@ export default function DataGrid({
                     </div>
                     {/* Resize handle */}
                     <div
-                      className="absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/40"
+                      className="absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/40"
                       onPointerDown={(e) => handleResizeStart(e, col)}
                       onPointerMove={handleResizeMove}
                       onPointerUp={handleResizeEnd}
@@ -518,13 +515,12 @@ export default function DataGrid({
               return (
                 <tr
                   key={ri}
-                  ref={rowVirtualizer.measureElement}
-                  data-index={virtualRow.index}
-                  className="cursor-pointer transition-colors hover:bg-hover/25"
+                  className="transition-colors hover:bg-accent/25"
+                  style={{ height: DATA_GRID_ROW_HEIGHT }}
                   onContextMenu={(e) => canOpenRowMenu && onRowContextMenu(e, ri)}
                 >
                   <td
-                    className="border-border/40 border-b px-2 py-1.5 text-text-lighter hover:bg-hover"
+                    className="border-border/40 border-b px-2 py-1.5 text-subtle-foreground hover:bg-accent"
                     onClick={(event) => handleRowHeaderClick(ri, event.shiftKey)}
                   >
                     {(currentPage - 1) * pageSize + ri + 1}
@@ -553,11 +549,12 @@ export default function DataGrid({
                       <td
                         key={ci}
                         className={cn(
-                          "max-w-[300px] border-border/50 border-b px-2 py-1.5 font-normal text-text",
-                          canEditCells && !isPK && "cursor-pointer hover:bg-hover",
-                          isPK && "bg-hover/55",
-                          isSelected && "bg-accent/10",
-                          isActive && "outline outline-1 outline-accent/70 outline-offset-[-1px]",
+                          "max-w-75 border-border/50 border-b px-2 py-1.5 font-normal text-foreground",
+                          isEditing && "py-1",
+                          canEditCells && !isPK && "hover:bg-accent",
+                          isPK && "bg-accent/55",
+                          isSelected && "bg-primary/10",
+                          isActive && "outline outline-1 outline-primary/70 -outline-offset-1",
                         )}
                         style={{ width: getColumnWidth(col), minWidth: 60 }}
                         onClick={(event) => {
@@ -588,7 +585,6 @@ export default function DataGrid({
                               if (e.key === "Escape") setEditing(null);
                             }}
                             onBlur={handleSubmit}
-                            className="w-full rounded-lg border-border/70 bg-secondary-bg/80 ui-text-xs focus:border-accent/60"
                           />
                         ) : (
                           <CellRenderer
@@ -626,10 +622,10 @@ export default function DataGrid({
         </table>
       </div>
 
-      <ContextMenu
+      <ContextMenuPopup
         isOpen={!!cellMenu}
-        position={cellMenu?.position ?? { x: 0, y: 0 }}
-        items={cellMenuItems}
+        point={cellMenu?.position ?? { x: 0, y: 0 }}
+        groups={createContextMenuGroups(cellMenuItems)}
         onClose={closeCellMenu}
       />
     </div>

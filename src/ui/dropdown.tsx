@@ -1,145 +1,159 @@
+import { Menu as DropdownMenuPrimitive } from "@base-ui/react/menu";
 import { cva } from "class-variance-authority";
 import {
-  type CSSProperties,
+  type ComponentProps,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
-  type RefObject,
   useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
+  useMemo,
   useState,
 } from "react";
-import { buttonVariants } from "@/ui/button";
-import Input from "@/ui/input";
-import { motionDuration, motionEase } from "@/ui/motion";
-import { PopoverContent } from "@/ui/popover";
+import Input, { type InputProps } from "@/ui/input";
+import {
+  OVERLAY_MAX_HEIGHT,
+  OVERLAY_MAX_WIDTH,
+  type OverlaySize,
+  OVERLAY_SIZES,
+} from "@/ui/overlay-size";
+import { ScrollArea } from "@/ui/scroll-area";
 import { cn } from "@/utils/cn";
-import { matchesSearchQuery } from "@/utils/search-match";
-import { MagnifyingGlassIcon as Search } from "@phosphor-icons/react";
+import { CheckIcon, ChevronRightIcon, SearchIcon } from "@/ui/icons";
+import Keybinding from "@/features/keymaps/components/keybinding";
 
-export const DROPDOWN_TRIGGER_BASE = cn(
-  buttonVariants({
-    variant: "default",
-    compact: true,
-  }),
-  "min-w-0 gap-1 rounded-lg px-2 text-text-lighter",
-);
-
-const dropdownItemVariants = cva(
-  "ui-font ui-text-sm flex w-full items-center justify-between gap-3 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-left text-text transition-colors",
+const menuSurfaceVariants = cva(
+  `max-h-(--available-height) w-fit min-w-32 ${OVERLAY_MAX_WIDTH} origin-(--transform-origin) rounded-lg bg-surface/98 font-sans text-subtle-foreground shadow-(--shadow-card) ring-1 ring-border/50 outline-none backdrop-blur-sm ui-text-chrome`,
   {
     variants: {
-      disabled: {
-        true: "cursor-not-allowed opacity-50",
-        false: "cursor-pointer hover:bg-hover",
+      viewport: {
+        default: "overflow-x-hidden overflow-y-auto p-1",
+        list: `overflow-x-hidden overflow-y-auto p-1 ${OVERLAY_MAX_HEIGHT}`,
+        searchable: `flex ${OVERLAY_MAX_HEIGHT} flex-col overflow-hidden p-0`,
       },
-      focused: {
-        true: "bg-hover",
-        false: "",
-      },
+      size: OVERLAY_SIZES,
     },
     defaultVariants: {
-      disabled: false,
-      focused: false,
+      viewport: "default",
+      size: "auto",
     },
   },
 );
 
-const dropdownSectionLabelVariants = cva("ui-font ui-text-sm px-2.5 py-1 text-text-lighter");
+const menuItemVariants = cva(
+  "relative flex w-full cursor-default items-center justify-start gap-2 whitespace-nowrap rounded-md px-2 py-1 text-left font-sans text-subtle-foreground outline-hidden select-none transition-colors hover:bg-accent focus:bg-accent/70 focus:text-foreground data-highlighted:bg-accent/70 data-highlighted:text-foreground data-selected:bg-selected disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50 ui-text-chrome [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
+  {
+    variants: {
+      tone: {
+        default: "",
+        accent: "text-primary",
+        destructive:
+          "hover:bg-destructive/8 hover:text-destructive focus:bg-destructive/10 focus:text-destructive data-[variant=destructive]:hover:bg-destructive/8 data-[variant=destructive]:hover:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive",
+      },
+    },
+    defaultVariants: {
+      tone: "default",
+    },
+  },
+);
 
-export const DROPDOWN_ITEM_BASE = dropdownItemVariants();
+const menuLabelVariants = cva(
+  "px-2 py-0.5 font-sans font-medium text-subtle-foreground ui-text-chrome",
+);
 
-export function dropdownTriggerClassName(className?: string) {
-  return cn(DROPDOWN_TRIGGER_BASE, className);
-}
+const menuSeparatorVariants = cva("-mx-1 my-0.5 h-px bg-border/60");
 
-export function dropdownItemClassName(className?: string) {
-  return cn(DROPDOWN_ITEM_BASE, className);
-}
+export type MenuItemTone = "default" | "accent" | "destructive";
 
-export interface MenuItem {
+type MenuItemEnd =
+  | { shortcut?: string; trailing?: never }
+  | {
+      shortcut?: never;
+      trailing?: "disclosure" | { type: "text"; label: string };
+    };
+
+export type MenuActionItem = MenuItemEnd & {
   id: string;
   label: string;
   icon?: ReactNode;
-  onClick: () => void;
+  onClick?: () => void;
   disabled?: boolean;
-  separator?: boolean;
-  keybinding?: ReactNode;
-  className?: string;
+  separator?: false;
+  checked?: boolean;
+  selected?: boolean;
+  tone?: MenuItemTone;
+};
+
+interface MenuSeparatorItem {
+  id: string;
+  separator: true;
 }
 
-interface MenuItemsListProps {
-  items: MenuItem[];
-  onItemSelect?: () => void;
-  className?: string;
-  itemClassName?: string;
-  focusIndex?: number;
+export type MenuItem = MenuActionItem | MenuSeparatorItem;
+
+export function menuSeparator(id: string): MenuItem {
+  return { id, separator: true };
 }
 
-export function MenuItemsList({
-  items,
-  onItemSelect,
-  className,
-  itemClassName,
-  focusIndex = -1,
-}: MenuItemsListProps) {
-  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+export function isMenuActionItem(item: MenuItem): item is MenuActionItem {
+  return item.separator !== true;
+}
 
-  useEffect(() => {
-    if (focusIndex >= 0 && itemRefs.current[focusIndex]) {
-      itemRefs.current[focusIndex]?.scrollIntoView({ block: "nearest" });
-    }
-  }, [focusIndex]);
-
-  let selectableIdx = -1;
-
-  return (
-    <div className={className}>
-      {items.map((item) => {
-        if (item.separator) {
-          return <div key={item.id} className="my-0.5 border-border/70 border-t" />;
-        }
-
-        selectableIdx++;
-        const isFocused = selectableIdx === focusIndex;
-
-        return (
-          <button
-            key={item.id}
-            ref={(el) => {
-              if (!item.disabled) {
-                itemRefs.current[selectableIdx] = el;
-              }
-            }}
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              if (item.disabled) return;
-              item.onClick();
-              onItemSelect?.();
-            }}
-            disabled={item.disabled}
-            className={cn(
-              dropdownItemVariants({
-                disabled: item.disabled,
-                focused: isFocused,
-              }),
-              itemClassName,
-              item.className,
-            )}
-          >
-            {item.icon && <span className="size-3 shrink-0">{item.icon}</span>}
-            <span className="min-w-0 flex-1 truncate whitespace-nowrap">{item.label}</span>
-            {item.keybinding && (
-              <span className="ui-text-sm ml-8 shrink-0 whitespace-nowrap text-text-lighter">
-                {item.keybinding}
-              </span>
-            )}
-          </button>
-        );
-      })}
-    </div>
+/**
+ * A virtual anchor for a menu positioned at a screen point rather than at a
+ * trigger element — context menus, and any menu opened from a coordinate.
+ * Pair it with `positionMethod="fixed"` on the content.
+ */
+export function usePointAnchor(point: { x: number; y: number }) {
+  return useMemo(
+    () => ({
+      getBoundingClientRect: () =>
+        ({
+          x: point.x,
+          y: point.y,
+          top: point.y,
+          right: point.x,
+          bottom: point.y,
+          left: point.x,
+          width: 0,
+          height: 0,
+          toJSON: () => undefined,
+        }) as DOMRect,
+    }),
+    [point.x, point.y],
   );
+}
+
+interface DropdownMenuState<T> {
+  isOpen: boolean;
+  position: { x: number; y: number };
+  data: T | null;
+}
+
+export function useDropdownMenu<T = unknown>() {
+  const [state, setState] = useState<DropdownMenuState<T>>({
+    isOpen: false,
+    position: { x: 0, y: 0 },
+    data: null,
+  });
+
+  const open = useCallback((event: ReactMouseEvent, data?: T) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setState({
+      isOpen: true,
+      position: { x: event.clientX, y: event.clientY },
+      data: data ?? null,
+    });
+  }, []);
+
+  const openAt = useCallback((position: { x: number; y: number }, data?: T) => {
+    setState({ isOpen: true, position, data: data ?? null });
+  }, []);
+
+  const close = useCallback(() => {
+    setState({ isOpen: false, position: { x: 0, y: 0 }, data: null });
+  }, []);
+
+  return { ...state, open, openAt, close };
 }
 
 export interface DropdownSection {
@@ -148,475 +162,470 @@ export interface DropdownSection {
   items: MenuItem[];
 }
 
-type AnchorSide = "top" | "bottom";
-type AnchorAlign = "start" | "end";
-
-interface DropdownBaseProps {
-  isOpen: boolean;
-  onClose: () => void;
-  className?: string;
-  menuClassName?: string;
-  style?: CSSProperties;
-  portalContainer?: Element | DocumentFragment | null;
-  closeOnSelect?: boolean;
-  animated?: boolean;
-  matchAnchorWidth?: boolean;
-  anchorMinWidth?: number;
+function DropdownMenu(props: DropdownMenuPrimitive.Root.Props) {
+  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />;
 }
 
-interface AnchorPositioning {
-  anchorRef: RefObject<HTMLElement | null>;
-  anchorSide?: AnchorSide;
-  anchorAlign?: AnchorAlign;
-  point?: never;
+function DropdownMenuPortal(props: DropdownMenuPrimitive.Portal.Props) {
+  return <DropdownMenuPrimitive.Portal data-slot="dropdown-menu-portal" {...props} />;
 }
 
-interface PointPositioning {
-  point: { x: number; y: number };
-  anchorRef?: never;
-  anchorSide?: never;
-  anchorAlign?: never;
+function DropdownMenuTrigger(props: DropdownMenuPrimitive.Trigger.Props) {
+  return <DropdownMenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />;
 }
 
-type PositioningProps = AnchorPositioning | PointPositioning;
-
-interface ItemsContent {
-  items: MenuItem[];
-  sections?: never;
-  children?: never;
-  searchable?: boolean;
-  searchPlaceholder?: string;
-}
-
-interface SectionsContent {
-  sections: DropdownSection[];
-  items?: never;
-  children?: never;
-  searchable?: boolean;
-  searchPlaceholder?: string;
-}
-
-interface ChildrenContent {
-  children: ReactNode;
-  items?: never;
-  sections?: never;
-  searchable?: never;
-  searchPlaceholder?: never;
-}
-
-type ContentProps = ItemsContent | SectionsContent | ChildrenContent;
-
-export type DropdownProps = DropdownBaseProps & PositioningProps & ContentProps;
-
-const VIEWPORT_PADDING = 8;
-const RESIZE_REPOSITION_THRESHOLD = 2;
-
-function getNumericMaxHeight(value: CSSProperties["maxHeight"]) {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string") {
-    const match = value.trim().match(/^(\d+(?:\.\d+)?)px$/);
-    if (match) {
-      return Number.parseFloat(match[1]);
-    }
-  }
-  return null;
-}
-
-function getViewportBounds() {
-  const vv = window.visualViewport;
-  if (!vv || !Number.isFinite(vv.width) || !Number.isFinite(vv.height)) {
-    return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
-  }
-  return {
-    left: Number.isFinite(vv.offsetLeft) ? vv.offsetLeft : 0,
-    top: Number.isFinite(vv.offsetTop) ? vv.offsetTop : 0,
-    width: vv.width,
-    height: vv.height,
-  };
-}
-
-export function Dropdown(props: DropdownProps) {
-  const {
-    isOpen,
-    onClose,
-    className,
-    menuClassName,
-    style,
-    searchable,
-    searchPlaceholder,
-    portalContainer,
-    closeOnSelect = true,
-    animated = true,
-    matchAnchorWidth = false,
-    anchorMinWidth = 0,
-  } = props;
-
-  const menuRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const lockedWidthRef = useRef<number | null>(null);
-  const lastMenuSizeRef = useRef<{ width: number; height: number } | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [focusIndex, setFocusIndex] = useState(-1);
-  const [resolvedSide, setResolvedSide] = useState<AnchorSide>("bottom");
-  const [isPositioned, setIsPositioned] = useState(false);
-
-  const isAnchorMode = "anchorRef" in props && props.anchorRef != null;
-  const anchorRef = isAnchorMode ? (props as AnchorPositioning).anchorRef : null;
-  const anchorSide = isAnchorMode
-    ? ((props as AnchorPositioning).anchorSide ?? "bottom")
-    : "bottom";
-  const anchorAlign = isAnchorMode
-    ? ((props as AnchorPositioning).anchorAlign ?? "start")
-    : "start";
-  const point = !isAnchorMode ? (props as PointPositioning).point : null;
-
-  const hasItems = "items" in props && props.items != null;
-  const hasSections = "sections" in props && props.sections != null;
-  const hasChildren = "children" in props && props.children != null;
-
-  const getAllItems = useCallback((): MenuItem[] => {
-    if (hasItems) return props.items!;
-    if (hasSections) return props.sections!.flatMap((s) => s.items);
-    return [];
-  }, [hasItems, hasSections, props]);
-
-  const getFilteredItems = useCallback((): MenuItem[] => {
-    const all = getAllItems();
-    if (!searchQuery.trim()) return all;
-    return all.filter((item) => !item.separator && matchesSearchQuery(searchQuery, [item.label]));
-  }, [getAllItems, searchQuery]);
-
-  const getFilteredSections = useCallback((): DropdownSection[] => {
-    if (!hasSections) return [];
-    if (!searchQuery.trim()) return props.sections!;
-    return props
-      .sections!.map((section) => ({
-        ...section,
-        items: section.items.filter(
-          (item) => !item.separator && matchesSearchQuery(searchQuery, [item.label]),
-        ),
-      }))
-      .filter((section) => section.items.length > 0);
-  }, [hasSections, searchQuery, props]);
-
-  const positionMenu = useCallback(() => {
-    const menu = menuRef.current;
-    if (!menu) return;
-
-    const vp = getViewportBounds();
-    const userMaxHeight = getNumericMaxHeight(style?.maxHeight);
-    const hasExplicitWidth = style?.width != null;
-
-    const applyMaxHeight = (height: number) => {
-      const nextHeight = userMaxHeight == null ? height : Math.min(height, userMaxHeight);
-      menu.style.maxHeight = `${nextHeight}px`;
-    };
-
-    const applyAnchorWidth = (anchorRect: DOMRect) => {
-      if (!matchAnchorWidth || hasExplicitWidth) return;
-
-      const anchorWidth = Math.round(anchorRect.width);
-      if (Number.isFinite(anchorWidth)) {
-        menu.style.width = `${Math.max(anchorMinWidth, anchorWidth)}px`;
-      }
-    };
-
-    const applyLockedWidth = () => {
-      if (hasExplicitWidth || matchAnchorWidth) return;
-
-      if (lockedWidthRef.current == null) {
-        lockedWidthRef.current = menu.getBoundingClientRect().width;
-      }
-
-      if (lockedWidthRef.current != null) {
-        menu.style.width = `${lockedWidthRef.current}px`;
-      }
-    };
-
-    let x: number;
-    let y: number;
-    let finalSide: AnchorSide = "bottom";
-
-    if (anchorRef?.current) {
-      const anchorRect = anchorRef.current.getBoundingClientRect();
-      const viewportMaxHeight = Math.max(120, vp.height - VIEWPORT_PADDING * 2);
-      const spaceBelow = vp.top + vp.height - anchorRect.bottom - VIEWPORT_PADDING;
-      const spaceAbove = anchorRect.top - vp.top - VIEWPORT_PADDING;
-
-      if (anchorSide === "bottom") {
-        finalSide = spaceBelow >= spaceAbove ? "bottom" : "top";
-      } else {
-        finalSide = spaceAbove >= spaceBelow ? "top" : "bottom";
-      }
-
-      const availableHeight = finalSide === "bottom" ? spaceBelow : spaceAbove;
-      applyMaxHeight(Math.max(120, Math.min(viewportMaxHeight, availableHeight)));
-      applyAnchorWidth(anchorRect);
-      applyLockedWidth();
-
-      const menuRect = menu.getBoundingClientRect();
-
-      if (anchorAlign === "end") {
-        x = anchorRect.right - menuRect.width;
-      } else {
-        x = anchorRect.left;
-      }
-
-      if (finalSide === "bottom") {
-        if (menuRect.height <= spaceBelow || spaceBelow >= spaceAbove) {
-          y = anchorRect.bottom + 6;
-          finalSide = "bottom";
-        } else {
-          y = anchorRect.top - menuRect.height - 6;
-          finalSide = "top";
-        }
-      } else {
-        if (menuRect.height <= spaceAbove || spaceAbove >= spaceBelow) {
-          y = anchorRect.top - menuRect.height - 6;
-          finalSide = "top";
-        } else {
-          y = anchorRect.bottom + 6;
-          finalSide = "bottom";
-        }
-      }
-    } else if (point) {
-      const maxH = Math.max(120, vp.height - VIEWPORT_PADDING * 2);
-      applyMaxHeight(maxH);
-      applyLockedWidth();
-
-      const menuRect = menu.getBoundingClientRect();
-      x = point.x;
-      y = point.y;
-
-      if (x + menuRect.width > vp.left + vp.width - VIEWPORT_PADDING) {
-        x = point.x - menuRect.width;
-      }
-      if (y + menuRect.height > vp.top + vp.height - VIEWPORT_PADDING) {
-        y = point.y - menuRect.height;
-      }
-    } else {
-      return;
-    }
-
-    const menuRect = menu.getBoundingClientRect();
-
-    const minX = vp.left + VIEWPORT_PADDING;
-    const maxX = vp.left + vp.width - menuRect.width - VIEWPORT_PADDING;
-    const minY = vp.top + VIEWPORT_PADDING;
-    const maxY = vp.top + vp.height - menuRect.height - VIEWPORT_PADDING;
-
-    x = Math.max(minX, Math.min(x, maxX));
-    y = Math.max(minY, Math.min(y, maxY));
-
-    menu.style.left = `${Math.round(x)}px`;
-    menu.style.top = `${Math.round(y)}px`;
-    setResolvedSide(finalSide);
-    setIsPositioned(true);
-  }, [anchorRef, anchorSide, anchorAlign, point]);
-
-  useLayoutEffect(() => {
-    if (!isOpen) return;
-    positionMenu();
-  }, [isOpen, positionMenu, searchQuery]);
-
-  useEffect(() => {
-    if (isOpen) return;
-    lockedWidthRef.current = null;
-    lastMenuSizeRef.current = null;
-    setIsPositioned(false);
-    if (menuRef.current && style?.width == null) {
-      menuRef.current.style.width = "";
-    }
-  }, [isOpen, style?.width]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-
-      const { width, height } = entry.contentRect;
-      const previousSize = lastMenuSizeRef.current;
-      lastMenuSizeRef.current = { width, height };
-
-      if (!previousSize) {
-        positionMenu();
-        return;
-      }
-
-      const widthDelta = Math.abs(width - previousSize.width);
-      const heightDelta = Math.abs(height - previousSize.height);
-
-      if (widthDelta < RESIZE_REPOSITION_THRESHOLD && heightDelta < RESIZE_REPOSITION_THRESHOLD) {
-        return;
-      }
-
-      positionMenu();
-    });
-    if (menuRef.current) resizeObserver.observe(menuRef.current);
-
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (menuRef.current?.contains(target)) return;
-      if (anchorRef?.current?.contains(target)) return;
-      onClose();
-    };
-
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        onClose();
-      }
-    };
-
-    window.addEventListener("resize", positionMenu);
-    window.addEventListener("scroll", positionMenu, true);
-    window.visualViewport?.addEventListener("resize", positionMenu);
-    window.visualViewport?.addEventListener("scroll", positionMenu);
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleEscape, true);
-
-    return () => {
-      resizeObserver.disconnect();
-      window.removeEventListener("resize", positionMenu);
-      window.removeEventListener("scroll", positionMenu, true);
-      window.visualViewport?.removeEventListener("resize", positionMenu);
-      window.visualViewport?.removeEventListener("scroll", positionMenu);
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleEscape, true);
-    };
-  }, [isOpen, onClose, positionMenu, anchorRef]);
-
-  useEffect(() => {
-    if (isOpen) {
-      setSearchQuery("");
-      setFocusIndex(-1);
-      if (searchable) {
-        requestAnimationFrame(() => searchRef.current?.focus());
-      }
-    }
-  }, [isOpen, searchable]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      const items = getFilteredItems().filter((item) => !item.separator && !item.disabled);
-      if (items.length === 0) return;
-
-      switch (e.key) {
-        case "ArrowDown": {
-          e.preventDefault();
-          setFocusIndex((prev) => (prev + 1) % items.length);
-          break;
-        }
-        case "ArrowUp": {
-          e.preventDefault();
-          setFocusIndex((prev) => (prev <= 0 ? items.length - 1 : prev - 1));
-          break;
-        }
-        case "Home": {
-          e.preventDefault();
-          setFocusIndex(0);
-          break;
-        }
-        case "End": {
-          e.preventDefault();
-          setFocusIndex(items.length - 1);
-          break;
-        }
-        case "Enter": {
-          e.preventDefault();
-          if (focusIndex >= 0 && focusIndex < items.length) {
-            items[focusIndex].onClick();
-            if (closeOnSelect) {
-              onClose();
+function DropdownMenuSearch({
+  onKeyDown,
+  ...props
+}: Omit<
+  InputProps,
+  "className" | "style" | "variant" | "shape" | "font" | "leftIcon" | "rightIcon"
+> & { className?: never; style?: never }) {
+  return (
+    <div
+      data-slot="dropdown-menu-search"
+      className="sticky top-0 z-20 shrink-0 overflow-clip border-border/60 border-b bg-surface p-1"
+    >
+      <Input
+        leftIcon={SearchIcon}
+        variant="ghost"
+        aria-label={props["aria-label"] ?? props.placeholder ?? "Search menu"}
+        onKeyDown={(event) => {
+          onKeyDown?.(event);
+          if (event.defaultPrevented || event.key === "Escape" || event.key === "Tab") return;
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            const items = Array.from(
+              event.currentTarget
+                .closest('[role="menu"]')
+                ?.querySelectorAll<HTMLElement>(
+                  '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]',
+                ) ?? [],
+            ).filter(
+              (item) =>
+                item.getAttribute("aria-disabled") !== "true" &&
+                !item.hasAttribute("data-disabled"),
+            );
+            const item = event.key === "ArrowDown" ? items[0] : items[items.length - 1];
+            if (item) {
+              event.preventDefault();
+              item.focus();
             }
           }
-          break;
-        }
-      }
-    },
-    [closeOnSelect, getFilteredItems, focusIndex, onClose],
-  );
-
-  if (typeof document === "undefined") return null;
-
-  const originMap: Record<string, string> = {
-    "bottom-start": "top left",
-    "bottom-end": "top right",
-    "top-start": "bottom left",
-    "top-end": "bottom right",
-  };
-  const transformOrigin =
-    originMap[`${resolvedSide}-${anchorAlign}`] ?? (point ? "top left" : "top left");
-
-  return (
-    <PopoverContent
-      isOpen={isOpen}
-      contentRef={menuRef}
-      portalContainer={portalContainer}
-      className={className}
-      style={{ transformOrigin, visibility: isPositioned ? "visible" : "hidden", ...style }}
-      animated={animated}
-      initial={{
-        opacity: 0,
-        scale: 0.98,
-        y: resolvedSide === "top" ? 4 : -4,
-        filter: "blur(2px)",
-      }}
-      animate={{ opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
-      exit={{
-        opacity: 0,
-        scale: 0.98,
-        y: resolvedSide === "top" ? 4 : -4,
-        filter: "blur(2px)",
-      }}
-      transition={{ duration: motionDuration.fast, ease: motionEase.smooth }}
-    >
-      <div role="menu" className={menuClassName} onKeyDown={handleKeyDown}>
-        {searchable && (
-          <div className="border-border/60 border-b px-1.5 pb-1.5 pt-0.5">
-            <Input
-              ref={searchRef}
-              type="text"
-              placeholder={searchPlaceholder ?? "Search..."}
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setFocusIndex(-1);
-              }}
-              leftIcon={Search}
-              variant="ghost"
-              className="w-full"
-            />
-          </div>
-        )}
-        {hasChildren && (props as ChildrenContent).children}
-        {hasItems && (
-          <MenuItemsList
-            items={getFilteredItems()}
-            focusIndex={focusIndex}
-            onItemSelect={closeOnSelect ? onClose : undefined}
-          />
-        )}
-        {hasSections &&
-          getFilteredSections().map((section, sectionIdx) => (
-            <div key={section.id}>
-              {sectionIdx > 0 && <div className="my-0.5 border-border/70 border-t" />}
-              {section.label && (
-                <div className={dropdownSectionLabelVariants()}>{section.label}</div>
-              )}
-              <MenuItemsList
-                items={section.items}
-                onItemSelect={closeOnSelect ? onClose : undefined}
-              />
-            </div>
-          ))}
-      </div>
-    </PopoverContent>
+          event.stopPropagation();
+        }}
+        {...props}
+      />
+    </div>
   );
 }
+
+function DropdownMenuViewport({
+  className,
+  contentClassName,
+  ...props
+}: Omit<ComponentProps<typeof ScrollArea>, "viewportClassName">) {
+  return (
+    <ScrollArea
+      data-slot="dropdown-menu-viewport"
+      className={cn("isolate flex min-h-0 flex-1", className)}
+      viewportClassName="h-auto min-h-0 flex-1 overscroll-none scrollbar-gutter-stable"
+      contentClassName={cn("p-1", contentClassName)}
+      {...props}
+    />
+  );
+}
+
+function DropdownMenuFooter({ className, ...props }: ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="dropdown-menu-footer"
+      className={cn(
+        "relative z-20 shrink-0 overflow-clip border-border/60 border-t bg-surface p-1",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+type DropdownMenuContentProps = DropdownMenuPrimitive.Popup.Props &
+  Pick<
+    DropdownMenuPrimitive.Positioner.Props,
+    | "align"
+    | "alignOffset"
+    | "side"
+    | "sideOffset"
+    | "collisionPadding"
+    | "anchor"
+    | "positionMethod"
+  > & {
+    viewport?: "default" | "list" | "searchable";
+    /**
+     * Width preset for the menu surface. Feature code picks a preset instead of
+     * setting `w-*` / `min-w-*` through `className`.
+     *
+     * - `compact` — short action submenus (rename, delete, copy)
+     * - `default` — standard action menus
+     * - `wide` — lists of labelled rows, usually searchable
+     * - `panel` — content-bearing surfaces (commit messages, value previews)
+     * - `trigger` — matches the anchor's width
+     * - `auto` — content-sized; only for menus with genuinely unpredictable width
+     */
+    size?: OverlaySize;
+  };
+
+function DropdownMenuContent({
+  className,
+  align = "end",
+  alignOffset,
+  side = "bottom",
+  sideOffset = 4,
+  collisionPadding = 8,
+  viewport = "default",
+  size = "auto",
+  anchor,
+  positionMethod,
+  ...props
+}: DropdownMenuContentProps) {
+  return (
+    <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.Positioner
+        align={align}
+        alignOffset={alignOffset}
+        side={side}
+        sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
+        anchor={anchor}
+        positionMethod={positionMethod}
+        className="isolate z-10070 outline-none"
+      >
+        <DropdownMenuPrimitive.Popup
+          data-slot="dropdown-menu-content"
+          className={cn(
+            menuSurfaceVariants({ viewport, size }),
+            "z-10070 duration-75 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+            className,
+          )}
+          {...props}
+        />
+      </DropdownMenuPrimitive.Positioner>
+    </DropdownMenuPrimitive.Portal>
+  );
+}
+
+function DropdownMenuGroup(props: DropdownMenuPrimitive.Group.Props) {
+  return <DropdownMenuPrimitive.Group data-slot="dropdown-menu-group" {...props} />;
+}
+
+function DropdownMenuItem({
+  className,
+  inset,
+  variant = "default",
+  trailingAction,
+  trailingActionVisibility = "hover",
+  children,
+  ...props
+}: DropdownMenuPrimitive.Item.Props & {
+  inset?: boolean;
+  variant?: "default" | "destructive";
+  trailingAction?: ReactNode;
+  trailingActionVisibility?: "hover" | "always";
+}) {
+  return (
+    <DropdownMenuPrimitive.Item
+      data-slot="dropdown-menu-item"
+      data-inset={inset}
+      data-variant={variant}
+      className={cn(
+        menuItemVariants({ tone: variant }),
+        "group/dropdown-menu-item data-inset:pl-8",
+        trailingAction && "group/dropdown-menu-row pr-8",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      {trailingAction ? (
+        <DropdownMenuTrailingAction visibility={trailingActionVisibility}>
+          {trailingAction}
+        </DropdownMenuTrailingAction>
+      ) : null}
+    </DropdownMenuPrimitive.Item>
+  );
+}
+
+function DropdownMenuTrailingAction({
+  children,
+  visibility,
+}: {
+  children: ReactNode;
+  visibility: "hover" | "always";
+}) {
+  return (
+    <span
+      className={cn(
+        "absolute right-0 z-10 flex pr-1 transition-opacity",
+        visibility === "always"
+          ? "opacity-100"
+          : "opacity-0 group-hover/dropdown-menu-row:opacity-100 group-focus-within/dropdown-menu-row:opacity-100 has-data-[popup-open]:opacity-100",
+      )}
+      onMouseMove={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      {children}
+    </span>
+  );
+}
+
+function DropdownMenuCheckboxItem({
+  className,
+  children,
+  checked,
+  inset,
+  ...props
+}: DropdownMenuPrimitive.CheckboxItem.Props & { inset?: boolean }) {
+  return (
+    <DropdownMenuPrimitive.CheckboxItem
+      data-slot="dropdown-menu-checkbox-item"
+      data-inset={inset}
+      className={cn(menuItemVariants(), "pr-8 data-inset:pl-8", className)}
+      checked={checked}
+      {...props}
+    >
+      <span className="pointer-events-none absolute right-2 flex size-4 items-center justify-center">
+        <DropdownMenuPrimitive.CheckboxItemIndicator>
+          <CheckIcon />
+        </DropdownMenuPrimitive.CheckboxItemIndicator>
+      </span>
+      {children}
+    </DropdownMenuPrimitive.CheckboxItem>
+  );
+}
+
+function DropdownMenuRadioGroup(props: DropdownMenuPrimitive.RadioGroup.Props) {
+  return <DropdownMenuPrimitive.RadioGroup data-slot="dropdown-menu-radio-group" {...props} />;
+}
+
+function DropdownMenuRadioItem({
+  className,
+  children,
+  inset,
+  trailingAction,
+  trailingActionVisibility = "hover",
+  ...props
+}: DropdownMenuPrimitive.RadioItem.Props & {
+  inset?: boolean;
+  trailingAction?: ReactNode;
+  trailingActionVisibility?: "hover" | "always";
+}) {
+  return (
+    <DropdownMenuPrimitive.RadioItem
+      data-slot="dropdown-menu-radio-item"
+      data-inset={inset}
+      className={cn(
+        menuItemVariants(),
+        "pr-8 data-inset:pl-8",
+        trailingAction && "group/dropdown-menu-row",
+        className,
+      )}
+      {...props}
+    >
+      <span
+        className={cn(
+          "pointer-events-none absolute right-2 flex size-4 items-center justify-center transition-opacity",
+          trailingAction &&
+            "group-hover/dropdown-menu-row:opacity-0 group-focus-within/dropdown-menu-row:opacity-0 group-has-data-[popup-open]/dropdown-menu-row:opacity-0",
+          trailingAction && trailingActionVisibility === "always" && "opacity-0",
+        )}
+      >
+        <DropdownMenuPrimitive.RadioItemIndicator>
+          <CheckIcon />
+        </DropdownMenuPrimitive.RadioItemIndicator>
+      </span>
+      {children}
+      {trailingAction ? (
+        <DropdownMenuTrailingAction visibility={trailingActionVisibility}>
+          {trailingAction}
+        </DropdownMenuTrailingAction>
+      ) : null}
+    </DropdownMenuPrimitive.RadioItem>
+  );
+}
+
+function DropdownMenuLabel({
+  className,
+  inset,
+  ...props
+}: DropdownMenuPrimitive.GroupLabel.Props & { inset?: boolean }) {
+  return (
+    <DropdownMenuPrimitive.GroupLabel
+      data-slot="dropdown-menu-label"
+      data-inset={inset}
+      className={cn(menuLabelVariants(), "data-inset:pl-8", className)}
+      {...props}
+    />
+  );
+}
+
+function DropdownMenuSeparator({ className, ...props }: DropdownMenuPrimitive.Separator.Props) {
+  return (
+    <DropdownMenuPrimitive.Separator
+      data-slot="dropdown-menu-separator"
+      className={cn(menuSeparatorVariants(), className)}
+      {...props}
+    />
+  );
+}
+
+function DropdownMenuSub(props: DropdownMenuPrimitive.SubmenuRoot.Props) {
+  return <DropdownMenuPrimitive.SubmenuRoot data-slot="dropdown-menu-sub" {...props} />;
+}
+
+function DropdownMenuSubTrigger({
+  className,
+  inset,
+  appearance = "item",
+  children,
+  ...props
+}: DropdownMenuPrimitive.SubmenuTrigger.Props & {
+  inset?: boolean;
+  appearance?: "item" | "action";
+}) {
+  return (
+    <DropdownMenuPrimitive.SubmenuTrigger
+      data-slot="dropdown-menu-sub-trigger"
+      data-inset={inset}
+      nativeButton={appearance === "action"}
+      openOnHover
+      className={cn(
+        appearance === "item" && menuItemVariants(),
+        appearance === "item" && "data-inset:pl-8 data-open:bg-accent data-open:text-foreground",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      {appearance === "item" ? <ChevronRightIcon className="ml-auto" /> : null}
+    </DropdownMenuPrimitive.SubmenuTrigger>
+  );
+}
+
+function DropdownMenuSubContent({ className, ...props }: DropdownMenuContentProps) {
+  return (
+    <DropdownMenuContent
+      data-slot="dropdown-menu-sub-content"
+      side="right"
+      {...props}
+      className={cn("shadow-(--shadow-popover)", className)}
+    />
+  );
+}
+
+/**
+ * Renders a `MenuItem[]` inside a `DropdownMenuContent`, for menus whose items
+ * are built as data rather than as JSX. Icons are shown only when every item in
+ * a separator-delimited group has one, so a partially-iconned group stays
+ * aligned.
+ */
+function DropdownMenuItems({ items }: { items: readonly MenuItem[] }) {
+  const iconVisibility = items.map(() => false);
+  let groupStart = 0;
+
+  for (let index = 0; index <= items.length; index++) {
+    const item = items[index];
+    if (item && !item.separator) continue;
+
+    const groupItems = items.slice(groupStart, index).filter(isMenuActionItem);
+    if (groupItems.length > 0 && groupItems.every((entry) => entry.icon)) {
+      for (let i = groupStart; i < index; i++) iconVisibility[i] = true;
+    }
+    groupStart = index + 1;
+  }
+
+  return items.map((item, index) => {
+    if (item.separator) return <DropdownMenuSeparator key={item.id} />;
+
+    return (
+      <DropdownMenuItem
+        key={item.id}
+        disabled={item.disabled || !item.onClick}
+        variant={item.tone === "destructive" ? "destructive" : "default"}
+        data-selected={item.selected ? "" : undefined}
+        onClick={item.onClick}
+      >
+        {iconVisibility[index] && item.icon ? (
+          <span className="grid size-4 shrink-0 place-items-center [&>svg]:block [&>svg]:size-4">
+            {item.icon}
+          </span>
+        ) : null}
+        <span className="min-w-0 flex-1 truncate whitespace-nowrap">{item.label}</span>
+        <span className="ml-auto flex shrink-0 items-center gap-2">
+          {item.shortcut ? <Keybinding binding={item.shortcut} /> : null}
+          {item.trailing === "disclosure" ? (
+            <ChevronRightIcon className="size-3 text-subtle-foreground" />
+          ) : item.trailing?.type === "text" ? (
+            <span className="text-subtle-foreground tabular-nums">{item.trailing.label}</span>
+          ) : null}
+          {item.checked !== undefined ? (
+            <span className="flex size-4 items-center justify-center">
+              {item.checked ? <CheckIcon className="text-primary" /> : null}
+            </span>
+          ) : null}
+        </span>
+      </DropdownMenuItem>
+    );
+  });
+}
+
+/**
+ * The "nothing to show" row inside a menu viewport. Use this instead of a
+ * `<DropdownMenuItem disabled>` holding a bare string, so every menu renders an
+ * empty result the same way.
+ */
+function DropdownMenuEmpty({
+  className,
+  children,
+  ...props
+}: ComponentProps<"div"> & { children: ReactNode }) {
+  return (
+    <div
+      data-slot="dropdown-menu-empty"
+      role="presentation"
+      className={cn(
+        "flex items-center justify-start gap-2 px-2 py-1 text-left font-sans text-subtle-foreground/70 ui-text-chrome",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
+
+export {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuEmpty,
+  DropdownMenuFooter,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuItems,
+  DropdownMenuLabel,
+  DropdownMenuPortal,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSearch,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+  DropdownMenuViewport,
+  menuItemVariants,
+  menuLabelVariants,
+  menuSeparatorVariants,
+  menuSurfaceVariants,
+};

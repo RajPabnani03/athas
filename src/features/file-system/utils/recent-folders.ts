@@ -23,7 +23,7 @@ function normalizeRecentFolder(folder: RecentFolder): RecentFolder {
   };
 }
 
-export function sortRecentFolders(folders: RecentFolder[]) {
+function sortRecentFolders(folders: RecentFolder[]) {
   return [...folders].sort((left, right) => {
     if (!!left.pinned !== !!right.pinned) {
       return left.pinned ? -1 : 1;
@@ -39,6 +39,26 @@ export function limitRecentFolders(folders: RecentFolder[]) {
   const unpinned = sorted.filter((folder) => !folder.pinned).slice(0, MAX_RECENT_PROJECTS);
 
   return [...pinned, ...unpinned];
+}
+
+export function uniqueRecentFolderImports<T extends { path: string }>(folders: T[]) {
+  const seenPaths = new Set<string>();
+  const uniqueFolders: T[] = [];
+
+  for (const folder of folders) {
+    if (seenPaths.has(folder.path)) {
+      continue;
+    }
+
+    seenPaths.add(folder.path);
+    uniqueFolders.push(folder);
+  }
+
+  return uniqueFolders;
+}
+
+export function removeMissingRecentFolders(folders: RecentFolder[]) {
+  return folders.filter((folder) => !folder.missing);
 }
 
 export function upsertRecentFolder(

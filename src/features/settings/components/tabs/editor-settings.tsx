@@ -1,14 +1,54 @@
 import { useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { getAllLanguages } from "@/features/editor/utils/language-id";
-import { getDefaultSetting, useSettingsStore } from "@/features/settings/stores/settings.store";
+import { setOutlineVisibilityPreference } from "@/features/outline/actions/outline-visibility";
+import { getDefaultSetting } from "@/features/settings/config/default-settings";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import NumberInput from "@/ui/number-input";
-import Section, { SETTINGS_CONTROL_WIDTHS, SettingRow } from "../settings-section";
+import Section, { SettingsView, SettingRow } from "../settings-section";
 import Select from "@/ui/select";
 import Switch from "@/ui/switch";
 import { FontSelector } from "../font-selector";
 
 export const EditorSettings = () => {
-  const { settings, updateSetting } = useSettingsStore();
+  const settings = useSettingsStore(
+    useShallow((state) => ({
+      autoCompletion: state.settings.autoCompletion,
+      autoDetectLanguage: state.settings.autoDetectLanguage,
+      autoSave: state.settings.autoSave,
+      breadcrumbShowSymbols: state.settings.breadcrumbShowSymbols,
+      defaultLanguage: state.settings.defaultLanguage,
+      editorBracketPairColorization: state.settings.editorBracketPairColorization,
+      editorCursorBlinking: state.settings.editorCursorBlinking,
+      editorCursorStyle: state.settings.editorCursorStyle,
+      editorFontLigatures: state.settings.editorFontLigatures,
+      editorItalicComments: state.settings.editorItalicComments,
+      editorLineHeight: state.settings.editorLineHeight,
+      editorScrollBeyondLastLine: state.settings.editorScrollBeyondLastLine,
+      editorSmoothScrolling: state.settings.editorSmoothScrolling,
+      editorStickyScroll: state.settings.editorStickyScroll,
+      fontFamily: state.settings.fontFamily,
+      fontSize: state.settings.fontSize,
+      formatOnSave: state.settings.formatOnSave,
+      highlightOccurrences: state.settings.highlightOccurrences,
+      horizontalTabScroll: state.settings.horizontalTabScroll,
+      codeLens: state.settings.codeLens,
+      inlayHints: state.settings.inlayHints,
+      lineNumbers: state.settings.lineNumbers,
+      lintOnSave: state.settings.lintOnSave,
+      maxOpenTabs: state.settings.maxOpenTabs,
+      parameterHints: state.settings.parameterHints,
+      renderIndentGuides: state.settings.renderIndentGuides,
+      renderWhitespace: state.settings.renderWhitespace,
+      semanticTokens: state.settings.semanticTokens,
+      showMinimap: state.settings.showMinimap,
+      showOutline: state.settings.showOutline,
+      tabSize: state.settings.tabSize,
+      vimRelativeLineNumbers: state.settings.vimRelativeLineNumbers,
+      wordWrap: state.settings.wordWrap,
+    })),
+  );
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
   const languageOptions = useMemo(
     () => [
       { value: "auto", label: "Auto Detect" },
@@ -26,7 +66,7 @@ export const EditorSettings = () => {
     { value: "all", label: "All" },
   ];
   return (
-    <div className="space-y-4">
+    <SettingsView>
       <Section title="Editor">
         <SettingRow
           label="Editor Font Family"
@@ -37,7 +77,6 @@ export const EditorSettings = () => {
           <FontSelector
             value={settings.fontFamily}
             onChange={(fontFamily) => updateSetting("fontFamily", fontFamily)}
-            className={SETTINGS_CONTROL_WIDTHS.text}
             monospaceOnly={true}
           />
         </SettingRow>
@@ -53,8 +92,34 @@ export const EditorSettings = () => {
             max="32"
             value={settings.fontSize}
             onChange={(val) => updateSetting("fontSize", val)}
-            className={SETTINGS_CONTROL_WIDTHS.numberCompact}
-            size="xs"
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Font Ligatures"
+          description="Use programming ligatures provided by the selected editor font"
+          onReset={() =>
+            updateSetting("editorFontLigatures", getDefaultSetting("editorFontLigatures"))
+          }
+          canReset={settings.editorFontLigatures !== getDefaultSetting("editorFontLigatures")}
+        >
+          <Switch
+            checked={settings.editorFontLigatures}
+            onChange={(checked) => updateSetting("editorFontLigatures", checked)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Italic Comments"
+          description="Render code comments in italics"
+          onReset={() =>
+            updateSetting("editorItalicComments", getDefaultSetting("editorItalicComments"))
+          }
+          canReset={settings.editorItalicComments !== getDefaultSetting("editorItalicComments")}
+        >
+          <Switch
+            checked={settings.editorItalicComments}
+            onChange={(checked) => updateSetting("editorItalicComments", checked)}
           />
         </SettingRow>
 
@@ -70,8 +135,6 @@ export const EditorSettings = () => {
             step={0.1}
             value={settings.editorLineHeight}
             onChange={(val) => updateSetting("editorLineHeight", val)}
-            className={SETTINGS_CONTROL_WIDTHS.numberCompact}
-            size="xs"
           />
         </SettingRow>
 
@@ -86,8 +149,6 @@ export const EditorSettings = () => {
             max="8"
             value={settings.tabSize}
             onChange={(val) => updateSetting("tabSize", val)}
-            className={SETTINGS_CONTROL_WIDTHS.numberCompact}
-            size="xs"
           />
         </SettingRow>
         <SettingRow
@@ -99,7 +160,6 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.wordWrap}
             onChange={(checked) => updateSetting("wordWrap", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -112,7 +172,6 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.lineNumbers}
             onChange={(checked) => updateSetting("lineNumbers", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -128,8 +187,6 @@ export const EditorSettings = () => {
             onChange={(value) =>
               updateSetting("renderWhitespace", value as typeof settings.renderWhitespace)
             }
-            className={SETTINGS_CONTROL_WIDTHS.default}
-            size="xs"
             variant="default"
           />
         </SettingRow>
@@ -145,7 +202,6 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.renderIndentGuides}
             onChange={(checked) => updateSetting("renderIndentGuides", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -160,7 +216,6 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.highlightOccurrences}
             onChange={(checked) => updateSetting("highlightOccurrences", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -175,7 +230,6 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.vimRelativeLineNumbers}
             onChange={(checked) => updateSetting("vimRelativeLineNumbers", checked)}
-            size="sm"
             disabled={!settings.lineNumbers}
           />
         </SettingRow>
@@ -189,9 +243,132 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.showMinimap}
             onChange={(checked) => updateSetting("showMinimap", checked)}
-            size="sm"
           />
         </SettingRow>
+
+        <SettingRow
+          label="Show Outline"
+          description="Show symbols for the active editor in the right sidebar"
+          onReset={() => setOutlineVisibilityPreference(getDefaultSetting("showOutline"))}
+          canReset={settings.showOutline !== getDefaultSetting("showOutline")}
+        >
+          <Switch checked={settings.showOutline} onChange={setOutlineVisibilityPreference} />
+        </SettingRow>
+
+        <SettingRow
+          label="Sticky Scroll"
+          description="Keep containing scopes visible at the top while scrolling"
+          onReset={() =>
+            updateSetting("editorStickyScroll", getDefaultSetting("editorStickyScroll"))
+          }
+          canReset={settings.editorStickyScroll !== getDefaultSetting("editorStickyScroll")}
+        >
+          <Switch
+            checked={settings.editorStickyScroll}
+            onChange={(checked) => updateSetting("editorStickyScroll", checked)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Bracket Pair Colorization"
+          description="Use matching colors to distinguish nested bracket pairs"
+          onReset={() =>
+            updateSetting(
+              "editorBracketPairColorization",
+              getDefaultSetting("editorBracketPairColorization"),
+            )
+          }
+          canReset={
+            settings.editorBracketPairColorization !==
+            getDefaultSetting("editorBracketPairColorization")
+          }
+        >
+          <Switch
+            checked={settings.editorBracketPairColorization}
+            onChange={(checked) => updateSetting("editorBracketPairColorization", checked)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Smooth Scrolling"
+          description="Animate editor scrolling between positions"
+          onReset={() =>
+            updateSetting("editorSmoothScrolling", getDefaultSetting("editorSmoothScrolling"))
+          }
+          canReset={settings.editorSmoothScrolling !== getDefaultSetting("editorSmoothScrolling")}
+        >
+          <Switch
+            checked={settings.editorSmoothScrolling}
+            onChange={(checked) => updateSetting("editorSmoothScrolling", checked)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Scroll Beyond Last Line"
+          description="Allow scrolling the final line above the bottom of the editor"
+          onReset={() =>
+            updateSetting(
+              "editorScrollBeyondLastLine",
+              getDefaultSetting("editorScrollBeyondLastLine"),
+            )
+          }
+          canReset={
+            settings.editorScrollBeyondLastLine !== getDefaultSetting("editorScrollBeyondLastLine")
+          }
+        >
+          <Switch
+            checked={settings.editorScrollBeyondLastLine}
+            onChange={(checked) => updateSetting("editorScrollBeyondLastLine", checked)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Cursor Style"
+          description="Shape of the editor cursor outside Vim normal mode"
+          onReset={() => updateSetting("editorCursorStyle", getDefaultSetting("editorCursorStyle"))}
+          canReset={settings.editorCursorStyle !== getDefaultSetting("editorCursorStyle")}
+        >
+          <Select
+            value={settings.editorCursorStyle}
+            options={[
+              { value: "line", label: "Line" },
+              { value: "line-thin", label: "Thin Line" },
+              { value: "block", label: "Block" },
+              { value: "block-outline", label: "Block Outline" },
+              { value: "underline", label: "Underline" },
+              { value: "underline-thin", label: "Thin Underline" },
+            ]}
+            onChange={(value) =>
+              updateSetting("editorCursorStyle", value as typeof settings.editorCursorStyle)
+            }
+            variant="default"
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Cursor Blinking"
+          description="Animation used by the editor cursor outside Vim normal mode"
+          onReset={() =>
+            updateSetting("editorCursorBlinking", getDefaultSetting("editorCursorBlinking"))
+          }
+          canReset={settings.editorCursorBlinking !== getDefaultSetting("editorCursorBlinking")}
+        >
+          <Select
+            value={settings.editorCursorBlinking}
+            options={[
+              { value: "blink", label: "Blink" },
+              { value: "smooth", label: "Smooth" },
+              { value: "phase", label: "Phase" },
+              { value: "expand", label: "Expand" },
+              { value: "solid", label: "Solid" },
+            ]}
+            onChange={(value) =>
+              updateSetting("editorCursorBlinking", value as typeof settings.editorCursorBlinking)
+            }
+            variant="default"
+          />
+        </SettingRow>
+
         <SettingRow
           label="Max Open Tabs"
           description="Maximum number of tabs before oldest closes"
@@ -203,8 +380,6 @@ export const EditorSettings = () => {
             max="100"
             value={settings.maxOpenTabs}
             onChange={(val) => updateSetting("maxOpenTabs", val)}
-            className={SETTINGS_CONTROL_WIDTHS.numberCompact}
-            size="xs"
           />
         </SettingRow>
 
@@ -219,7 +394,6 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.horizontalTabScroll}
             onChange={(checked) => updateSetting("horizontalTabScroll", checked)}
-            size="sm"
           />
         </SettingRow>
         <SettingRow
@@ -231,7 +405,6 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.autoSave}
             onChange={(checked) => updateSetting("autoSave", checked)}
-            size="sm"
           />
         </SettingRow>
         <SettingRow
@@ -244,8 +417,6 @@ export const EditorSettings = () => {
             value={settings.defaultLanguage}
             options={languageOptions}
             onChange={(value) => updateSetting("defaultLanguage", value)}
-            className={SETTINGS_CONTROL_WIDTHS.default}
-            size="xs"
             variant="default"
             searchable
             searchableTrigger="input"
@@ -263,7 +434,6 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.autoDetectLanguage}
             onChange={(checked) => updateSetting("autoDetectLanguage", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -276,7 +446,6 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.formatOnSave}
             onChange={(checked) => updateSetting("formatOnSave", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -289,7 +458,6 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.lintOnSave}
             onChange={(checked) => updateSetting("lintOnSave", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -302,7 +470,6 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.autoCompletion}
             onChange={(checked) => updateSetting("autoCompletion", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -315,10 +482,59 @@ export const EditorSettings = () => {
           <Switch
             checked={settings.parameterHints}
             onChange={(checked) => updateSetting("parameterHints", checked)}
-            size="sm"
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Inlay Hints"
+          description="Show inline type and parameter hints from language servers"
+          onReset={() => updateSetting("inlayHints", getDefaultSetting("inlayHints"))}
+          canReset={settings.inlayHints !== getDefaultSetting("inlayHints")}
+        >
+          <Switch
+            checked={settings.inlayHints}
+            onChange={(checked) => updateSetting("inlayHints", checked)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Code Lens"
+          description="Show inline code actions above symbols"
+          onReset={() => updateSetting("codeLens", getDefaultSetting("codeLens"))}
+          canReset={settings.codeLens !== getDefaultSetting("codeLens")}
+        >
+          <Switch
+            checked={settings.codeLens}
+            onChange={(checked) => updateSetting("codeLens", checked)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Semantic Tokens"
+          description="Use language server semantic highlighting"
+          onReset={() => updateSetting("semanticTokens", getDefaultSetting("semanticTokens"))}
+          canReset={settings.semanticTokens !== getDefaultSetting("semanticTokens")}
+        >
+          <Switch
+            checked={settings.semanticTokens}
+            onChange={(checked) => updateSetting("semanticTokens", checked)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Show Symbol in Breadcrumb"
+          description="Show the containing function/class for the cursor position in the breadcrumb bar"
+          onReset={() =>
+            updateSetting("breadcrumbShowSymbols", getDefaultSetting("breadcrumbShowSymbols"))
+          }
+          canReset={settings.breadcrumbShowSymbols !== getDefaultSetting("breadcrumbShowSymbols")}
+        >
+          <Switch
+            checked={settings.breadcrumbShowSymbols}
+            onChange={(checked) => updateSetting("breadcrumbShowSymbols", checked)}
           />
         </SettingRow>
       </Section>
-    </div>
+    </SettingsView>
   );
 };

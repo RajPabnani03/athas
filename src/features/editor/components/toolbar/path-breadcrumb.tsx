@@ -1,80 +1,98 @@
-import type React from "react";
-import { FileExplorerIcon } from "@/features/file-explorer/components/file-explorer-icon";
+import { Fragment, type MouseEvent, type ReactNode } from "react";
 import { Button } from "@/ui/button";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/ui/breadcrumb";
 import { cn } from "@/utils/cn";
 
 interface PathBreadcrumbProps {
   segments: string[];
-  fullPath?: string;
-  interactive?: boolean;
-  onSegmentClick?: (index: number, event: React.MouseEvent<HTMLButtonElement>) => void;
+  icons?: ReactNode[];
+  interactive?: boolean | ((index: number) => boolean);
+  ariaLabel?: string;
+  onSegmentClick?: (index: number, event: MouseEvent<HTMLButtonElement>) => void;
   setSegmentRef?: (index: number, element: HTMLButtonElement | null) => void;
   className?: string;
 }
 
 export function PathBreadcrumb({
   segments,
-  fullPath,
+  icons,
   interactive = false,
+  ariaLabel = "File path",
   onSegmentClick,
   setSegmentRef,
   className,
 }: PathBreadcrumbProps) {
   if (segments.length === 0) return null;
 
-  const fileName = segments[segments.length - 1] || fullPath || "";
-
   return (
-    <div
-      className={cn("flex min-w-0 items-center gap-0.5 overflow-x-auto scrollbar-none", className)}
+    <Breadcrumb
+      aria-label={ariaLabel}
+      className={cn("min-w-0 overflow-x-auto scrollbar-none", className)}
     >
-      <span className="flex size-5 shrink-0 items-center justify-center rounded text-text-lighter">
-        <FileExplorerIcon
-          fileName={fileName}
-          isDir={false}
-          isExpanded={false}
-          className="text-text-lighter"
-        />
-      </span>
+      <BreadcrumbList className="flex-nowrap gap-0">
+        {segments.map((segment, index) => {
+          const isLast = index === segments.length - 1;
+          const isInteractive =
+            typeof interactive === "function" ? interactive(index) : interactive;
+          const content = (
+            <>
+              {icons?.[index] ? (
+                <span className="flex shrink-0 items-center">{icons[index]}</span>
+              ) : null}
+              <span className="truncate">{segment}</span>
+            </>
+          );
 
-      {segments.map((segment, index) => {
-        const isLast = index === segments.length - 1;
-
-        return (
-          <div key={`${segment}-${index}`} className="flex shrink-0 items-center gap-0.5">
-            {index > 0 && (
-              <span aria-hidden="true" className="mx-0.5 shrink-0 text-text-lighter ui-text-xs">
-                /
-              </span>
-            )}
-            {interactive ? (
-              <Button
-                ref={(element) => setSegmentRef?.(index, element)}
-                onClick={(event) => onSegmentClick?.(index, event)}
-                variant="ghost"
-                compact
-                className={cn(
-                  "min-w-0 gap-1 whitespace-nowrap rounded px-1 py-0.5 ui-text-xs",
-                  isLast
-                    ? "font-medium text-text hover:text-text"
-                    : "text-text-lighter hover:text-text",
+          return (
+            <Fragment key={`${segment}-${index}`}>
+              {index > 0 ? <BreadcrumbSeparator className="shrink-0" /> : null}
+              <BreadcrumbItem className="shrink-0 gap-0">
+                {isInteractive ? (
+                  <BreadcrumbLink
+                    render={
+                      <Button
+                        ref={(element) => setSegmentRef?.(index, element)}
+                        onClick={(event) => onSegmentClick?.(index, event)}
+                        variant="ghost"
+                        data-slot="breadcrumb-segment"
+                      />
+                    }
+                    className={cn(
+                      "min-w-0 gap-1 whitespace-nowrap",
+                      isLast
+                        ? "text-foreground hover:text-foreground"
+                        : "text-subtle-foreground hover:text-foreground",
+                    )}
+                  >
+                    {content}
+                  </BreadcrumbLink>
+                ) : isLast ? (
+                  <BreadcrumbPage
+                    data-slot="breadcrumb-segment"
+                    className="flex min-w-0 items-center gap-1 px-1"
+                  >
+                    {content}
+                  </BreadcrumbPage>
+                ) : (
+                  <span
+                    data-slot="breadcrumb-segment"
+                    className="flex min-w-0 items-center gap-1 px-1 text-subtle-foreground"
+                  >
+                    {content}
+                  </span>
                 )}
-              >
-                {segment}
-              </Button>
-            ) : (
-              <span
-                className={cn(
-                  "truncate rounded px-1 py-0.5 ui-text-xs",
-                  isLast ? "font-medium text-text" : "text-text-lighter",
-                )}
-              >
-                {segment}
-              </span>
-            )}
-          </div>
-        );
-      })}
-    </div>
+              </BreadcrumbItem>
+            </Fragment>
+          );
+        })}
+      </BreadcrumbList>
+    </Breadcrumb>
   );
 }

@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { getAuthToken } from "@/features/window/services/auth-api";
+import { getServiceUrls } from "@/config/services";
 
-export const GITHUB_ACCOUNT_API_BASE = "https://athas.dev";
-export const GITHUB_CONNECTION_URL = `${GITHUB_ACCOUNT_API_BASE}/dashboard/settings/integrations`;
+export const GITHUB_ACCOUNT_API_BASE = getServiceUrls().apiBaseUrl;
+export const GITHUB_CONNECTION_URL = getServiceUrls().dashboardIntegrationsUrl;
 
 export type GitHubTokenSyncStatus = "synced" | "notSignedIn" | "notConnected";
 
@@ -19,7 +20,7 @@ interface DesktopGitHubTokenResponse {
   scopes?: unknown;
 }
 
-export const storeGitHubToken = async (token: string): Promise<void> => {
+const storeGitHubToken = async (token: string): Promise<void> => {
   try {
     await invoke("store_github_token", { token });
   } catch (error) {
@@ -28,7 +29,7 @@ export const storeGitHubToken = async (token: string): Promise<void> => {
   }
 };
 
-export const removeGitHubToken = async (): Promise<void> => {
+const removeGitHubToken = async (): Promise<void> => {
   try {
     await invoke("remove_github_token");
   } catch (error) {

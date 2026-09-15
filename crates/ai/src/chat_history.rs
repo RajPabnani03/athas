@@ -11,6 +11,11 @@ pub struct ChatData {
    pub agent_id: Option<String>,
    pub acp_session_id: Option<String>,
    pub workspace_path: Option<String>,
+   pub provider_id: Option<String>,
+   pub model_id: Option<String>,
+   pub branch: Option<String>,
+   pub is_pinned: bool,
+   pub archived_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -23,6 +28,8 @@ pub struct MessageData {
    pub is_streaming: bool,
    pub is_tool_use: bool,
    pub tool_name: Option<String>,
+   #[serde(default)]
+   pub images: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -71,7 +78,12 @@ impl ChatHistoryRepository {
                last_message_at INTEGER NOT NULL,
                agent_id TEXT DEFAULT 'custom',
                acp_session_id TEXT,
-               workspace_path TEXT
+               workspace_path TEXT,
+               provider_id TEXT,
+               model_id TEXT,
+               branch TEXT,
+               is_pinned BOOLEAN DEFAULT 0,
+               archived_at INTEGER
            )",
             [],
          )
@@ -83,6 +95,14 @@ impl ChatHistoryRepository {
       );
       let _ = conn.execute("ALTER TABLE chats ADD COLUMN acp_session_id TEXT", []);
       let _ = conn.execute("ALTER TABLE chats ADD COLUMN workspace_path TEXT", []);
+      let _ = conn.execute("ALTER TABLE chats ADD COLUMN provider_id TEXT", []);
+      let _ = conn.execute("ALTER TABLE chats ADD COLUMN model_id TEXT", []);
+      let _ = conn.execute("ALTER TABLE chats ADD COLUMN branch TEXT", []);
+      let _ = conn.execute(
+         "ALTER TABLE chats ADD COLUMN is_pinned BOOLEAN DEFAULT 0",
+         [],
+      );
+      let _ = conn.execute("ALTER TABLE chats ADD COLUMN archived_at INTEGER", []);
 
       conn
          .execute(
@@ -117,6 +137,19 @@ impl ChatHistoryRepository {
             [],
          )
          .map_err(|e| format!("Failed to create tool_calls table: {}", e))?;
+
+      let has_images: bool = conn
+         .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('messages') WHERE name = 'images')",
+            [],
+            |row| row.get(0),
+         )
+         .map_err(|e| format!("Failed to inspect message columns: {e}"))?;
+      if !has_images {
+         conn
+            .execute("ALTER TABLE messages ADD COLUMN images TEXT", [])
+            .map_err(|e| format!("Failed to add message images: {e}"))?;
+      }
 
       conn
          .execute(
@@ -156,7 +189,8 @@ impl ChatHistoryRepository {
 
       match conn.execute(
          "INSERT OR REPLACE INTO chats (id, title, created_at, last_message_at, agent_id, \
-          acp_session_id, workspace_path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+          acp_session_id, workspace_path, provider_id, model_id, branch, is_pinned, archived_at) \
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
          params![
             chat.id,
             chat.title,
@@ -164,7 +198,12 @@ impl ChatHistoryRepository {
             chat.last_message_at,
             chat.agent_id.unwrap_or_else(|| "custom".to_string()),
             chat.acp_session_id,
-            chat.workspace_path
+            chat.workspace_path,
+            chat.provider_id,
+            chat.model_id,
+            chat.branch,
+            chat.is_pinned,
+            chat.archived_at
          ],
       ) {
          Ok(_) => {}
@@ -185,7 +224,7 @@ impl ChatHistoryRepository {
       for message in messages {
          match conn.execute(
             "INSERT INTO messages (id, chat_id, role, content, timestamp, is_streaming, \
-             is_tool_use, tool_name) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             is_tool_use, tool_name, images) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                message.id,
                message.chat_id,
@@ -194,7 +233,8 @@ impl ChatHistoryRepository {
                message.timestamp,
                message.is_streaming,
                message.is_tool_use,
-               message.tool_name
+               message.tool_name,
+               message.images
             ],
          ) {
             Ok(_) => {}
@@ -239,7 +279,8 @@ impl ChatHistoryRepository {
       let mut stmt = conn
          .prepare(
             "SELECT id, title, created_at, last_message_at, agent_id, acp_session_id, \
-             workspace_path FROM chats ORDER BY last_message_at DESC",
+             workspace_path, provider_id, model_id, branch, is_pinned, archived_at FROM chats \
+             ORDER BY is_pinned DESC, last_message_at DESC",
          )
          .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
@@ -250,13 +291,39 @@ impl ChatHistoryRepository {
          .map_err(|e| format!("Failed to collect chats: {}", e))
    }
 
+   pub fn update_chat_metadata(&self, chat: ChatData) -> Result<(), String> {
+      let conn = self.open_connection()?;
+      conn
+         .execute(
+            "UPDATE chats SET title = ?2, last_message_at = ?3, agent_id = ?4, acp_session_id = \
+             ?5, workspace_path = ?6, provider_id = ?7, model_id = ?8, branch = ?9, is_pinned = \
+             ?10, archived_at = ?11 WHERE id = ?1",
+            params![
+               chat.id,
+               chat.title,
+               chat.last_message_at,
+               chat.agent_id.unwrap_or_else(|| "custom".to_string()),
+               chat.acp_session_id,
+               chat.workspace_path,
+               chat.provider_id,
+               chat.model_id,
+               chat.branch,
+               chat.is_pinned,
+               chat.archived_at
+            ],
+         )
+         .map_err(|e| format!("Failed to update chat metadata: {}", e))?;
+      Ok(())
+   }
+
    pub fn load_chat(&self, chat_id: &str) -> Result<ChatWithMessages, String> {
       let conn = self.open_connection()?;
 
       let mut stmt = conn
          .prepare(
             "SELECT id, title, created_at, last_message_at, agent_id, acp_session_id, \
-             workspace_path FROM chats WHERE id = ?1",
+             workspace_path, provider_id, model_id, branch, is_pinned, archived_at FROM chats \
+             WHERE id = ?1",
          )
          .map_err(|e| format!("Failed to prepare chat query: {}", e))?;
 
@@ -266,8 +333,8 @@ impl ChatHistoryRepository {
 
       let mut stmt = conn
          .prepare(
-            "SELECT id, chat_id, role, content, timestamp, is_streaming, is_tool_use, tool_name \
-             FROM messages WHERE chat_id = ?1 ORDER BY timestamp ASC",
+            "SELECT id, chat_id, role, content, timestamp, is_streaming, is_tool_use, tool_name, \
+             images FROM messages WHERE chat_id = ?1 ORDER BY timestamp ASC",
          )
          .map_err(|e| format!("Failed to prepare messages query: {}", e))?;
 
@@ -282,6 +349,7 @@ impl ChatHistoryRepository {
                is_streaming: row.get(5)?,
                is_tool_use: row.get(6)?,
                tool_name: row.get(7)?,
+               images: row.get(8)?,
             })
          })
          .map_err(|e| format!("Failed to query messages: {}", e))?
@@ -313,7 +381,8 @@ impl ChatHistoryRepository {
       let mut stmt = conn
          .prepare(
             "SELECT DISTINCT c.id, c.title, c.created_at, c.last_message_at, c.agent_id, \
-             c.acp_session_id, c.workspace_path
+             c.acp_session_id, c.workspace_path, c.provider_id, c.model_id, c.branch, \
+             c.is_pinned, c.archived_at
              FROM chats c
                 LEFT JOIN messages m ON c.id = m.chat_id
                 WHERE c.title LIKE ?1 OR m.content LIKE ?1
@@ -413,5 +482,53 @@ fn map_chat_row(row: &rusqlite::Row<'_>) -> SqliteResult<ChatData> {
       agent_id: row.get(4)?,
       acp_session_id: row.get(5)?,
       workspace_path: row.get(6)?,
+      provider_id: row.get(7)?,
+      model_id: row.get(8)?,
+      branch: row.get(9)?,
+      is_pinned: row.get(10)?,
+      archived_at: row.get(11)?,
    })
+}
+
+#[cfg(test)]
+mod tests {
+   use super::*;
+
+   #[test]
+   fn migrates_legacy_messages_and_round_trips_images() {
+      let directory = tempfile::tempdir().unwrap();
+      let path = directory.path().join("history.db");
+      let conn = Connection::open(&path).unwrap();
+      conn
+         .execute_batch(
+            "CREATE TABLE messages (
+         id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, role TEXT NOT NULL,
+         content TEXT NOT NULL, timestamp INTEGER NOT NULL, is_streaming BOOLEAN,
+         is_tool_use BOOLEAN, tool_name TEXT
+      );",
+         )
+         .unwrap();
+      drop(conn);
+      let repository = ChatHistoryRepository::new(path.clone());
+      repository.initialize().unwrap();
+      repository.initialize().unwrap();
+      let chat: ChatData = serde_json::from_value(serde_json::json!({
+         "id": "images", "title": "Images", "created_at": 1, "last_message_at": 2,
+         "is_pinned": false
+      }))
+      .unwrap();
+      let mut message: MessageData = serde_json::from_value(serde_json::json!({
+         "id": "user", "chat_id": "images", "role": "user", "content": "",
+         "timestamp": 2, "is_streaming": false, "is_tool_use": false
+      }))
+      .unwrap();
+      assert!(message.images.is_none());
+      let images = r#"[{"mediaType":"image/png","data":"YWJj"}]"#.to_string();
+      message.images = Some(images.clone());
+      repository.save_chat(chat, vec![message], vec![]).unwrap();
+      let reopened = ChatHistoryRepository::new(path);
+      let loaded = reopened.load_chat("images").unwrap();
+      assert_eq!(loaded.messages[0].images.as_deref(), Some(images.as_str()));
+      assert_eq!(loaded.messages[0].content, "");
+   }
 }

@@ -5,15 +5,17 @@ interface Props extends Omit<TerminalSlotProps, "el"> {
   sessionId: string;
 }
 
-// Mounts a stable DOM target for a terminal session. The actual XtermTerminal
+// Mounts a stable DOM target for a terminal session. The terminal frontend
 // instance is rendered globally by TerminalHost and portaled into this slot.
-// Moving the slot between panes only re-targets the portal — xterm state and
+// Moving the slot between panes only re-targets the portal — frontend state and
 // PTY listeners are preserved.
 export function TerminalSlot({
   sessionId,
   isActive,
   isVisible,
+  shell,
   initialCommand,
+  environment,
   workingDirectory,
   remoteConnectionId,
   onTerminalExit,
@@ -26,12 +28,14 @@ export function TerminalSlot({
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const { register, unregister } = useTerminalSlotsStore.getState();
+    const { register, unregister } = useTerminalSlotsStore.getState().actions;
     register(sessionId, {
       el,
       isActive,
       isVisible,
+      shell,
       initialCommand,
+      environment,
       workingDirectory,
       remoteConnectionId,
       onTerminalExit,
@@ -45,10 +49,12 @@ export function TerminalSlot({
   }, [sessionId]);
 
   useEffect(() => {
-    useTerminalSlotsStore.getState().update(sessionId, {
+    useTerminalSlotsStore.getState().actions.update(sessionId, {
       isActive,
       isVisible,
+      shell,
       initialCommand,
+      environment,
       workingDirectory,
       remoteConnectionId,
       onTerminalExit,
@@ -60,7 +66,9 @@ export function TerminalSlot({
     sessionId,
     isActive,
     isVisible,
+    shell,
     initialCommand,
+    environment,
     workingDirectory,
     remoteConnectionId,
     onTerminalExit,

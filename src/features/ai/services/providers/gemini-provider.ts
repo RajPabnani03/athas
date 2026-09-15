@@ -28,6 +28,7 @@ export class GeminiProvider extends AIProvider {
         models?: Array<{
           name: string;
           displayName?: string;
+          inputTokenLimit?: number;
           outputTokenLimit?: number;
           supportedGenerationMethods?: string[];
         }>;
@@ -44,7 +45,8 @@ export class GeminiProvider extends AIProvider {
         .map((model) => ({
           id: model.name.replace(/^models\//, ""),
           name: model.displayName || model.name.replace(/^models\//, ""),
-          maxTokens: model.outputTokenLimit,
+          contextWindow: model.inputTokenLimit,
+          maxOutputTokens: model.outputTokenLimit,
         }));
     } catch (error) {
       console.error(`${this.id} model fetch error:`, error);
@@ -83,7 +85,14 @@ export class GeminiProvider extends AIProvider {
         .filter((msg) => msg.role !== "system")
         .map((msg) => ({
           role: msg.role === "assistant" ? "model" : "user",
-          parts: [{ text: msg.content }],
+          parts: [
+            ...(msg.content ? [{ text: msg.content }] : []),
+            ...(msg.role === "user"
+              ? (msg.images ?? []).map((image) => ({
+                  inlineData: { mimeType: image.mediaType, data: image.data },
+                }))
+              : []),
+          ],
         })),
       generationConfig,
     };

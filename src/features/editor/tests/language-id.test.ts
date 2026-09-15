@@ -1,8 +1,4 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  getLanguageDisplayName as getAthasEditorLanguageDisplayName,
-  getLanguageIdFromPath as getAthasEditorLanguageIdFromPath,
-} from "@/features/editor/utils/language-id";
 import { detectLanguageFromFileName } from "../utils/language-detection";
 import { getLanguageDisplayName, getLanguageIdFromPath } from "../utils/language-id";
 import { isMarkdownFile as isEditorMarkdownFile } from "../utils/lines";
@@ -15,7 +11,7 @@ import {
   MONACO_HIGHLIGHT_LANGUAGE_IDS,
   MONACO_LANGUAGE_BY_ATHAS_ID,
   toMonacoLanguageId,
-} from "../monaco/language";
+} from "../engines/monaco/language";
 import { getLanguageOverlayTokens } from "../lib/wasm-parser/language-overlays";
 
 describe("getLanguageIdFromPath", () => {
@@ -43,11 +39,6 @@ describe("getLanguageIdFromPath", () => {
     expect(getLanguageDisplayName("dotenv")).toBe("Dotenv");
   });
 
-  it("detects astro files", () => {
-    expect(getLanguageIdFromPath("/tmp/src/pages/index.astro")).toBe("astro");
-    expect(getLanguageDisplayName("astro")).toBe("Astro");
-  });
-
   it("detects extension-backed highlight languages without registry data", () => {
     expect(getLanguageIdFromPath("/tmp/component.tsx")).toBe("typescriptreact");
     expect(getLanguageIdFromPath("/tmp/analysis.R")).toBe("r");
@@ -73,6 +64,7 @@ describe("getLanguageIdFromPath", () => {
     expect(getLanguageIdFromPath("/tmp/message.proto")).toBe("protobuf");
     expect(getLanguageIdFromPath("/tmp/query.ql")).toBe("ql");
     expect(getLanguageIdFromPath("/tmp/main.tf")).toBe("terraform");
+    expect(getLanguageIdFromPath("/tmp/page.astro")).toBe("astro");
     expect(getLanguageIdFromPath("/tmp/icon.svg")).toBe("xml");
     expect(getLanguageIdFromPath("/tmp/project.csproj")).toBe("xml");
     expect(getLanguageDisplayName("diff")).toBe("Diff");
@@ -83,6 +75,7 @@ describe("getLanguageIdFromPath", () => {
     expect(getLanguageDisplayName("r")).toBe("R");
     expect(getLanguageDisplayName("rmarkdown")).toBe("R Markdown");
     expect(getLanguageDisplayName("jupyter-notebook")).toBe("Jupyter Notebook");
+    expect(getLanguageDisplayName("astro")).toBe("Astro");
   });
 
   it("maps Monaco-highlighted extensions to registered Monaco language ids", () => {
@@ -95,6 +88,7 @@ describe("getLanguageIdFromPath", () => {
     expect(toMonacoLanguageId(getLanguageIdFromPath("/tmp/.dockerignore"))).toBe("gitignore");
     expect(toMonacoLanguageId(getLanguageIdFromPath("/tmp/.gitattributes"))).toBe("gitattributes");
     expect(toMonacoLanguageId(getLanguageIdFromPath("/tmp/bun.lock"))).toBe("lockfile");
+    expect(toMonacoLanguageId(getLanguageIdFromPath("/tmp/flake.nix"))).toBe("nix");
     expect(toMonacoLanguageId(getLanguageIdFromPath("/tmp/main.zig"))).toBe("zig");
     expect(toMonacoLanguageId(getLanguageIdFromPath("/tmp/Main.elm"))).toBe("elm");
     expect(toMonacoLanguageId(getLanguageIdFromPath("/tmp/init.el"))).toBe("elisp");
@@ -111,24 +105,6 @@ describe("toMonacoLanguageId", () => {
         `${athasLanguageId} maps to ${monacoLanguageId}`,
       ).toBe(true);
     }
-  });
-});
-
-describe("Athas editor language detection", () => {
-  it("keeps dotfile syntax mappings aligned with the shared editor surface", () => {
-    expect(getAthasEditorLanguageIdFromPath("/tmp/.gitignore")).toBe("gitignore");
-    expect(getAthasEditorLanguageIdFromPath("/tmp/exploration.ipy")).toBe("python");
-    expect(getAthasEditorLanguageIdFromPath("/tmp/analysis.R")).toBe("r");
-    expect(getAthasEditorLanguageIdFromPath("/tmp/report.Rmd")).toBe("rmarkdown");
-    expect(getAthasEditorLanguageIdFromPath("/tmp/notebook.ipynb")).toBe("jupyter-notebook");
-    expect(getAthasEditorLanguageIdFromPath("/tmp/.dockerignore")).toBe("gitignore");
-    expect(getAthasEditorLanguageIdFromPath("/tmp/.gitattributes")).toBe("gitattributes");
-    expect(getAthasEditorLanguageIdFromPath("/tmp/.git/info/exclude")).toBe("gitignore");
-    expect(getAthasEditorLanguageIdFromPath("/tmp/.git/info/attributes")).toBe("gitattributes");
-    expect(getAthasEditorLanguageIdFromPath("/tmp/bun.lock")).toBe("lockfile");
-    expect(getAthasEditorLanguageDisplayName("gitattributes")).toBe("Git Attributes");
-    expect(getAthasEditorLanguageDisplayName("lockfile")).toBe("Lockfile");
-    expect(getAthasEditorLanguageDisplayName("rmarkdown")).toBe("R Markdown");
   });
 });
 
@@ -158,11 +134,25 @@ describe("R Markdown overlays", () => {
 });
 
 describe("line-based syntax highlighting", () => {
-  it("highlights ignore, attributes, and lockfile syntaxes without a Tree-sitter parser", () => {
+  it("highlights diff, ignore, attributes, and lockfile syntaxes without a Tree-sitter parser", () => {
+    expect(hasLineBasedSyntaxHighlighter("diff")).toBe(true);
     expect(hasLineBasedSyntaxHighlighter("gitignore")).toBe(true);
     expect(hasLineBasedSyntaxHighlighter("gitattributes")).toBe(true);
     expect(hasLineBasedSyntaxHighlighter("lockfile")).toBe(true);
 
+    expect(
+      tokenizeLineBasedSyntax(
+        "diff --git a/src/file.ts b/src/file.ts\n@@ -1 +1 @@\n-old\n+new",
+        "diff",
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ class_name: "token-keyword" }),
+        expect.objectContaining({ class_name: "token-attribute" }),
+        expect.objectContaining({ class_name: "token-variable" }),
+        expect.objectContaining({ class_name: "token-string" }),
+      ]),
+    );
     expect(tokenizeLineBasedSyntax("# comment\n!important/*.log", "gitignore")).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ class_name: "token-comment" }),
@@ -187,11 +177,35 @@ describe("line-based syntax highlighting", () => {
   });
 
   it("provides fallback tokens for reported parser-backed languages", () => {
-    for (const languageId of ["typescriptreact", "zig", "elm", "elisp"]) {
+    for (const languageId of ["typescript", "typescriptreact", "rust", "zig", "elm", "elisp"]) {
       expect(hasLineBasedSyntaxHighlighter(languageId)).toBe(false);
       expect(hasLineBasedSyntaxFallback(languageId)).toBe(true);
     }
 
+    expect(
+      tokenizeLineBasedSyntax(
+        'import type { View } from "./view";\nconst count: number = 1;',
+        "typescript",
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ class_name: "token-keyword" }),
+        expect.objectContaining({ class_name: "token-type" }),
+        expect.objectContaining({ class_name: "token-string" }),
+      ]),
+    );
+    expect(
+      tokenizeLineBasedSyntax(
+        "pub async fn load(path: &PathBuf) -> Result<Vec<String>, Error> { assert!(path.exists()); }",
+        "rust",
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ class_name: "token-keyword" }),
+        expect.objectContaining({ class_name: "token-type" }),
+        expect.objectContaining({ class_name: "token-function" }),
+      ]),
+    );
     expect(
       tokenizeLineBasedSyntax(
         'export const View = () => <div className="root" />',

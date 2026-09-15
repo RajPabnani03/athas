@@ -15,17 +15,17 @@ describe("buildOnboardingViewModel", () => {
     });
   });
 
-  it("shows release notes instead of setup defaults after an update", () => {
+  it("uses the same release surface when What's New is opened manually", () => {
     expect(
       buildOnboardingViewModel({
-        mode: "updated",
+        mode: "release-notes",
         currentVersion: "1.2.0",
-        previousVersion: "1.1.0",
       }),
     ).toMatchObject({
-      title: "Athas was updated",
+      title: "What's new in Athas 1.2.0",
       showSettings: false,
-      primaryAction: "open-whats-new",
+      primaryAction: "finish",
+      primaryLabel: "Done",
     });
   });
 });

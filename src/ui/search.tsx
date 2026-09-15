@@ -1,19 +1,20 @@
-import { cva } from "class-variance-authority";
 import {
-  TextAaIcon as CaseSensitive,
-  CaretDownIcon as ChevronDown,
-  CaretRightIcon as ChevronRight,
-  CaretUpIcon as ChevronUp,
-  BracketsCurlyIcon as Regex,
-  ArrowsLeftRightIcon as Replace,
-  MagnifyingGlassIcon as Search,
-  TextTIcon as WholeWord,
-  XIcon as X,
-  type Icon as PhosphorIcon,
-} from "@phosphor-icons/react";
+  ArrowsLeftRightIcon,
+  BracketsCurlyIcon,
+  CaseSensitiveIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ChevronUpIcon,
+  type Icon,
+  SearchIcon,
+  TextIcon,
+  XIcon,
+} from "@/ui/icons";
 import { forwardRef, type ComponentProps, type ReactNode, type RefObject } from "react";
 import { Button } from "@/ui/button";
+import { menuSurfaceVariants } from "@/ui/dropdown";
 import Input from "@/ui/input";
+import { Toggle } from "@/ui/toggle";
 import { cn } from "@/utils/cn";
 
 export interface SearchToggleOption {
@@ -48,10 +49,10 @@ export const SearchField = forwardRef<
   Omit<ComponentProps<typeof Input>, "onChange" | "value" | "leftIcon"> & {
     value: string;
     onChange: (value: string) => void;
-    leftIcon?: PhosphorIcon;
+    leftIcon?: Icon;
   }
 >(function SearchField(
-  { value, onChange, leftIcon = Search, placeholder = "Search", ...props },
+  { value, onChange, leftIcon = SearchIcon, placeholder = "Search", ...props },
   ref,
 ) {
   return (
@@ -66,55 +67,6 @@ export const SearchField = forwardRef<
     />
   );
 });
-
-const searchSurfaceVariants = cva(
-  "w-[320px] rounded-xl border border-border/70 bg-primary-bg/95 p-1.5 shadow-[var(--shadow-popover)] backdrop-blur-sm",
-);
-
-const searchIconButtonVariants = cva(
-  "flex size-6 items-center justify-center rounded-lg border border-transparent text-text-lighter transition-[transform,background-color,border-color,color] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] hover:border-border/70 hover:bg-hover hover:text-text active:scale-[var(--app-press-scale)]",
-  {
-    variants: {
-      disabled: {
-        true: "cursor-not-allowed opacity-50",
-        false: "",
-      },
-    },
-    defaultVariants: {
-      disabled: false,
-    },
-  },
-);
-
-const searchToggleButtonVariants = cva(
-  "flex size-6 items-center justify-center rounded-lg border border-transparent transition-[transform,background-color,border-color,color] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] hover:border-border/70 hover:bg-hover active:scale-[var(--app-press-scale)]",
-  {
-    variants: {
-      active: {
-        true: "border-border/70 bg-hover text-text",
-        false: "text-text-lighter",
-      },
-    },
-    defaultVariants: {
-      active: false,
-    },
-  },
-);
-
-const searchActionButtonVariants = cva(
-  "ui-font ui-text-sm flex h-8 items-center justify-center rounded-lg border border-transparent px-2.5 text-text-lighter transition-[transform,background-color,border-color,color] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] hover:border-border/70 hover:bg-hover hover:text-text active:scale-[var(--app-press-scale)]",
-  {
-    variants: {
-      disabled: {
-        true: "cursor-not-allowed opacity-50",
-        false: "",
-      },
-    },
-    defaultVariants: {
-      disabled: false,
-    },
-  },
-);
 
 export function SearchPopover({
   value,
@@ -135,40 +87,41 @@ export function SearchPopover({
   className,
 }: SearchPopoverProps) {
   return (
-    <div className={cn(searchSurfaceVariants(), className)}>
+    <div className={cn(menuSurfaceVariants(), "w-80", className)}>
       <div className="flex items-center gap-1.5">
         {leadingControl}
 
         <div className="relative min-w-0 flex-1">
-          <Search className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2.5 text-text-lighter" />
           <Input
+            reserveEndSpace
             ref={inputRef}
             type="text"
             value={value}
             onChange={(event) => onChange(event.target.value)}
             onKeyDown={onKeyDown}
             placeholder={placeholder}
-            className="ui-text-sm h-8 rounded-lg border-border/80 bg-primary-bg py-1 pr-8 pl-8"
+            leftIcon={SearchIcon}
           />
           {value && (
-            <Button
-              type="button"
-              onClick={() => onChange("")}
-              variant="ghost"
-              compact
-              className="-translate-y-1/2 absolute top-1/2 right-1"
-              aria-label="Clear search"
-            >
-              <X />
-            </Button>
+            <span className="inline-flex min-w-0 -translate-y-1/2 absolute top-1/2 right-1">
+              <Button
+                type="button"
+                onClick={() => onChange("")}
+                variant="ghost"
+                iconOnly
+                aria-label="Clear search"
+              >
+                <XIcon />
+              </Button>
+            </span>
           )}
         </div>
 
         {matchLabel && (
           <span
             className={cn(
-              "ui-font ui-text-sm shrink-0",
-              matchTone === "warning" ? "text-warning" : "text-text-lighter",
+              "font-sans ui-text-sm shrink-0",
+              matchTone === "warning" ? "text-warning" : "text-subtle-foreground",
             )}
           >
             {matchLabel}
@@ -177,15 +130,8 @@ export function SearchPopover({
 
         {extraActions}
 
-        <Button
-          type="button"
-          onClick={onClose}
-          variant="ghost"
-          className={searchIconButtonVariants()}
-          aria-label="Close search"
-          compact
-        >
-          <X />
+        <Button type="button" onClick={onClose} variant="ghost" aria-label="Close search" iconOnly>
+          <XIcon />
         </Button>
       </div>
 
@@ -193,21 +139,16 @@ export function SearchPopover({
         <div className="mt-1.5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-1">
             {options.map((option) => (
-              <Button
+              <Toggle
                 key={option.id}
                 type="button"
                 onClick={option.onToggle}
-                variant="ghost"
-                className={searchToggleButtonVariants({
-                  active: option.active,
-                })}
+                pressed={option.active}
                 tooltip={option.label}
                 aria-label={option.label}
-                aria-pressed={option.active}
-                compact
               >
                 {option.icon}
-              </Button>
+              </Toggle>
             ))}
           </div>
 
@@ -219,13 +160,10 @@ export function SearchPopover({
                   onClick={onPrevious}
                   disabled={!canNavigate}
                   variant="ghost"
-                  className={searchIconButtonVariants({
-                    disabled: !canNavigate,
-                  })}
                   aria-label="Previous match"
-                  compact
+                  iconOnly
                 >
-                  <ChevronUp />
+                  <ChevronUpIcon />
                 </Button>
               )}
               {onNext && (
@@ -234,13 +172,10 @@ export function SearchPopover({
                   onClick={onNext}
                   disabled={!canNavigate}
                   variant="ghost"
-                  className={searchIconButtonVariants({
-                    disabled: !canNavigate,
-                  })}
                   aria-label="Next match"
-                  compact
+                  iconOnly
                 >
-                  <ChevronDown />
+                  <ChevronDownIcon />
                 </Button>
               )}
             </div>
@@ -271,12 +206,11 @@ export function SearchReplaceToggle({
       type="button"
       onClick={onToggle}
       variant="ghost"
-      className={searchIconButtonVariants()}
       tooltip={label}
       aria-label={label}
-      compact
+      iconOnly
     >
-      <ChevronRight className={cn("transition-transform", isExpanded && "rotate-90")} />
+      <ChevronRightIcon className={cn("transition-transform", isExpanded && "rotate-90")} />
     </Button>
   );
 }
@@ -304,28 +238,21 @@ export function SearchReplaceRow({
 }) {
   return (
     <div className="flex items-center gap-1.5 border-border/60 border-t pt-1.5">
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-primary-bg text-text-lighter">
-        <Replace />
+      <span className="flex size-8 shrink-0 items-center justify-center text-subtle-foreground">
+        <ArrowsLeftRightIcon />
       </span>
 
       <Input
+        grow
         ref={inputRef}
         type="text"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={onKeyDown}
         placeholder="Replace with..."
-        className="ui-text-sm h-8 flex-1 rounded-lg border-border/80 bg-primary-bg py-1"
       />
 
-      <Button
-        type="button"
-        onClick={onReplace}
-        disabled={!canReplace}
-        variant="ghost"
-        className={searchActionButtonVariants({ disabled: !canReplace })}
-        compact
-      >
+      <Button type="button" onClick={onReplace} disabled={!canReplace} variant="ghost">
         Replace
       </Button>
       <Button
@@ -333,9 +260,7 @@ export function SearchReplaceRow({
         onClick={onReplaceAll}
         disabled={!canReplaceAll}
         variant="ghost"
-        className={searchActionButtonVariants({ disabled: !canReplaceAll })}
         tooltip={replaceAllTooltip}
-        compact
       >
         All
       </Button>
@@ -347,6 +272,7 @@ interface SearchInputProps {
   value: string;
   onChange: (value: string) => void;
   onKeyDown?: (event: React.KeyboardEvent<HTMLInputElement>) => void;
+  onFocus?: (event: React.FocusEvent<HTMLInputElement>) => void;
   placeholder: string;
   inputRef?: RefObject<HTMLInputElement | null>;
   matchLabel?: string | null;
@@ -359,6 +285,7 @@ export function SearchInput({
   value,
   onChange,
   onKeyDown,
+  onFocus,
   placeholder,
   inputRef,
   matchLabel,
@@ -369,54 +296,51 @@ export function SearchInput({
   return (
     <div className={cn("flex min-w-0 flex-1 items-center gap-1.5", className)}>
       <div className="relative min-w-0 flex-1">
-        <Search className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2.5 text-text-lighter" />
         <Input
+          reserveEndSpace
           ref={inputRef}
           type="text"
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={onKeyDown}
+          onFocus={onFocus}
           placeholder={placeholder}
-          className="ui-text-sm h-8 rounded-lg border-border/80 bg-primary-bg py-1 pr-8 pl-8"
+          leftIcon={SearchIcon}
         />
         {value && (
-          <Button
-            type="button"
-            onClick={() => onChange("")}
-            variant="ghost"
-            compact
-            className="-translate-y-1/2 absolute top-1/2 right-1"
-            aria-label="Clear search"
-          >
-            <X />
-          </Button>
+          <span className="inline-flex min-w-0 -translate-y-1/2 absolute top-1/2 right-1">
+            <Button
+              type="button"
+              onClick={() => onChange("")}
+              variant="ghost"
+              iconOnly
+              aria-label="Clear search"
+            >
+              <XIcon />
+            </Button>
+          </span>
         )}
       </div>
 
       {options.length > 0 && (
         <div className="flex shrink-0 items-center gap-1">
           {options.map((option) => (
-            <Button
+            <Toggle
               key={option.id}
               type="button"
               onClick={option.onToggle}
-              variant="ghost"
-              className={searchToggleButtonVariants({
-                active: option.active,
-              })}
+              pressed={option.active}
               tooltip={option.label}
               aria-label={option.label}
-              aria-pressed={option.active}
-              compact
             >
               {option.icon}
-            </Button>
+            </Toggle>
           ))}
         </div>
       )}
 
       {matchLabel && (
-        <span className="ui-font ui-text-sm shrink-0 text-text-lighter">{matchLabel}</span>
+        <span className="font-sans ui-text-sm shrink-0 text-subtle-foreground">{matchLabel}</span>
       )}
 
       {extraActions}
@@ -425,8 +349,8 @@ export function SearchInput({
 }
 
 export const SEARCH_TOGGLE_ICONS = {
-  caseSensitive: <CaseSensitive />,
-  wholeWord: <WholeWord />,
-  regex: <Regex />,
-  preserveCase: <span className="ui-font ui-text-xs font-semibold">Aa</span>,
+  caseSensitive: <CaseSensitiveIcon />,
+  wholeWord: <TextIcon />,
+  regex: <BracketsCurlyIcon />,
+  preserveCase: <span className="font-sans ui-text-sm font-semibold">Aa</span>,
 };

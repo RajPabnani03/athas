@@ -1,6 +1,7 @@
 import {
   cacheFontsForBootstrap,
   cacheThemeForBootstrap,
+  cacheWindowTransparencyForBootstrap,
 } from "@/features/settings/lib/appearance-bootstrap";
 import {
   resolveEffectiveTheme,
@@ -8,6 +9,7 @@ import {
 } from "@/features/settings/lib/theme-resolution";
 import { invoke } from "@tauri-apps/api/core";
 import type { Settings, Theme } from "@/features/settings/types/settings.types";
+import { getUiRootAttributes } from "@/features/settings/lib/ui-preferences";
 
 const ALL_THEME_CLASSES = [
   "force-athas-light",
@@ -24,18 +26,52 @@ function applyFallbackTheme(theme: Theme) {
 
 let removeThemeSyncListener: (() => void) | null = null;
 let latestThemeSyncSettings: Settings | null = null;
+let cancelPendingThemeApplication: (() => void) | null = null;
+let themeApplicationVersion = 0;
 
-function applyWindowTransparency(enabled: boolean) {
+function getCurrentThemeType(): "light" | "dark" {
+  return document.documentElement.getAttribute("data-theme-type") === "light" ? "light" : "dark";
+}
+
+let requestedWindowTransparency = false;
+
+function isEffectiveWindowTransparencyEnabled() {
+  return (
+    requestedWindowTransparency &&
+    document.documentElement.getAttribute("data-reduce-transparency") !== "true"
+  );
+}
+
+export function syncEffectiveWindowTransparency() {
   if (typeof document === "undefined") return;
+
+  const enabled = isEffectiveWindowTransparencyEnabled();
 
   document.documentElement.setAttribute(
     "data-window-transparency",
     enabled ? "enabled" : "disabled",
   );
 
-  void invoke("set_window_transparency_enabled", { enabled }).catch((error) => {
+  void invoke("set_window_transparency_enabled", {
+    enabled,
+    themeType: getCurrentThemeType(),
+  }).catch((error) => {
     console.warn("Failed to sync window transparency", error);
   });
+}
+
+function applyWindowTransparency(enabled: boolean) {
+  requestedWindowTransparency = enabled;
+  cacheWindowTransparencyForBootstrap(enabled);
+  syncEffectiveWindowTransparency();
+}
+
+function applyUiPreferences(settings: Pick<Settings, "reduceMotion">) {
+  if (typeof document === "undefined") return;
+
+  for (const [name, value] of Object.entries(getUiRootAttributes(settings))) {
+    document.documentElement.setAttribute(name, value);
+  }
 }
 
 function stopSystemThemeSync() {
@@ -59,54 +95,81 @@ function syncThemeWithSystem(settings: Settings) {
   removeThemeSyncListener = subscribeSystemThemePreference(handleChange);
 }
 
-export async function applyTheme(theme: Theme) {
+async function applyTheme(theme: Theme) {
   if (typeof window === "undefined") return;
+  const version = ++themeApplicationVersion;
+  cancelPendingThemeApplication?.();
+  cancelPendingThemeApplication = null;
 
   try {
     const { themeRegistry } = await import("@/extensions/themes/theme-registry");
+    if (version !== themeApplicationVersion) return;
+
+    const applyRegisteredTheme = () => {
+      if (version !== themeApplicationVersion) return;
+      themeRegistry.applyTheme(theme);
+      const appliedTheme = themeRegistry.getTheme(theme);
+      if (appliedTheme) {
+        cacheThemeForBootstrap(appliedTheme);
+        syncNativeWindowAppearance(appliedTheme.isDark ? "dark" : "light");
+      }
+    };
+
+    const waitForThemeRegistration = () => {
+      cancelPendingThemeApplication?.();
+      cancelPendingThemeApplication = themeRegistry.onRegistryChange(() => {
+        if (version !== themeApplicationVersion) return;
+        if (!themeRegistry.getTheme(theme)) return;
+        cancelPendingThemeApplication?.();
+        cancelPendingThemeApplication = null;
+        applyRegisteredTheme();
+      });
+    };
 
     if (!themeRegistry.isRegistryReady()) {
-      themeRegistry.onReady(() => {
-        themeRegistry.applyTheme(theme);
-        const appliedTheme = themeRegistry.getTheme(theme);
-        if (appliedTheme) {
-          cacheThemeForBootstrap(appliedTheme);
-          syncMacOSWindowAppearance(appliedTheme.isDark ? "dark" : "light");
+      cancelPendingThemeApplication = themeRegistry.onReady(() => {
+        if (version !== themeApplicationVersion) return;
+        cancelPendingThemeApplication = null;
+        if (themeRegistry.getTheme(theme)) {
+          applyRegisteredTheme();
+        } else {
+          waitForThemeRegistration();
         }
       });
       return;
     }
 
-    themeRegistry.applyTheme(theme);
-    const appliedTheme = themeRegistry.getTheme(theme);
-    if (appliedTheme) {
-      cacheThemeForBootstrap(appliedTheme);
-      syncMacOSWindowAppearance(appliedTheme.isDark ? "dark" : "light");
+    if (!themeRegistry.getTheme(theme)) {
+      waitForThemeRegistration();
+      return;
     }
+
+    applyRegisteredTheme();
   } catch (error) {
+    if (version !== themeApplicationVersion) return;
     console.error("Failed to apply theme via registry:", error);
     applyFallbackTheme(theme);
   }
 }
 
-function syncMacOSWindowAppearance(themeType: "light" | "dark") {
+function syncNativeWindowAppearance(themeType: "light" | "dark") {
   const transparencyEnabled =
-    typeof document === "undefined"
-      ? true
-      : document.documentElement.getAttribute("data-window-transparency") !== "disabled";
+    typeof document === "undefined" ? true : isEffectiveWindowTransparencyEnabled();
 
-  void invoke("set_macos_window_appearance", { themeType, transparencyEnabled }).catch((error) => {
-    console.warn("Failed to sync macOS window appearance", error);
+  void invoke("set_native_window_appearance", {
+    themeType,
+    transparencyEnabled,
+    followSystem: latestThemeSyncSettings !== null,
+  }).catch((error) => {
+    console.warn("Failed to sync native window appearance", error);
   });
 }
 
-export function cacheFontSettings(
-  settings: Pick<Settings, "fontFamily" | "uiFontFamily" | "uiFontSize">,
-) {
+function cacheFontSettings(settings: Pick<Settings, "fontFamily" | "uiFontFamily" | "uiFontSize">) {
   cacheFontsForBootstrap(settings.fontFamily, settings.uiFontFamily, settings.uiFontSize);
 }
 
-export function syncOllamaBaseUrl(baseUrl: string) {
+function syncOllamaBaseUrl(baseUrl: string) {
   if (!baseUrl) {
     return;
   }
@@ -118,7 +181,7 @@ export function syncOllamaBaseUrl(baseUrl: string) {
   );
 }
 
-export function syncCustomProviderBaseUrl(baseUrl: string) {
+function syncCustomProviderBaseUrl(baseUrl: string) {
   void import("@/features/ai/services/providers/ai-provider-registry").then(
     ({ setCustomProviderBaseUrl }) => {
       setCustomProviderBaseUrl(baseUrl);
@@ -131,7 +194,7 @@ export function syncCustomProviderBaseUrl(baseUrl: string) {
  * singleton provider instance so `getModels`, connection checks, and other
  * non-streaming calls can authenticate with Ollama Cloud.
  */
-export async function syncOllamaApiKey() {
+async function syncOllamaApiKey() {
   const [{ setOllamaApiKey }, { getProviderApiToken }] = await Promise.all([
     import("@/features/ai/services/providers/ai-provider-registry"),
     import("@/features/ai/services/ai-token-service"),
@@ -143,15 +206,20 @@ export async function syncOllamaApiKey() {
 export function applySettingsSideEffects(settings: Settings) {
   cacheFontSettings(settings);
   applyWindowTransparency(settings.windowTransparency);
-  void applyTheme(resolveEffectiveTheme(settings));
+  applyUiPreferences(settings);
+  applyThemeSettings(settings);
+  syncOllamaBaseUrl(settings.ollamaBaseUrl);
+  syncCustomProviderBaseUrl(settings.aiCustomBaseUrl);
+  void syncOllamaApiKey();
+}
+
+function applyThemeSettings(settings: Settings) {
   if (settings.syncSystemTheme) {
     syncThemeWithSystem(settings);
   } else {
     stopSystemThemeSync();
   }
-  syncOllamaBaseUrl(settings.ollamaBaseUrl);
-  syncCustomProviderBaseUrl(settings.aiCustomBaseUrl);
-  void syncOllamaApiKey();
+  void applyTheme(resolveEffectiveTheme(settings));
 }
 
 export function applySettingSideEffect<K extends keyof Settings>(
@@ -164,14 +232,7 @@ export function applySettingSideEffect<K extends keyof Settings>(
   }
 
   if (key === "syncSystemTheme" || key === "autoThemeLight" || key === "autoThemeDark") {
-    const settings = getSettings();
-    void applyTheme(resolveEffectiveTheme(settings));
-
-    if (settings.syncSystemTheme) {
-      syncThemeWithSystem(settings);
-    } else {
-      stopSystemThemeSync();
-    }
+    applyThemeSettings(getSettings());
   }
 
   if (key === "ollamaBaseUrl") {
@@ -188,5 +249,9 @@ export function applySettingSideEffect<K extends keyof Settings>(
 
   if (key === "windowTransparency") {
     applyWindowTransparency(value as boolean);
+  }
+
+  if (key === "reduceMotion") {
+    applyUiPreferences(getSettings());
   }
 }

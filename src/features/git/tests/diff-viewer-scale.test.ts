@@ -35,7 +35,7 @@ describe("diff viewer scale helpers", () => {
     expect(getInitialExpandedDiffFileKeys(multiDiff)).toEqual(["src/a.ts:0"]);
   });
 
-  test("keeps the requested initially expanded file", () => {
+  test("expands only the requested file initially", () => {
     const multiDiff = {
       ...createMultiDiff([createDiff("src/a.ts", 1), createDiff("src/b.ts", 1)]),
       fileKeys: ["first", "second"],

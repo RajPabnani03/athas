@@ -1,26 +1,28 @@
-export const HEADER_LEADING_ITEM_IDS = ["menu", "sidebar"] as const;
-export const HEADER_TRAILING_ITEM_IDS = ["run-actions", "ai-chat", "account"] as const;
-export const SIDEBAR_ACTIVITY_ITEM_IDS = ["files", "search", "git", "github-prs"] as const;
-export const FOOTER_LEADING_ITEM_IDS = [
-  "branch",
-  "terminal",
+export const SIDEBAR_ACTIVITY_ITEM_IDS = [
+  "files",
+  "workspaces",
+  "git",
+  "github-prs",
+  "views",
   "debugger",
-  "diagnostics",
-  "extensions",
-  "updates",
-] as const;
-export const FOOTER_TRAILING_ITEM_IDS = [
-  "outline",
   "databases",
-  "collaboration",
-  "notifications",
+  "docker",
+  "extensions",
 ] as const;
+export const DEFAULT_HIDDEN_SIDEBAR_ACTIVITY_ITEM_IDS = [
+  "github-prs",
+  "views",
+  "debugger",
+  "databases",
+  "docker",
+  "extensions",
+] as const;
+export const GIT_SIDEBAR_TAB_IDS = ["changes", "history"] as const;
+export const GIT_SIDEBAR_ITEM_IDS = [...GIT_SIDEBAR_TAB_IDS, "remotes", "tags", "stashes"] as const;
 
-export type HeaderLeadingItemId = (typeof HEADER_LEADING_ITEM_IDS)[number];
-export type HeaderTrailingItemId = (typeof HEADER_TRAILING_ITEM_IDS)[number];
 export type SidebarActivityItemId = (typeof SIDEBAR_ACTIVITY_ITEM_IDS)[number];
-export type FooterLeadingItemId = (typeof FOOTER_LEADING_ITEM_IDS)[number];
-export type FooterTrailingItemId = (typeof FOOTER_TRAILING_ITEM_IDS)[number];
+export type GitSidebarTabId = (typeof GIT_SIDEBAR_TAB_IDS)[number];
+export type GitSidebarItemId = (typeof GIT_SIDEBAR_ITEM_IDS)[number];
 
 export function normalizeItemOrder<T extends string>(
   persistedOrder: readonly T[] | undefined,

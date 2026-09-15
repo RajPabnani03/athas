@@ -15,6 +15,18 @@ export function normalizeConfiguredFontFamily(fontFamily: string, fallback: stri
   return fontFamily;
 }
 
+export function buildFontFamilyStack(primary: string, fallback: string): string {
+  const trimmed = primary.trim();
+  if (!trimmed) return fallback;
+  if (trimmed.includes(",")) return trimmed;
+
+  const normalized = trimmed.replace(/^(['"])(.*)\1$/, "$2");
+  if (["system-ui", "ui-sans-serif", "sans-serif", "serif", "monospace"].includes(normalized)) {
+    return `${normalized}, ${fallback}`;
+  }
+  return `"${normalized}", ${fallback}`;
+}
+
 export function resolveAvailableFontFamily(
   fontFamily: string,
   fallback: string,
@@ -26,6 +38,12 @@ export function resolveAvailableFontFamily(
 
   if (!primaryFontFamily) {
     return fallback;
+  }
+
+  if (
+    ["system-ui", "ui-sans-serif", "sans-serif", "serif", "monospace"].includes(primaryFontFamily)
+  ) {
+    return normalizedFontFamily;
   }
 
   const available = new Set(

@@ -1,0 +1,580 @@
+import type { AgentType, Chat } from "@/features/ai/types/ai-chat.types";
+import { hasAgentSessionActivity, selectAgentSessions } from "@/features/ai/lib/agent-session-list";
+import { isChatInWorkspace } from "@/features/ai/lib/ai-workspace-scope";
+import { coalesceAssistantResponses } from "@/features/ai/lib/assistant-response";
+import { normalizeMessageFollowUpActions } from "@/features/ai/lib/follow-up-actions";
+import {
+  deleteChatFromDb,
+  initChatDatabase,
+  loadAllChatsFromDb,
+  loadChatFromDb,
+  saveChatMetadataToDb,
+  saveChatToDb,
+} from "@/features/ai/services/ai-chat-history-service";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { useGitStore } from "@/features/git/stores/git.store";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { useProjectStore } from "@/features/window/stores/project.store";
+import type { AIChatActions } from "./ai-chat-store.types";
+import type { GetAIChatStore, SetAIChatStore } from "./ai-chat-store-context";
+
+type ChatActions = Omit<
+  AIChatActions,
+  | "checkApiKey"
+  | "checkAllProviderApiKeys"
+  | "saveApiKey"
+  | "removeApiKey"
+  | "hasProviderApiKey"
+  | "setDynamicModels"
+  | "setAvailableSlashCommands"
+  | "setSessionModeState"
+  | "setCurrentModeId"
+  | "setAcpStatus"
+  | "changeSessionMode"
+  | "setSessionConfigOptions"
+  | "changeSessionConfigOption"
+>;
+
+const getCurrentWorkspacePath = () => useProjectStore.getState().rootFolderPath || null;
+
+const createChatId = () =>
+  globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+function getNewChatMetadata(agentId: AgentType) {
+  const settings = useSettingsStore.getState().settings;
+  const branch = useGitStore.getState().gitStatus?.branch ?? null;
+
+  return {
+    providerId: agentId === "custom" ? settings.aiProviderId : null,
+    modelId: agentId === "custom" ? settings.aiModelId : null,
+    branch,
+    isPinned: false,
+    archivedAt: null,
+  };
+}
+
+function createChat(agentId: AgentType, id: string = createChatId()): Chat {
+  // One clock read for both, so "never received a message" stays detectable as
+  // lastMessageAt === createdAt.
+  const now = new Date();
+
+  return {
+    id,
+    title: "New Session",
+    messages: [],
+    createdAt: now,
+    lastMessageAt: new Date(now),
+    agentId,
+    acpSessionId: null,
+    workspacePath: getCurrentWorkspacePath(),
+    ...getNewChatMetadata(agentId),
+  };
+}
+
+async function syncChatToDatabase(get: GetAIChatStore, chatId: string) {
+  try {
+    const chat = get().chats.find((candidate) => candidate.id === chatId);
+    if (chat) {
+      await saveChatToDb(chat);
+    }
+  } catch (error) {
+    console.error(`Failed to sync chat ${chatId} to database:`, error);
+  }
+}
+
+async function loadChatMessages(set: SetAIChatStore, chatId: string) {
+  set((state) => {
+    state.chatMessageLoadStates[chatId] = "loading";
+  });
+  try {
+    const fullChat = await loadChatFromDb(chatId);
+    set((state) => {
+      const chatIndex = state.chats.findIndex((candidate) => candidate.id === chatId);
+      if (chatIndex !== -1) {
+        state.chats[chatIndex] = fullChat;
+        state.chatMessageLoadStates[chatId] = "loaded";
+      }
+    });
+  } catch (error) {
+    if (String(error).includes("Query returned no rows")) {
+      set((state) => {
+        state.chats = state.chats.filter((chat) => chat.id !== chatId);
+        if (state.currentChatId === chatId) {
+          state.currentChatId = null;
+        }
+        delete state.chatMessageLoadStates[chatId];
+      });
+      return;
+    }
+    set((state) => {
+      state.chatMessageLoadStates[chatId] = "error";
+    });
+    console.error(`Failed to load messages for chat ${chatId}:`, error);
+  }
+}
+
+export function createChatActions(set: SetAIChatStore, get: GetAIChatStore): ChatActions {
+  return {
+    setSelectedAgentId: (agentId) =>
+      set((state) => {
+        state.selectedAgentId = agentId;
+      }),
+    getCurrentAgentId: () => {
+      const state = get();
+      if (state.currentChatId) {
+        const chat = state.chats.find((candidate) => candidate.id === state.currentChatId);
+        if (chat?.agentId) {
+          return chat.agentId;
+        }
+      }
+      return state.selectedAgentId;
+    },
+    changeCurrentChatAgent: (agentId) => {
+      get().actions.selectChatAgent(get().currentChatId, agentId);
+    },
+    selectChatAgent: (chatId, agentId, options = {}) => {
+      const state = get();
+      const chat = state.chats.find((candidate) => candidate.id === chatId);
+      if (!chat && !chatId) {
+        set((draft) => {
+          draft.selectedAgentId = agentId;
+        });
+        return null;
+      }
+      const reusable =
+        chat &&
+        !chat.archivedAt &&
+        state.chatMessageLoadStates[chat.id] === "loaded" &&
+        !hasAgentSessionActivity(chat) &&
+        !chat.acpSessionId &&
+        !state.agentRuns[chat.id] &&
+        !state.agentMessageQueues[chat.id]?.length &&
+        state.pendingAgentLaunchRequest?.chatId !== chat.id;
+      if (chat?.agentId === agentId || reusable) {
+        set((draft) => {
+          const target = draft.chats.find((candidate) => candidate.id === chatId)!;
+          if (target.agentId !== agentId) {
+            target.agentId = agentId;
+            target.providerId =
+              agentId === "custom" ? getNewChatMetadata(agentId).providerId : null;
+            target.modelId = agentId === "custom" ? getNewChatMetadata(agentId).modelId : null;
+          }
+          if (agentId === "custom" && options.model) Object.assign(target, options.model);
+          if (options.activate ?? true) draft.selectedAgentId = agentId;
+        });
+        void saveChatMetadataToDb(get().chats.find((candidate) => candidate.id === chatId)!).catch(
+          (error) => console.error("Failed to save agent selection:", error),
+        );
+        return chatId;
+      }
+      const nextChatId =
+        !chat && chatId
+          ? get().actions.ensureChatSession(chatId, agentId, options)
+          : get().actions.createNewChat(agentId, options);
+      if (agentId === "custom" && options.model) {
+        get().actions.setChatModel(nextChatId, options.model.providerId, options.model.modelId);
+      }
+      return nextChatId;
+    },
+    setMode: (mode) =>
+      set((state) => {
+        state.mode = mode;
+      }),
+    setPendingAgentLaunchRequest: (request) =>
+      set((state) => {
+        state.pendingAgentLaunchRequest = request;
+      }),
+    startAgentRun: (chatId, run) =>
+      set((state) => {
+        state.agentRuns[chatId] = run;
+      }),
+    updateAgentRun: (chatId, runId, updates) =>
+      set((state) => {
+        const run = state.agentRuns[chatId];
+        if (run?.runId === runId) {
+          Object.assign(run, updates);
+        }
+      }),
+    finishAgentRun: (chatId, runId) =>
+      set((state) => {
+        if (state.agentRuns[chatId]?.runId === runId) {
+          delete state.agentRuns[chatId];
+        }
+      }),
+    enqueueAgentMessage: (chatId, message, images) =>
+      set((state) => {
+        (state.agentMessageQueues[chatId] ??= []).push({ content: message, images });
+      }),
+    prependAgentMessage: (chatId, message, images) =>
+      set((state) => {
+        (state.agentMessageQueues[chatId] ??= []).unshift({ content: message, images });
+      }),
+    dequeueAgentMessage: (chatId) => {
+      const message = get().agentMessageQueues[chatId]?.[0] ?? null;
+      set((state) => {
+        const queue = state.agentMessageQueues[chatId];
+        queue?.shift();
+        if (queue?.length === 0) {
+          delete state.agentMessageQueues[chatId];
+        }
+      });
+      return message;
+    },
+    moveQueuedAgentMessage: (chatId, fromIndex, toIndex) =>
+      set((state) => {
+        const queue = state.agentMessageQueues[chatId];
+        if (!queue || fromIndex < 0 || fromIndex >= queue.length) return;
+        if (toIndex < 0 || toIndex >= queue.length || fromIndex === toIndex) return;
+
+        const [message] = queue.splice(fromIndex, 1);
+        if (message) queue.splice(toIndex, 0, message);
+      }),
+    removeQueuedAgentMessage: (chatId, index) =>
+      set((state) => {
+        const queue = state.agentMessageQueues[chatId];
+        if (!queue || index < 0 || index >= queue.length) return;
+
+        queue.splice(index, 1);
+        if (queue.length === 0) delete state.agentMessageQueues[chatId];
+      }),
+    createNewChat: (agentId, options = {}) => {
+      const state = get();
+      const activate = options.activate ?? true;
+      const nextAgentId = agentId || state.selectedAgentId;
+
+      // "New Agent" used to mint a row per click, so the history filled up with
+      // identical untouched sessions. Hand back the one that is already waiting.
+      if (options.reuseEmpty) {
+        const workspacePath = getCurrentWorkspacePath();
+        const reusable = state.chats.find(
+          (chat) =>
+            chat.agentId === nextAgentId &&
+            !chat.archivedAt &&
+            isChatInWorkspace(chat, workspacePath) &&
+            !hasAgentSessionActivity(chat),
+        );
+
+        if (reusable) {
+          if (activate) {
+            set((draft) => {
+              draft.currentChatId = reusable.id;
+              draft.pendingAgentLaunchRequest = null;
+            });
+          }
+          return reusable.id;
+        }
+      }
+
+      const newChat = createChat(nextAgentId);
+
+      set((draft) => {
+        draft.chats.unshift(newChat);
+        draft.chatMessageLoadStates[newChat.id] = "loaded";
+        if (activate) {
+          draft.currentChatId = newChat.id;
+          draft.pendingAgentLaunchRequest = null;
+        }
+      });
+
+      void saveChatToDb(newChat).catch((error) =>
+        console.error("Failed to save new chat to database:", error),
+      );
+      return newChat.id;
+    },
+    ensureChatSession: (chatId, agentId, options = {}) => {
+      const state = get();
+      const existingChat = state.chats.find((chat) => chat.id === chatId);
+      if (existingChat) {
+        return existingChat.id;
+      }
+
+      const newChat = createChat(agentId || state.selectedAgentId, chatId);
+      set((draft) => {
+        draft.chats.unshift(newChat);
+        draft.chatMessageLoadStates[newChat.id] = "loaded";
+        if (options.activate ?? true) {
+          draft.currentChatId = newChat.id;
+        }
+      });
+
+      void saveChatToDb(newChat).catch((error) =>
+        console.error("Failed to save new agent chat to database:", error),
+      );
+      return newChat.id;
+    },
+    ensureChatForAgent: (agentId) => {
+      const state = get();
+      const workspacePath = getCurrentWorkspacePath();
+
+      if (state.currentChatId) {
+        const currentChat = state.chats.find((chat) => chat.id === state.currentChatId);
+        if (currentChat && isChatInWorkspace(currentChat, workspacePath)) {
+          return currentChat.id;
+        }
+      }
+
+      const matchingChat = state.chats.find(
+        (chat) =>
+          chat.agentId === agentId && !chat.archivedAt && isChatInWorkspace(chat, workspacePath),
+      );
+      if (matchingChat) {
+        set((draft) => {
+          draft.currentChatId = matchingChat.id;
+        });
+        return matchingChat.id;
+      }
+
+      const fallbackChat = state.chats.find(
+        (chat) => !chat.archivedAt && isChatInWorkspace(chat, workspacePath),
+      );
+      if (fallbackChat) {
+        set((draft) => {
+          draft.currentChatId = fallbackChat.id;
+        });
+        return fallbackChat.id;
+      }
+
+      return get().actions.createNewChat(agentId);
+    },
+    switchToChat: (chatId) => {
+      set((state) => {
+        state.currentChatId = chatId;
+      });
+      if (get().chatMessageLoadStates[chatId] !== "loaded") {
+        void loadChatMessages(set, chatId);
+      }
+    },
+    deleteChat: (chatId) => {
+      set((state) => {
+        const chatIndex = state.chats.findIndex((chat) => chat.id === chatId);
+        if (chatIndex !== -1) {
+          state.chats.splice(chatIndex, 1);
+        }
+
+        if (chatId === state.currentChatId) {
+          const [mostRecentChat] = selectAgentSessions(state.chats, {
+            workspacePath: getCurrentWorkspacePath(),
+            includeEmpty: true,
+          });
+          state.currentChatId = mostRecentChat?.id ?? null;
+        }
+        delete state.agentRuns[chatId];
+        delete state.agentMessageQueues[chatId];
+        delete state.chatMessageLoadStates[chatId];
+      });
+
+      void deleteChatFromDb(chatId).catch((error) =>
+        console.error("Failed to delete chat from database:", error),
+      );
+    },
+    setChatModel: (chatId, providerId, modelId) => {
+      set((state) => {
+        const chat = state.chats.find((candidate) => candidate.id === chatId);
+        if (chat?.agentId === "custom") {
+          chat.providerId = providerId;
+          chat.modelId = modelId;
+        }
+      });
+      const chat = get().chats.find((candidate) => candidate.id === chatId);
+      if (chat?.agentId === "custom") void saveChatMetadataToDb(chat);
+    },
+    updateChatTitle: (chatId, title) => {
+      set((state) => {
+        const chat = state.chats.find((candidate) => candidate.id === chatId);
+        if (chat) {
+          chat.title = title;
+        }
+      });
+
+      try {
+        const { buffers, actions } = useBufferStore.getState();
+        for (const buffer of buffers) {
+          if (buffer.type === "agent" && buffer.sessionId === chatId && buffer.name !== title) {
+            actions.updateBuffer({ ...buffer, name: title });
+          }
+        }
+      } catch (error) {
+        console.error("Failed to sync agent tab title:", error);
+      }
+
+      void syncChatToDatabase(get, chatId);
+    },
+    setChatPinned: (chatId, isPinned) => {
+      set((state) => {
+        const chat = state.chats.find((candidate) => candidate.id === chatId);
+        if (chat) {
+          chat.isPinned = isPinned;
+        }
+      });
+
+      const chat = get().chats.find((candidate) => candidate.id === chatId);
+      if (chat) {
+        void saveChatMetadataToDb(chat);
+      }
+    },
+    setChatArchived: (chatId, isArchived) => {
+      set((state) => {
+        const chat = state.chats.find((candidate) => candidate.id === chatId);
+        if (!chat) return;
+
+        chat.archivedAt = isArchived ? new Date() : null;
+        if (isArchived) {
+          chat.isPinned = false;
+        }
+
+        if (isArchived && state.currentChatId === chatId) {
+          const workspacePath = getCurrentWorkspacePath();
+          const [nextChat] = selectAgentSessions(
+            state.chats.filter((candidate) => candidate.id !== chatId),
+            { workspacePath, includeEmpty: true },
+          );
+          state.currentChatId = nextChat?.id ?? null;
+        }
+      });
+
+      const chat = get().chats.find((candidate) => candidate.id === chatId);
+      if (chat) {
+        void saveChatMetadataToDb(chat);
+      }
+    },
+    setChatAcpSessionId: (chatId, sessionId) => {
+      set((state) => {
+        const chat = state.chats.find((candidate) => candidate.id === chatId);
+        if (chat) {
+          chat.acpSessionId = sessionId;
+        }
+      });
+      void syncChatToDatabase(get, chatId);
+    },
+    addMessage: (chatId, message) => {
+      set((state) => {
+        const chat = state.chats.find((candidate) => candidate.id === chatId);
+        if (chat) {
+          chat.messages.push(normalizeMessageFollowUpActions(message));
+          chat.lastMessageAt = new Date();
+        }
+      });
+      void syncChatToDatabase(get, chatId);
+    },
+    updateMessage: (chatId, messageId, updates) => {
+      set((state) => {
+        const chat = state.chats.find((candidate) => candidate.id === chatId);
+        const message = chat?.messages.find((candidate) => candidate.id === messageId);
+        if (chat && message) {
+          Object.assign(message, normalizeMessageFollowUpActions({ ...message, ...updates }));
+          chat.lastMessageAt = new Date();
+        }
+      });
+      void syncChatToDatabase(get, chatId);
+    },
+    replaceChatMessages: (chatId, messages) => {
+      set((state) => {
+        const chat = state.chats.find((candidate) => candidate.id === chatId);
+        if (!chat) return;
+
+        chat.messages = coalesceAssistantResponses(messages.map(normalizeMessageFollowUpActions));
+        chat.lastMessageAt = chat.messages[chat.messages.length - 1]?.timestamp ?? chat.createdAt;
+      });
+      void syncChatToDatabase(get, chatId);
+    },
+    setChatMessageLoadState: (chatId, loadState) =>
+      set((state) => {
+        state.chatMessageLoadStates[chatId] = loadState;
+      }),
+    replaceUserMessage: (chatId, messageId, content) => {
+      const nextContent = content.trim();
+      if (!nextContent) return false;
+
+      let didReplace = false;
+      set((state) => {
+        const chat = state.chats.find((candidate) => candidate.id === chatId);
+        if (!chat) return;
+
+        const messageIndex = chat.messages.findIndex((message) => message.id === messageId);
+        const message = chat.messages[messageIndex];
+        if (!message || message.role !== "user") return;
+
+        message.content = nextContent;
+        message.timestamp = new Date();
+        chat.messages.splice(messageIndex + 1);
+        chat.lastMessageAt = new Date();
+        didReplace = true;
+      });
+
+      if (didReplace) {
+        void syncChatToDatabase(get, chatId);
+      }
+      return didReplace;
+    },
+    initializeDatabase: async () => {
+      try {
+        await initChatDatabase();
+      } catch (error) {
+        console.error("Failed to initialize chat database:", error);
+      }
+    },
+    loadChatsFromDatabase: async () => {
+      try {
+        const chats = await loadAllChatsFromDb();
+        set((state) => {
+          const persistedIds = new Set(chats.map((chat) => chat.id));
+          const inMemoryChats = new Map(state.chats.map((chat) => [chat.id, chat]));
+          state.chats = [
+            ...chats.map((chat) =>
+              state.chatMessageLoadStates[chat.id] === "loaded"
+                ? (inMemoryChats.get(chat.id) ?? (chat as Chat))
+                : (chat as Chat),
+            ),
+            ...state.chats.filter((chat) => !persistedIds.has(chat.id)),
+          ];
+          for (const chat of chats) {
+            state.chatMessageLoadStates[chat.id] ??= "loading";
+          }
+        });
+      } catch (error) {
+        console.error("Failed to load chats from database:", error);
+      }
+    },
+    loadChatMessages: (chatId) => loadChatMessages(set, chatId),
+    clearAllChats: async () => {
+      try {
+        await Promise.all(get().chats.map((chat) => deleteChatFromDb(chat.id)));
+        set((state) => {
+          state.chats = [];
+          state.currentChatId = null;
+          state.agentRuns = {};
+          state.agentMessageQueues = {};
+          state.chatMessageLoadStates = {};
+        });
+      } catch (error) {
+        console.error("Failed to clear all chats:", error);
+        throw error;
+      }
+    },
+    getWorkspaceSessionSnapshot: () => {
+      const state = get();
+      return {
+        currentChatId: state.currentChatId,
+        selectedAgentId: state.selectedAgentId,
+      };
+    },
+    restoreWorkspaceSession: (snapshot) => {
+      set((state) => {
+        state.currentChatId = snapshot?.currentChatId || null;
+        state.selectedAgentId = snapshot?.selectedAgentId || "custom";
+      });
+
+      if (snapshot?.currentChatId) {
+        if (get().chatMessageLoadStates[snapshot.currentChatId] !== "loaded") {
+          void loadChatMessages(set, snapshot.currentChatId);
+        }
+      }
+    },
+    getCurrentChat: () => {
+      const state = get();
+      return state.chats.find((chat) => chat.id === state.currentChatId);
+    },
+    getChatById: (chatId) => get().chats.find((chat) => chat.id === chatId),
+    getMessagesForChat: (chatId) => get().chats.find((chat) => chat.id === chatId)?.messages || [],
+  };
+}

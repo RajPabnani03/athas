@@ -1,6 +1,6 @@
 import { useMemo, useSyncExternalStore } from "react";
 import { iconThemeRegistry } from "./icon-theme-registry";
-import type { IconThemeDefinition } from "./types";
+import type { IconThemeDefinition } from "./icon-theme.types";
 
 const subscribeToIconThemeRegistry = (callback: () => void) =>
   iconThemeRegistry.onRegistryChange(callback);

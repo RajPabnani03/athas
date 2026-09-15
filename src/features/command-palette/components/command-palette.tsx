@@ -1,14 +1,11 @@
 import { appDataDir } from "@tauri-apps/api/path";
-import {
-  ClockCounterClockwiseIcon as History,
-  PuzzlePieceIcon as Puzzle,
-} from "@phosphor-icons/react";
+import { PuzzlePieceIcon, SearchIcon } from "@/ui/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useUIExtensionStore } from "@/extensions/ui/stores/ui-extension-store";
 import { IconThemeSelectorContent } from "@/features/command-palette/components/icon-theme-selector";
 import { ThemeSelectorContent } from "@/features/command-palette/components/theme-selector";
 import { useEditorSettingsStore } from "@/features/editor/stores/settings.store";
-import { QuickQuestionCommandContent } from "@/features/ai/components/quick-question-command";
+import { DatabaseCommandContent } from "@/features/database/components/database-sidebar";
 import { useLspStore } from "@/features/editor/lsp/stores/lsp.store";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { isMarkdownFile } from "@/features/editor/utils/lines";
@@ -22,7 +19,6 @@ import {
   stageAllFiles,
   unstageAllFiles,
 } from "@/features/git/api/git-status-api";
-import { useGitStore } from "@/features/git/stores/git.store";
 import { useRepositoryStore } from "@/features/git/stores/git-repository.store";
 import { useGitHubStore } from "@/features/github/stores/github.store";
 import { useToast } from "@/features/layout/contexts/toast-context";
@@ -39,15 +35,18 @@ import Command, {
   CommandEmpty,
   CommandHeader,
   CommandInput,
-  CommandItem,
+  CommandItemBadge,
+  CommandItemRow,
   CommandList,
+  CommandTabs,
+  useCommandListNavigation,
 } from "@/ui/command";
-import Keybinding from "@/ui/keybinding";
-import { matchesSearchQuery } from "@/utils/search-match";
+import { Kbd } from "@/ui/kbd";
+import { SearchMatchHighlight } from "@/components/search-match-highlight";
+import Keybinding from "@/features/keymaps/components/keybinding";
 import { createAdvancedActions } from "../constants/advanced-actions";
 import { createDatabaseActions } from "../constants/database-actions";
 import { createFileActions } from "../constants/file-actions";
-import { createGenerateActions } from "../constants/generate-actions";
 import { createGitActions } from "../constants/git-actions";
 import { createGitHubActions } from "../constants/github-actions";
 import { createMarkdownActions } from "../constants/markdown-actions";
@@ -58,40 +57,42 @@ import { createViewActions } from "../constants/view-actions";
 import { createWindowActions } from "../constants/window-actions";
 import type { Action } from "../types/action.types";
 import type { CommandPaletteViewId } from "../types/view.types";
+import {
+  commandPaletteFilters,
+  flattenCommandPaletteSections,
+  getCommandPaletteSections,
+  type CommandPaletteFilter,
+} from "../utils/command-palette-results";
 import { useActionsStore } from "../stores/action-history.store";
+import { useCommandPaletteViews } from "../services/command-palette-view-registry";
 
-const CommandPalette = () => {
+interface CommandPaletteContentProps {
+  commandPaletteInitialView: CommandPaletteViewId;
+}
+
+const CommandPaletteContent = ({ commandPaletteInitialView }: CommandPaletteContentProps) => {
   // Get data from stores
-  const {
-    isCommandPaletteVisible,
-    commandPaletteInitialView,
-    setIsCommandPaletteVisible,
-    setIsSettingsDialogVisible,
-    isSidebarVisible,
-    setIsSidebarVisible,
-    isBottomPaneVisible,
-    setIsBottomPaneVisible,
-    bottomPaneActiveTab,
-    setBottomPaneActiveTab,
-    isFindVisible,
-    setIsFindVisible,
-    setActiveView,
-    setActiveRightSidebarView,
-    setIsQuickOpenVisible,
-    openCommandPaletteView,
-    setIsRightSidebarVisible,
-    openSettingsDialog,
-  } = useUIState();
+  const setIsCommandPaletteVisible = useUIState((state) => state.setIsCommandPaletteVisible);
+  const setIsSettingsDialogVisible = useUIState((state) => state.setIsSettingsDialogVisible);
+  const isSidebarVisible = useUIState((state) => state.isSidebarVisible);
+  const setIsSidebarVisible = useUIState((state) => state.setIsSidebarVisible);
+  const isBottomPaneVisible = useUIState((state) => state.isBottomPaneVisible);
+  const setIsBottomPaneVisible = useUIState((state) => state.setIsBottomPaneVisible);
+  const bottomPaneActiveTab = useUIState((state) => state.bottomPaneActiveTab);
+  const setBottomPaneActiveTab = useUIState((state) => state.setBottomPaneActiveTab);
+  const setActiveView = useUIState((state) => state.setActiveView);
+  const setIsQuickOpenVisible = useUIState((state) => state.setIsQuickOpenVisible);
+  const openCommandPaletteView = useUIState((state) => state.openCommandPaletteView);
+  const openSettingsDialog = useUIState((state) => state.openSettingsDialog);
   const { openQuickEdit } = useEditorAppStore.use.actions();
   const handleFileSelect = useFileSystemStore.use.handleFileSelect?.();
-  const isVisible = isCommandPaletteVisible;
   const onClose = () => {
     setIsCommandPaletteVisible(false);
     setViewStack(["root"]);
   };
 
   const [query, setQuery] = useState("");
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [activeFilter, setActiveFilter] = useState<CommandPaletteFilter>("all");
   const [viewStack, setViewStack] = useState<CommandPaletteViewId[]>(["root"]);
   const [activeInitialView, setActiveInitialView] = useState<CommandPaletteViewId>("root");
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -100,13 +101,11 @@ const CommandPalette = () => {
     [commandPaletteInitialView],
   );
   const renderedViewStack =
-    isVisible && activeInitialView !== commandPaletteInitialView ? initialViewStack : viewStack;
+    activeInitialView !== commandPaletteInitialView ? initialViewStack : viewStack;
   const currentView = renderedViewStack[renderedViewStack.length - 1] || "root";
-  const isRootView = currentView === "root";
 
   const pushView = (view: CommandPaletteViewId) => {
     setQuery("");
-    setSelectedIndex(0);
     setViewStack((currentStack) => [...currentStack, view]);
   };
 
@@ -117,7 +116,8 @@ const CommandPalette = () => {
   };
 
   const handleThemeChange = useCallback((theme: string) => {
-    const { settings, updateSetting } = useSettingsStore.getState();
+    const { settings, actions } = useSettingsStore.getState();
+    const { updateSetting } = actions;
     if (settings.syncSystemTheme) {
       void updateSetting("syncSystemTheme", false).then(() => updateSetting("theme", theme));
       return;
@@ -127,36 +127,124 @@ const CommandPalette = () => {
   }, []);
 
   const handleIconThemeChange = useCallback((iconTheme: string) => {
-    void useSettingsStore.getState().updateSetting("iconTheme", iconTheme);
+    void useSettingsStore.getState().actions.updateSetting("iconTheme", iconTheme);
   }, []);
 
   const lastEnteredActions = useActionsStore.use.lastEnteredActionsStack();
-  const pushAction = useActionsStore.use.pushAction();
-  const { settings } = useSettingsStore();
+  const pushAction = useActionsStore.use.actions().pushAction;
+  const activityRailExpanded = useSettingsStore((state) => state.settings.activityRailExpanded);
+  const aiCompletion = useSettingsStore((state) => state.settings.aiCompletion);
+  const autoCompletion = useSettingsStore((state) => state.settings.autoCompletion);
+  const autoDetectLanguage = useSettingsStore((state) => state.settings.autoDetectLanguage);
+  const autoSave = useSettingsStore((state) => state.settings.autoSave);
+  const compactMenuBar = useSettingsStore((state) => state.settings.compactMenuBar);
+  const codeLens = useSettingsStore((state) => state.settings.codeLens);
+  const coreFeatures = useSettingsStore((state) => state.settings.coreFeatures);
+  const formatOnSave = useSettingsStore((state) => state.settings.formatOnSave);
+  const iconTheme = useSettingsStore((state) => state.settings.iconTheme);
+  const inlayHints = useSettingsStore((state) => state.settings.inlayHints);
+  const lineNumbers = useSettingsStore((state) => state.settings.lineNumbers);
+  const nativeMenuBar = useSettingsStore((state) => state.settings.nativeMenuBar);
+  const parameterHints = useSettingsStore((state) => state.settings.parameterHints);
+  const semanticTokens = useSettingsStore((state) => state.settings.semanticTokens);
+  const showGitHubReleases = useSettingsStore((state) => state.settings.showGitHubReleases);
+  const showGitHubDeployments = useSettingsStore((state) => state.settings.showGitHubDeployments);
+  const showGitHubActions = useSettingsStore((state) => state.settings.showGitHubActions);
+  const showGitHubIssues = useSettingsStore((state) => state.settings.showGitHubIssues);
+  const showGitHubPullRequests = useSettingsStore((state) => state.settings.showGitHubPullRequests);
+  const showMinimap = useSettingsStore((state) => state.settings.showMinimap);
+  const syncSystemTheme = useSettingsStore((state) => state.settings.syncSystemTheme);
+  const telemetry = useSettingsStore((state) => state.settings.telemetry);
+  const theme = useSettingsStore((state) => state.settings.theme);
+  const vimMode = useSettingsStore((state) => state.settings.vimMode);
+  const vimRelativeLineNumbers = useSettingsStore((state) => state.settings.vimRelativeLineNumbers);
+  const wordWrap = useSettingsStore((state) => state.settings.wordWrap);
   const effectiveTheme = useEditorSettingsStore.use.theme();
   const { setMode } = useVimStore.use.actions();
   const lspStatus = useLspStore.use.lspStatus();
-  const { rootFolderPath } = useFileSystemStore();
+  const rootFolderPath = useFileSystemStore((state) => state.rootFolderPath);
   const activeRepoPath = useRepositoryStore.use.activeRepoPath();
-  const gitStore = useGitStore();
-  const { checkAuth: checkGitHubAuth } = useGitHubStore().actions;
+  const { checkAuth: checkGitHubAuth } = useGitHubStore.use.actions();
   const extensionCommands = useUIExtensionStore.use.commands();
+  const extensionViews = useCommandPaletteViews();
   const { showToast } = useToast();
-  const openWhatsNew = useWhatsNewStore((state) => state.open);
-  const openOnboarding = useOnboardingStore((state) => state.openPreview);
-  const buffers = useBufferStore.use.buffers();
+  const openWhatsNew = useWhatsNewStore((state) => state.actions.open);
+  const openOnboarding = useOnboardingStore((state) => state.actions.openPreview);
   const activeBufferId = useBufferStore.use.activeBufferId();
-  const activeBuffer = buffers.find((b) => b.id === activeBufferId) || null;
+  const activeBuffer = useBufferStore((state) =>
+    activeBufferId ? (state.buffers.find((buffer) => buffer.id === activeBufferId) ?? null) : null,
+  );
   const {
     closeBuffer,
-    setActiveBuffer,
     switchToNextBuffer,
     switchToPreviousBuffer,
     reopenClosedTab,
-    openWebViewerBuffer,
+    openGitHubFormBuffer,
+    openContent,
   } = useBufferStore.use.actions();
   const { zoomIn, zoomOut, resetZoom } = useZoomStore.use.actions();
   const { openBuffer } = useBufferStore.use.actions();
+
+  const commandSettings = useMemo(
+    () => ({
+      activityRailExpanded,
+      aiCompletion,
+      autoCompletion,
+      autoDetectLanguage,
+      autoSave,
+      compactMenuBar,
+      codeLens,
+      coreFeatures,
+      formatOnSave,
+      iconTheme,
+      inlayHints,
+      lineNumbers,
+      nativeMenuBar,
+      parameterHints,
+      semanticTokens,
+      showGitHubActions,
+      showGitHubReleases,
+      showGitHubDeployments,
+      showGitHubIssues,
+      showGitHubPullRequests,
+      showMinimap,
+      syncSystemTheme,
+      telemetry,
+      theme,
+      vimMode,
+      vimRelativeLineNumbers,
+      wordWrap,
+    }),
+    [
+      activityRailExpanded,
+      aiCompletion,
+      autoCompletion,
+      autoDetectLanguage,
+      autoSave,
+      compactMenuBar,
+      codeLens,
+      coreFeatures,
+      formatOnSave,
+      iconTheme,
+      inlayHints,
+      lineNumbers,
+      nativeMenuBar,
+      parameterHints,
+      semanticTokens,
+      showGitHubActions,
+      showGitHubReleases,
+      showGitHubDeployments,
+      showGitHubIssues,
+      showGitHubPullRequests,
+      showMinimap,
+      syncSystemTheme,
+      telemetry,
+      theme,
+      vimMode,
+      vimRelativeLineNumbers,
+      wordWrap,
+    ],
+  );
 
   const isActiveMarkdownFile = activeBuffer ? isMarkdownFile(activeBuffer.path) : false;
 
@@ -175,33 +263,28 @@ const CommandPalette = () => {
       setIsBottomPaneVisible,
       bottomPaneActiveTab,
       setBottomPaneActiveTab,
-      isFindVisible,
-      setIsFindVisible,
       settings: {
-        isAIChatVisible: settings.isAIChatVisible,
-        sidebarPosition: settings.sidebarPosition,
-        nativeMenuBar: settings.nativeMenuBar,
-        compactMenuBar: settings.compactMenuBar,
-        webViewerEnabled: settings.coreFeatures.webViewer,
+        activityRailExpanded: commandSettings.activityRailExpanded,
+        nativeMenuBar: commandSettings.nativeMenuBar,
+        compactMenuBar: commandSettings.compactMenuBar,
       },
-      updateSetting: useSettingsStore.getState().updateSetting as (
+      updateSetting: useSettingsStore.getState().actions.updateSetting as (
         key: string,
         value: any,
       ) => void | Promise<void>,
       zoomIn,
       zoomOut,
       resetZoom,
-      openWebViewerBuffer,
       onClose,
     }),
     ...createSettingsActions({
       query,
-      settings,
+      settings: commandSettings,
       setIsSettingsDialogVisible,
       openSettingsDialog,
-      setSettingsSearchQuery: useSettingsStore.getState().setSearchQuery,
+      setSettingsSearchQuery: useSettingsStore.getState().actions.setSearchQuery,
       pushPaletteView: pushView,
-      updateSetting: useSettingsStore.getState().updateSetting as (
+      updateSetting: useSettingsStore.getState().actions.updateSetting as (
         key: string,
         value: any,
       ) => void | Promise<void>,
@@ -219,7 +302,7 @@ const CommandPalette = () => {
       setIsQuickOpenVisible,
       openCommandPaletteView,
       openSettingsDialog,
-      coreFeatures: settings.coreFeatures,
+      hasActiveEditor: activeBuffer?.type === "editor",
       onClose,
     }),
     ...createPaneActions({
@@ -227,35 +310,33 @@ const CommandPalette = () => {
     }),
     ...createFileActions({
       activeBufferId,
-      buffers,
       closeBuffer,
       switchToNextBuffer,
       switchToPreviousBuffer,
-      setActiveBuffer,
       reopenClosedTab,
+      openMarkdownDocument: () => {
+        openContent({ type: "markdownDocument", documentId: crypto.randomUUID() });
+      },
       onClose,
     }),
-    ...createGenerateActions({
-      onClose,
-    }),
-    ...Array.from(extensionCommands.values()).map(
-      (command): Action => ({
-        id: `extension-command:${command.id}`,
-        label: command.title,
-        description: command.category ?? "Installed extension command",
-        icon: <Puzzle />,
-        category: "Extensions",
-        action: () => {
-          onClose();
-          void Promise.resolve(command.execute()).catch((error) => {
-            showToast({
-              message: error instanceof Error ? error.message : "Extension command failed",
-              type: "error",
-            });
+    ...Array.from(extensionCommands.values()).map((command): Action => ({
+      id: `extension-command:${command.id}`,
+      label: command.title,
+      description: command.category
+        ? `${command.category} integration command`
+        : "Installed integration command",
+      icon: <PuzzlePieceIcon />,
+      category: command.category ?? "Integrations",
+      action: () => {
+        onClose();
+        void Promise.resolve(command.execute()).catch((error) => {
+          showToast({
+            message: error instanceof Error ? error.message : "Integration command failed",
+            type: "error",
           });
-        },
-      }),
-    ),
+        });
+      },
+    })),
     ...createWindowActions({
       onClose,
     }),
@@ -265,7 +346,6 @@ const CommandPalette = () => {
       setIsSidebarVisible,
       setActiveView,
       showToast,
-      gitStore,
       gitOperations: {
         stageAllFiles,
         unstageAllFiles,
@@ -278,136 +358,101 @@ const CommandPalette = () => {
       onClose,
     }),
     ...createGitHubActions({
+      repoPath: activeRepoPath ?? rootFolderPath ?? null,
       setIsSidebarVisible,
       setActiveView,
       settings: {
-        showGitHubPullRequests: settings.showGitHubPullRequests,
-        showGitHubIssues: settings.showGitHubIssues,
-        showGitHubActions: settings.showGitHubActions,
+        showGitHubPullRequests: commandSettings.showGitHubPullRequests,
+        showGitHubIssues: commandSettings.showGitHubIssues,
+        showGitHubActions: commandSettings.showGitHubActions,
+        showGitHubReleases: commandSettings.showGitHubReleases,
+        showGitHubDeployments: commandSettings.showGitHubDeployments,
       },
-      updateSetting: useSettingsStore.getState().updateSetting as (
+      updateSetting: useSettingsStore.getState().actions.updateSetting as (
         key: string,
         value: any,
       ) => void | Promise<void>,
+      openReleaseDraft: (repoPath) => {
+        useBufferStore
+          .getState()
+          .actions.openContent({ type: "githubDelivery", kind: "releases", repoPath });
+      },
       checkAuth: checkGitHubAuth,
       showToast,
+      openGitHubFormBuffer,
       onClose,
     }),
     ...createDatabaseActions({
-      onClose,
-      openDatabaseSidebar: () => {
-        setActiveRightSidebarView("databases");
-        setIsRightSidebarVisible(true);
-      },
+      openDatabaseCommand: () => pushView("databases"),
     }),
     ...createAdvancedActions({
       lspStatus,
-      vimMode: settings.vimMode,
+      vimMode: commandSettings.vimMode,
       vimCommands,
       setMode,
       openQuickEdit,
-      pushPaletteView: pushView,
       showToast,
       onClose,
     }),
   ];
 
-  // Filter actions based on query
-  const filteredActions = allActions.filter(
-    (action) =>
-      !query.trim() ||
-      matchesSearchQuery(query, [action.label, action.description ?? "", action.category]),
+  const commandSections = getCommandPaletteSections({
+    actions: allActions,
+    filter: activeFilter,
+    query,
+    recentActionIds: lastEnteredActions,
+    showRecent: commandSettings.coreFeatures.persistentCommands,
+  });
+  const paletteActions = flattenCommandPaletteSections(commandSections);
+  const actionIndexes = new Map(paletteActions.map((action, index) => [action.id, index]));
+
+  const handleActionSelect = useCallback(
+    (index: number) => {
+      const action = paletteActions[index];
+      if (!action) return;
+      action.action();
+      pushAction(action.id);
+    },
+    [paletteActions, pushAction],
   );
 
-  const prioritizedActions = useMemo(() => {
-    if (!settings.coreFeatures.persistentCommands) return filteredActions;
-    if (!filteredActions) return [];
-
-    const remaining = filteredActions.filter((action) => !lastEnteredActions.includes(action.id));
-
-    const prioritized = lastEnteredActions
-      .map((id) => filteredActions.find((a) => a.id === id))
-      .filter((a): a is Action => !!a); // Filter out undefined and assure it is of type Action
-
-    return [...prioritized, ...remaining];
-  }, [filteredActions, lastEnteredActions, settings.coreFeatures.persistentCommands]);
-
-  // Handle keyboard navigation
-  useEffect(() => {
-    if (!isVisible || !isRootView) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      switch (e.key) {
-        case "ArrowDown":
-          e.preventDefault();
-          setSelectedIndex((prev) => (prev < prioritizedActions.length - 1 ? prev + 1 : prev));
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
-          break;
-        case "Enter":
-          e.preventDefault();
-          if (prioritizedActions[selectedIndex]) {
-            prioritizedActions[selectedIndex].action();
-            pushAction(prioritizedActions[selectedIndex].id);
-          }
-          break;
-        // Escape is now handled globally in use-keyboard-shortcuts
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isVisible, isRootView, selectedIndex, prioritizedActions, pushAction]);
+  const {
+    selectedIndex,
+    setSelectedIndex,
+    onInputKeyDown: handleCommandKeyDown,
+  } = useCommandListNavigation({
+    itemCount: paletteActions.length,
+    resetKey: `${currentView}:${activeFilter}:${query}`,
+    onSelect: handleActionSelect,
+  });
 
   // Reset state when visibility changes
   useEffect(() => {
-    if (isVisible) {
-      setQuery("");
-      setSelectedIndex(0);
-      setActiveInitialView(commandPaletteInitialView);
-      setViewStack(initialViewStack);
-    }
-  }, [isVisible, commandPaletteInitialView, initialViewStack]);
-
-  // Update selected index when query changes
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [query]);
+    setQuery("");
+    setActiveFilter("all");
+    setActiveInitialView(commandPaletteInitialView);
+    setViewStack(initialViewStack);
+  }, [commandPaletteInitialView, initialViewStack]);
 
   // Scroll selected item into view
   useEffect(() => {
-    if (resultsRef.current && filteredActions.length > 0) {
-      const selectedElement = resultsRef.current.children[selectedIndex] as HTMLElement;
-      if (selectedElement) {
-        selectedElement.scrollIntoView({
-          block: "nearest",
-          behavior: "smooth",
-        });
-      }
-    }
-  }, [selectedIndex, filteredActions.length]);
+    const selectedElement = resultsRef.current?.querySelector(
+      `[data-command-item-index="${selectedIndex}"]`,
+    );
+    selectedElement?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selectedIndex, paletteActions.length]);
 
-  if (!isVisible) return null;
+  const extensionView = extensionViews.get(currentView);
 
   return (
-    <Command isVisible={isVisible} onClose={onClose}>
-      {currentView === "quick-question" ? (
-        <QuickQuestionCommandContent
-          onBack={popView}
-          onClose={onClose}
-          activeBuffer={activeBuffer}
-          buffers={buffers}
-          projectRoot={rootFolderPath}
-        />
-      ) : currentView === "color-theme" ? (
+    <Command isVisible onClose={onClose}>
+      {currentView === "color-theme" ? (
         <ThemeSelectorContent
           isActive={currentView === "color-theme"}
           onBack={popView}
           onClose={onClose}
           onThemeChange={handleThemeChange}
-          currentTheme={settings.syncSystemTheme ? effectiveTheme : settings.theme}
+          currentTheme={commandSettings.syncSystemTheme ? effectiveTheme : commandSettings.theme}
         />
       ) : currentView === "icon-theme" ? (
         <IconThemeSelectorContent
@@ -415,7 +460,7 @@ const CommandPalette = () => {
           onBack={popView}
           onClose={onClose}
           onThemeChange={handleIconThemeChange}
-          currentTheme={settings.iconTheme}
+          currentTheme={commandSettings.iconTheme}
         />
       ) : currentView === "local-history" ? (
         <LocalHistoryCommandContent
@@ -432,48 +477,118 @@ const CommandPalette = () => {
           onBack={popView}
           onClose={onClose}
         />
+      ) : currentView === "databases" ? (
+        <DatabaseCommandContent
+          isActive={currentView === "databases"}
+          onBack={popView}
+          onClose={onClose}
+        />
+      ) : extensionView ? (
+        extensionView.render({
+          isActive: true,
+          onBack: popView,
+          onClose,
+        })
       ) : (
         <>
           <CommandHeader
             onClose={onClose}
-            showClearButton={settings.coreFeatures.persistentCommands}
+            showClearButton={commandSettings.coreFeatures.persistentCommands}
           >
-            <CommandInput value={query} onChange={setQuery} placeholder="Type a command..." />
+            <SearchIcon className="size-4 shrink-0 text-subtle-foreground" />
+            <CommandInput
+              value={query}
+              onChange={setQuery}
+              onKeyDown={handleCommandKeyDown}
+              placeholder="Search commands and actions..."
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="true"
+              aria-controls="command-palette-results"
+              aria-activedescendant={
+                paletteActions.length ? `command-palette-option-${selectedIndex}` : undefined
+              }
+            />
+            <Kbd>Return</Kbd>
           </CommandHeader>
 
-          <CommandList ref={resultsRef}>
-            {filteredActions.length === 0 ? (
+          <CommandTabs
+            ariaLabel="Command categories"
+            items={commandPaletteFilters.map((filter) => ({
+              id: filter.id,
+              label: filter.label,
+              isActive: filter.id === activeFilter,
+              onSelect: () => setActiveFilter(filter.id),
+            }))}
+          />
+
+          <CommandList
+            ref={resultsRef}
+            id="command-palette-results"
+            role="listbox"
+            aria-label="Command results"
+          >
+            {paletteActions.length === 0 ? (
               <CommandEmpty>No commands found</CommandEmpty>
             ) : (
-              prioritizedActions.map((action, index) => {
-                const isRecent =
-                  settings.coreFeatures.persistentCommands &&
-                  lastEnteredActions.includes(action.id);
-                const binding = action.commandId
-                  ? keymapRegistry.getKeybinding(action.commandId)?.key
-                  : undefined;
-                return (
-                  <CommandItem
-                    key={action.id}
-                    onClick={() => {
-                      action.action();
-                      pushAction(action.id);
-                    }}
-                    isSelected={index === selectedIndex}
-                    className="px-3 py-1.5"
+              commandSections.map((section) => (
+                <section key={section.id} aria-labelledby={`command-section-${section.id}`}>
+                  <div
+                    id={`command-section-${section.id}`}
+                    className="px-2.5 pt-2 pb-1 font-medium text-subtle-foreground ui-text-chrome"
                   >
-                    {isRecent && <History className="shrink-0 text-text-lighter" />}
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate ui-text-xs">{action.label}</div>
-                    </div>
-                    {binding && (
-                      <div className="shrink-0">
-                        <Keybinding binding={binding} />
-                      </div>
-                    )}
-                  </CommandItem>
-                );
-              })
+                    {section.label}
+                  </div>
+                  {section.actions.map((action) => {
+                    const index = actionIndexes.get(action.id) ?? 0;
+                    const isSelected = index === selectedIndex;
+                    const isRecent =
+                      commandSettings.coreFeatures.persistentCommands &&
+                      lastEnteredActions.includes(action.id);
+                    const binding = action.commandId
+                      ? keymapRegistry.getKeybinding(action.commandId)?.key
+                      : undefined;
+
+                    return (
+                      <CommandItemRow
+                        key={action.id}
+                        as="div"
+                        id={`command-palette-option-${index}`}
+                        role="option"
+                        tabIndex={-1}
+                        aria-selected={isSelected}
+                        data-command-item-index={index}
+                        onClick={() => {
+                          action.action();
+                          pushAction(action.id);
+                        }}
+                        onMouseEnter={() => setSelectedIndex(index)}
+                        isSelected={isSelected}
+                        icon={action.icon}
+                        contentLayout="stacked"
+                        title={<SearchMatchHighlight text={action.label} query={query} />}
+                        description={
+                          <>
+                            <span>{action.category}</span>
+                            <span aria-hidden="true"> · </span>
+                            <SearchMatchHighlight text={action.description} query={query} />
+                          </>
+                        }
+                        accessory={
+                          <>
+                            {isRecent ? <CommandItemBadge>Recent</CommandItemBadge> : null}
+                            {binding ? (
+                              <Keybinding binding={binding} />
+                            ) : isSelected ? (
+                              <Kbd>Return</Kbd>
+                            ) : null}
+                          </>
+                        }
+                      />
+                    );
+                  })}
+                </section>
+              ))
             )}
           </CommandList>
         </>
@@ -482,6 +597,16 @@ const CommandPalette = () => {
   );
 };
 
+const CommandPalette = () => {
+  const isVisible = useUIState((state) => state.isCommandPaletteVisible);
+  const commandPaletteInitialView = useUIState((state) => state.commandPaletteInitialView);
+
+  if (!isVisible) return null;
+
+  return <CommandPaletteContent commandPaletteInitialView={commandPaletteInitialView} />;
+};
+
+CommandPaletteContent.displayName = "CommandPaletteContent";
 CommandPalette.displayName = "CommandPalette";
 
 export default CommandPalette;

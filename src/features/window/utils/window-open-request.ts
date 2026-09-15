@@ -1,7 +1,12 @@
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
+import type { DetachedWindowTarget } from "@/features/window/detached/detached-window-protocol";
 
 export interface WindowOpenRequest {
+  /** Open a bare window that hosts one thing and talks to this window over the channel. */
+  detached?: DetachedWindowTarget;
+  content?: import("@/features/panes/types/pane-content.types").OpenContentSpec;
+  workbenchContent?: import("@/features/panes/types/pane-content.types").OpenContentSpec;
   type?: "path" | "remote" | "web" | "terminal" | "settings";
   source?: "app" | "cli" | "deepLink";
   path?: string;
@@ -72,6 +77,19 @@ export function parseWindowOpenUrl(url: URL): WindowOpenRequest | null {
   const target = url.searchParams.get("target");
   if (target !== "open" && url.host !== "open") return null;
 
+  const content = url.searchParams.get("content");
+  const isAppUrl =
+    (url.protocol === "tauri:" && url.hostname === "localhost") ||
+    (["http:", "https:"].includes(url.protocol) &&
+      ["localhost", "127.0.0.1", "tauri.localhost"].includes(url.hostname));
+  if (content && isAppUrl && url.searchParams.has("athasWindowTraceId")) {
+    try {
+      return { content: JSON.parse(content) };
+    } catch {
+      return null;
+    }
+  }
+
   const type = url.searchParams.get("type");
   if (type === "remote") {
     const remoteConnectionId = url.searchParams.get("connectionId");
@@ -121,18 +139,26 @@ export function parseWindowOpenUrl(url: URL): WindowOpenRequest | null {
   };
 }
 
-export async function handleWindowOpenRequest(request: WindowOpenRequest) {
+async function handleWindowOpenRequest(request: WindowOpenRequest) {
+  if (request.content) {
+    if (request.source === "deepLink") return;
+    useBufferStore.getState().actions.openContent(request.content);
+    return;
+  }
   const { handleFileSelect, handleOpenFolderByPath, handleOpenRemoteProject } =
     useFileSystemStore.getState();
 
   if (request.type === "web" && request.url) {
-    useBufferStore.getState().actions.openWebViewerBuffer(request.url);
+    const url = request.url;
+    void import("@tauri-apps/plugin-opener")
+      .then(({ openUrl }) => openUrl(url))
+      .catch(console.error);
     return;
   }
 
   if (request.type === "terminal") {
     if (shouldConfirmTerminalCommand(request)) {
-      const { showConfirmDialog } = await import("@/features/dialogs/services/dialog-service");
+      const { showConfirmDialog } = await import("@/ui/dialog");
       const confirmed = await showConfirmDialog(getTerminalCommandConfirmationMessage(request), {
         title: "Run Terminal Command",
         confirmLabel: "Run Command",
@@ -164,8 +190,10 @@ export async function handleWindowOpenRequest(request: WindowOpenRequest) {
     return;
   }
 
-  const { getSymlinkInfo } = await import("@/features/file-system/controllers/platform");
-  const { toast } = await import("@/ui/toast");
+  const [{ getSymlinkInfo }, { toast }] = await Promise.all([
+    import("@/features/file-system/controllers/platform"),
+    import("sonner"),
+  ]);
 
   let pathTarget: ReturnType<typeof resolveWindowOpenPathTarget>;
   try {
@@ -191,7 +219,7 @@ export async function handleWindowOpenRequest(request: WindowOpenRequest) {
   }
 }
 
-export function createWindowOpenRequestQueue(
+function createWindowOpenRequestQueue(
   handler: WindowOpenRequestHandler,
   onError: (error: unknown) => void = console.error,
 ) {

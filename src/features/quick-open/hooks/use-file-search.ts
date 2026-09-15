@@ -1,122 +1,134 @@
 import { useMemo } from "react";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
-import { isVirtualContent } from "@/features/panes/types/pane-content.types";
+import { getOpenBufferSearchSnapshot } from "@/features/editor/utils/open-buffer-search-snapshot";
 import { useRecentFilesStore } from "@/features/file-system/stores/recent-files.store";
-import { MAX_OTHER_FILES_SHOWN, MAX_RECENT_FILES_NO_QUERY, MAX_RESULTS } from "../constants/limits";
-import type { FffSearchHit } from "@/features/global-search/lib/rust-api/search";
-import type { CategorizedFiles, FileItem } from "../types/quick-open.types";
+import type { RecentFile } from "@/features/file-system/types/recent-files.types";
+import {
+  MAX_FILE_SEARCH_RESULTS as MAX_RESULTS,
+  MAX_OPEN_BUFFERS_SHOWN,
+  MAX_RECENT_FILES_NO_QUERY,
+} from "@/features/file-search/constants/file-search-limits";
+import type { FffSearchHit } from "@/features/file-search/lib/file-search-api";
+import type { CategorizedFiles, FileItem } from "@/features/file-search/types/file-search.types";
+import {
+  categorizeFileSearchHits,
+  categorizeFuzzyFileSearch,
+  indexRecentSearchFiles,
+} from "@/features/file-search/utils/categorize-file-search-results";
+import { insertSortedLimited } from "@/features/file-search/utils/sorted-search-results";
+import { filterQuickOpenRecentFiles } from "../utils/file-filtering";
 import { fuzzyScore } from "../utils/fuzzy-search";
+
+interface FileSearchOptions {
+  hasLoadedFiles?: boolean;
+  rootFolderPath?: string | null;
+  useBackendResults?: boolean;
+}
+
+function recentFileToItem(file: RecentFile): FileItem {
+  return {
+    name: file.name,
+    path: file.path,
+    isDir: false,
+  };
+}
 
 export const useFileSearch = (
   files: FileItem[],
   debouncedQuery: string,
   fffHits: FffSearchHit[] | null = null,
+  options: FileSearchOptions = {},
 ) => {
-  const buffers = useBufferStore.use.buffers();
-  const activeBufferId = useBufferStore.use.activeBufferId();
+  const bufferSearchSnapshot = useBufferStore((state) =>
+    getOpenBufferSearchSnapshot(state.buffers, state.activeBufferId),
+  );
   const getRecentFilesOrderedByFrecency = useRecentFilesStore(
-    (state) => state.getRecentFilesOrderedByFrecency,
+    (state) => state.actions.getRecentFilesOrderedByFrecency,
   );
 
   const categorizedFiles = useMemo((): CategorizedFiles => {
-    const activeBuffer = buffers.find((b) => b.id === activeBufferId);
-    const activeBufferPath = activeBuffer?.path;
-
-    const openBufferPaths = new Set(
-      buffers
-        .filter((buffer) => buffer.id !== activeBufferId && !isVirtualContent(buffer))
-        .map((buffer) => buffer.path),
+    const { activeBufferPath, openBufferPaths, openBuffers } = bufferSearchSnapshot;
+    const indexedFilePaths = new Set(files.map((file) => file.path));
+    const recentFiles = filterQuickOpenRecentFiles(
+      getRecentFilesOrderedByFrecency(),
+      options.rootFolderPath,
+      indexedFilePaths,
+      options.hasLoadedFiles ?? false,
     );
-
-    const openBufferFilesData = files.filter((file) => openBufferPaths.has(file.path));
-
-    const recentFiles = getRecentFilesOrderedByFrecency();
-    const recentFilePaths = new Set(
-      recentFiles.filter((rf) => rf.path !== activeBufferPath).map((rf) => rf.path),
+    const { recentFileIndices, recentFilePaths } = indexRecentSearchFiles(
+      recentFiles,
+      activeBufferPath,
     );
-    const recentFileIndices = new Map(recentFiles.map((rf, index) => [rf.path, index]));
 
     if (!debouncedQuery.trim()) {
-      const recent = files
-        .filter((file) => recentFilePaths.has(file.path) && !openBufferPaths.has(file.path))
-        .sort((a, b) => {
-          const aIndex = recentFileIndices.get(a.path) ?? Number.MAX_VALUE;
-          const bIndex = recentFileIndices.get(b.path) ?? Number.MAX_VALUE;
-          return aIndex - bIndex;
-        });
+      const openBufferFiles = openBuffers.slice(0, MAX_OPEN_BUFFERS_SHOWN).map((file) => ({
+        name: file.name,
+        path: file.path,
+        isDir: false,
+      }));
+      const openAndActivePaths = new Set(openBufferPaths);
+      if (activeBufferPath) openAndActivePaths.add(activeBufferPath);
 
-      const others = files
-        .filter(
-          (file) =>
-            !recentFilePaths.has(file.path) &&
-            !openBufferPaths.has(file.path) &&
-            file.path !== activeBufferPath,
+      const recentFilesInResults = recentFiles
+        .filter((file) => !openAndActivePaths.has(file.path))
+        .slice(
+          0,
+          Math.min(MAX_RECENT_FILES_NO_QUERY, Math.max(0, MAX_RESULTS - openBufferFiles.length)),
         )
-        .sort((a, b) => a.name.localeCompare(b.name));
+        .map(recentFileToItem);
+
+      const excludedPaths = new Set([
+        ...openAndActivePaths,
+        ...recentFilesInResults.map((file) => file.path),
+      ]);
+      const otherCandidates: FileItem[] = [];
+
+      for (const file of files) {
+        if (excludedPaths.has(file.path)) continue;
+        insertSortedLimited(
+          otherCandidates,
+          file,
+          (a, b) => a.name.localeCompare(b.name),
+          MAX_RESULTS,
+        );
+      }
+
+      const otherFiles = otherCandidates.slice(
+        0,
+        Math.max(0, MAX_RESULTS - openBufferFiles.length - recentFilesInResults.length),
+      );
 
       return {
-        openBufferFiles: openBufferFilesData,
-        recentFilesInResults: recent.slice(0, MAX_RECENT_FILES_NO_QUERY),
-        otherFiles: others.slice(0, MAX_RESULTS - openBufferFilesData.length - recent.length),
+        openBufferFiles,
+        recentFilesInResults,
+        otherFiles,
       };
     }
 
-    const scoredFiles =
-      fffHits && fffHits.length > 0
-        ? fffHits.map((hit) => ({
-            file: { name: hit.name, path: hit.path, isDir: false } as FileItem,
-            score: hit.score,
-          }))
-        : files
-            .map((file) => {
-              const nameScore = fuzzyScore(file.name, debouncedQuery);
-              const pathScore = fuzzyScore(file.path, debouncedQuery);
-              return { file, score: Math.max(nameScore, pathScore) };
-            })
-            .filter(({ score }) => score > 0)
-            .sort((a, b) => {
-              if (b.score !== a.score) return b.score - a.score;
-
-              const aIsOpen = openBufferPaths.has(a.file.path);
-              const bIsOpen = openBufferPaths.has(b.file.path);
-              if (aIsOpen !== bIsOpen) return aIsOpen ? -1 : 1;
-
-              const aIsRecent = recentFilePaths.has(a.file.path);
-              const bIsRecent = recentFilePaths.has(b.file.path);
-              if (aIsRecent !== bIsRecent) return aIsRecent ? -1 : 1;
-
-              if (aIsRecent && bIsRecent) {
-                const aIndex = recentFileIndices.get(a.file.path) ?? Number.MAX_VALUE;
-                const bIndex = recentFileIndices.get(b.file.path) ?? Number.MAX_VALUE;
-                return aIndex - bIndex;
-              }
-
-              return a.file.name.localeCompare(b.file.name);
-            });
-
-    const openBuffers = scoredFiles
-      .filter(({ file }) => openBufferPaths.has(file.path))
-      .map(({ file }) => file);
-
-    const recent = scoredFiles
-      .filter(({ file }) => recentFilePaths.has(file.path) && !openBufferPaths.has(file.path))
-      .map(({ file }) => file);
-
-    const others = scoredFiles
-      .filter(
-        ({ file }) =>
-          !recentFilePaths.has(file.path) &&
-          !openBufferPaths.has(file.path) &&
-          file.path !== activeBufferPath,
-      )
-      .map(({ file }) => file);
-
-    return {
-      openBufferFiles: openBuffers.slice(0, MAX_RESULTS),
-      recentFilesInResults: recent.slice(0, MAX_RESULTS - openBuffers.length),
-      otherFiles: others.slice(0, MAX_OTHER_FILES_SHOWN - openBuffers.length - recent.length),
+    const rankingContext = {
+      activeBufferPath,
+      openBufferPaths,
+      recentFilePaths,
+      recentFileIndices,
     };
-  }, [files, debouncedQuery, buffers, activeBufferId, getRecentFilesOrderedByFrecency, fffHits]);
+
+    if (options.useBackendResults) return categorizeFileSearchHits(fffHits ?? [], rankingContext);
+
+    if (fffHits && fffHits.length > 0) {
+      return categorizeFileSearchHits(fffHits, rankingContext);
+    }
+
+    return categorizeFuzzyFileSearch(files, debouncedQuery, fuzzyScore, rankingContext);
+  }, [
+    files,
+    debouncedQuery,
+    bufferSearchSnapshot,
+    getRecentFilesOrderedByFrecency,
+    fffHits,
+    options.hasLoadedFiles,
+    options.rootFolderPath,
+    options.useBackendResults,
+  ]);
 
   return categorizedFiles;
 };

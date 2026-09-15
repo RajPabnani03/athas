@@ -1,67 +1,32 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import type { IDisposable, Terminal as XtermTerminal } from "@xterm/xterm";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { themeRegistry } from "@/extensions/themes/theme-registry";
-import { parseOSC7 } from "../utils/osc-parser";
+import { closeTerminalConnection } from "../services/terminal-connection-lifecycle";
+import type { IDisposable, Terminal } from "@xterm/xterm";
+import type { TerminalInput, TerminalSize } from "../types/terminal.types";
+import type { TerminalTheme } from "./use-terminal-theme";
+import { parseOsc7Directory } from "../utils/terminal-osc";
+import { normalizeTerminalTitle } from "../utils/terminal-title";
+import {
+  getTerminalOutputFlowAction,
+  getTerminalSize,
+  releaseTerminalEventChannel,
+  subscribeToTerminalEvents,
+  terminalSizesEqual,
+} from "../utils/terminal-protocol";
 import { useTerminalWriteBuffer } from "./use-terminal-write-buffer";
 
-const ESCAPE_CODE = 27;
-const BEL_CODE = 7;
-const DELETE_CODE = 127;
-const C1_ESCAPE_CODE = 155;
-
-const isAsciiLetter = (charCode: number) =>
-  (charCode >= 65 && charCode <= 90) || (charCode >= 97 && charCode <= 122);
-
-const stripTerminalControlSequences = (rawTitle: string) => {
-  let title = "";
-
-  for (let index = 0; index < rawTitle.length; index += 1) {
-    const charCode = rawTitle.charCodeAt(index);
-
-    if (charCode === ESCAPE_CODE) {
-      const nextChar = rawTitle[index + 1];
-
-      if (nextChar === "[") {
-        index += 2;
-        while (index < rawTitle.length && !isAsciiLetter(rawTitle.charCodeAt(index))) {
-          index += 1;
-        }
-        continue;
-      }
-
-      if (nextChar === "]") {
-        index += 2;
-        while (index < rawTitle.length && rawTitle.charCodeAt(index) !== BEL_CODE) {
-          index += 1;
-        }
-        continue;
-      }
-
-      continue;
-    }
-
-    if (charCode <= 31 || charCode === DELETE_CODE || charCode === C1_ESCAPE_CODE) {
-      continue;
-    }
-
-    title += rawTitle[index];
-  }
-
-  return title.trim();
-};
-
 interface UseTerminalConnectionOptions {
+  applyTerminalTheme: (theme: TerminalTheme) => void;
   connectionId?: string;
-  getTerminalTheme: () => NonNullable<XtermTerminal["options"]["theme"]>;
+  getTerminalTheme: () => TerminalTheme;
   initialCommand?: string;
   isInitialized: boolean;
   onTerminalExit?: (sessionId: string) => void;
   remoteConnectionId?: string;
   reuseExistingConnection?: boolean;
   sessionId: string;
-  terminal: XtermTerminal | null;
+  terminal: Terminal | null;
   updateSession: (
     sessionId: string,
     updates: {
@@ -73,6 +38,7 @@ interface UseTerminalConnectionOptions {
 }
 
 export function useTerminalConnection({
+  applyTerminalTheme,
   connectionId,
   getTerminalTheme,
   initialCommand,
@@ -85,22 +51,79 @@ export function useTerminalConnection({
   updateSession,
 }: UseTerminalConnectionOptions) {
   const currentConnectionIdRef = useRef<string | null>(null);
-  const currentInputLineRef = useRef("");
   const initialCommandSentForConnectionRef = useRef<string | null>(null);
   const onTerminalExitRef = useRef(onTerminalExit);
-  const explicitExitRequestedRef = useRef(false);
   const lastExitInfoRef = useRef<{ exitCode?: number | null; signal?: string | null } | null>(null);
-  const outputBufferRef = useRef("");
-  const outputFlushFrameRef = useRef<number | null>(null);
-  const { write, flush } = useTerminalWriteBuffer({
-    getConnectionId: () => currentConnectionIdRef.current,
-    writeChunk: async (activeConnectionId, data) => {
+  const hadTerminalErrorRef = useRef(false);
+  const lastSizeRef = useRef<TerminalSize | null>(null);
+  const queuedOutputBytesRef = useRef(0);
+  const outputPausedRef = useRef(false);
+
+  const writeInput = useCallback(
+    async (activeConnectionId: string, input: TerminalInput) => {
       await invoke(remoteConnectionId ? "remote_terminal_write" : "terminal_write", {
         id: activeConnectionId,
-        data,
+        input,
       });
     },
+    [remoteConnectionId],
+  );
+
+  const {
+    write,
+    writeBinary: enqueueBinary,
+    flush,
+  } = useTerminalWriteBuffer({
+    getConnectionId: () => currentConnectionIdRef.current,
+    writeChunk: async (activeConnectionId, input) => {
+      await writeInput(activeConnectionId, input);
+    },
   });
+
+  const writeBinary = useCallback(
+    (data: string) => {
+      const activeConnectionId = currentConnectionIdRef.current;
+      if (!activeConnectionId || !data) return;
+      const bytes = Array.from(data, (character) => character.charCodeAt(0) & 0xff);
+      enqueueBinary(bytes);
+    },
+    [enqueueBinary],
+  );
+
+  const setOutputPaused = useCallback(
+    (paused: boolean) => {
+      const activeConnectionId = currentConnectionIdRef.current;
+      if (!activeConnectionId || outputPausedRef.current === paused) return;
+
+      outputPausedRef.current = paused;
+      void invoke(remoteConnectionId ? "remote_terminal_set_paused" : "terminal_set_paused", {
+        id: activeConnectionId,
+        paused,
+      }).catch(() => {
+        outputPausedRef.current = !paused;
+      });
+    },
+    [remoteConnectionId],
+  );
+
+  const sendTerminalSize = useCallback(
+    (activeTerminal: Terminal) => {
+      const activeConnectionId = currentConnectionIdRef.current;
+      if (!activeConnectionId) return;
+
+      const size = getTerminalSize(activeTerminal);
+      if (terminalSizesEqual(lastSizeRef.current, size)) return;
+      lastSizeRef.current = size;
+
+      void invoke(remoteConnectionId ? "remote_terminal_resize" : "terminal_resize", {
+        id: activeConnectionId,
+        size,
+      }).catch(() => {
+        lastSizeRef.current = null;
+      });
+    },
+    [remoteConnectionId],
+  );
 
   useEffect(() => {
     onTerminalExitRef.current = onTerminalExit;
@@ -108,222 +131,131 @@ export function useTerminalConnection({
 
   useEffect(() => {
     currentConnectionIdRef.current = connectionId ?? null;
-  }, [connectionId]);
-
-  useEffect(() => {
-    explicitExitRequestedRef.current = false;
     lastExitInfoRef.current = null;
-  }, [connectionId]);
-
-  useEffect(() => {
-    return () => {
-      if (outputFlushFrameRef.current !== null) {
-        cancelAnimationFrame(outputFlushFrameRef.current);
-      }
-      outputBufferRef.current = "";
-    };
-  }, []);
+    hadTerminalErrorRef.current = false;
+    lastSizeRef.current = null;
+    queuedOutputBytesRef.current = 0;
+    outputPausedRef.current = false;
+    if (connectionId) updateSession(sessionId, { title: "" });
+    void flush();
+  }, [connectionId, flush, sessionId, updateSession]);
 
   useEffect(() => {
     if (!terminal || !isInitialized || !connectionId) return;
 
     const disposables: IDisposable[] = [];
 
-    const flushOutputBuffer = () => {
-      outputFlushFrameRef.current = null;
-      const pendingOutput = outputBufferRef.current;
-      if (!pendingOutput) return;
-
-      outputBufferRef.current = "";
-      terminal.write(pendingOutput);
-
-      const newDirectory = parseOSC7(pendingOutput);
-      if (newDirectory) updateSession(sessionId, { currentDirectory: newDirectory });
-    };
-
-    const scheduleOutputFlush = () => {
-      if (outputFlushFrameRef.current !== null) return;
-      outputFlushFrameRef.current = window.requestAnimationFrame(flushOutputBuffer);
-    };
-
+    disposables.push(terminal.onData(write));
+    if (terminal.onBinary) disposables.push(terminal.onBinary(writeBinary));
+    disposables.push(terminal.onResize(() => sendTerminalSize(terminal)));
     disposables.push(
-      terminal.onData((data) => {
-        const activeConnectionId = currentConnectionIdRef.current || connectionId;
-        const hasNewline = data.includes("\n") || data.includes("\r");
-
-        if (hasNewline) {
-          currentInputLineRef.current += data;
-          if (/^\s*exit\s*$/i.test(currentInputLineRef.current.trim())) {
-            explicitExitRequestedRef.current = true;
-            currentInputLineRef.current = "";
-            write(data);
-            window.setTimeout(() => {
-              void invoke(remoteConnectionId ? "close_remote_terminal" : "close_terminal", {
-                id: activeConnectionId,
-              }).catch(() => {});
-            }, 100);
-            return;
-          }
-          currentInputLineRef.current = "";
-        } else {
-          currentInputLineRef.current += data;
-          if (currentInputLineRef.current.length > 1000) {
-            currentInputLineRef.current = currentInputLineRef.current.slice(-100);
-          }
-        }
-
-        write(data);
+      terminal.onTitleChange((title) => {
+        updateSession(sessionId, { title: normalizeTerminalTitle(title) ?? "" });
       }),
     );
-
     disposables.push(
-      terminal.onKey(({ domEvent: event }) => {
-        const shortcuts: Record<string, string> = {
-          "meta+Backspace": "\u0015",
-          "ctrl+u": "\u0015",
-          "meta+k": "\u000c",
-          "alt+Backspace": "\u0017",
-          "meta+a": "\u0001",
-          "meta+e": "\u0005",
-        };
-
-        const key = `${event.metaKey ? "meta+" : ""}${event.ctrlKey ? "ctrl+" : ""}${event.altKey ? "alt+" : ""}${event.key}`;
-        if (shortcuts[key]) {
-          event.preventDefault();
-          write(shortcuts[key]);
-          return;
-        }
-
-        // Modifier+Enter: send CSI u sequences so TUI apps can distinguish them
-        if (event.key === "Enter") {
-          if (event.shiftKey) {
-            event.preventDefault();
-            write("\x1b[13;2u"); // Shift+Enter
-            return;
-          }
-          if (event.altKey) {
-            event.preventDefault();
-            write("\x1b[13;3u"); // Alt+Enter
-            return;
-          }
-        }
-
-        // Shift+Tab: send reverse-tab escape sequence
-        if (event.key === "Tab" && event.shiftKey) {
-          event.preventDefault();
-          write("\x1b[Z");
-          return;
-        }
-
-        if (event.metaKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-          event.preventDefault();
-          write(event.key === "ArrowLeft" ? "\u0001" : "\u0005");
-          return;
-        }
-
-        if (event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-          event.preventDefault();
-          write(event.key === "ArrowLeft" ? "\u001bb" : "\u001bf");
-        }
+      terminal.parser.registerOscHandler(7, (payload) => {
+        const currentDirectory = parseOsc7Directory(payload);
+        if (currentDirectory) updateSession(sessionId, { currentDirectory });
+        return true;
       }),
     );
-
-    disposables.push(
-      terminal.onResize(({ cols, rows }) => {
-        void invoke(remoteConnectionId ? "remote_terminal_resize" : "terminal_resize", {
-          id: connectionId,
-          rows,
-          cols,
-        }).catch(() => {});
-      }),
-    );
-
     disposables.push(
       terminal.onSelectionChange(() => {
         const selection = terminal.getSelection();
         if (selection) updateSession(sessionId, { selection });
       }),
     );
-
-    disposables.push(
-      terminal.onTitleChange((rawTitle) => {
-        const title = stripTerminalControlSequences(rawTitle);
-        if (title) {
-          updateSession(sessionId, { title });
-        }
-      }),
-    );
-
     const unlistenThemeChange = themeRegistry.onThemeChange(() => {
-      terminal.options.theme = getTerminalTheme();
+      applyTerminalTheme(getTerminalTheme());
     });
 
-    const unlistenOutput = listen(`pty-output-${connectionId}`, (event) => {
-      const data = event.payload as { data: string };
-      outputBufferRef.current += data.data;
-      scheduleOutputFlush();
-    });
+    const unsubscribeEvents = subscribeToTerminalEvents(connectionId, (event) => {
+      if (event.event === "output") {
+        const bytes = event.data;
+        queuedOutputBytesRef.current += bytes.byteLength;
 
-    const unlistenError = listen(`pty-error-${connectionId}`, (event) => {
-      const error = event.payload as { error: string };
-      terminal.writeln(`\r\n\x1b[31mError: ${error.error}\x1b[0m`);
-    });
+        if (
+          getTerminalOutputFlowAction(queuedOutputBytesRef.current, outputPausedRef.current) ===
+          "pause"
+        ) {
+          setOutputPaused(true);
+        }
 
-    const unlistenExit = listen(`pty-exit-${connectionId}`, (event) => {
-      const payload = event.payload as { exitCode?: number | null; signal?: string | null };
-      lastExitInfoRef.current = payload;
-    });
-
-    const unlistenClosed = listen(`pty-closed-${connectionId}`, async () => {
-      try {
-        await invoke(remoteConnectionId ? "close_remote_terminal" : "close_terminal", {
-          id: connectionId,
+        terminal.write(bytes, () => {
+          queuedOutputBytesRef.current = Math.max(
+            0,
+            queuedOutputBytesRef.current - bytes.byteLength,
+          );
+          if (
+            getTerminalOutputFlowAction(queuedOutputBytesRef.current, outputPausedRef.current) ===
+            "resume"
+          ) {
+            setOutputPaused(false);
+          }
         });
-      } catch {}
+        return;
+      }
 
-      if (explicitExitRequestedRef.current) {
-        onTerminalExitRef.current?.(sessionId);
+      if (event.event === "error") {
+        hadTerminalErrorRef.current = true;
+        terminal.writeln(`\r\n\x1b[31mError: ${event.message}\x1b[0m`);
+        return;
+      }
+
+      if (event.event === "exit") {
+        lastExitInfoRef.current = event;
+        return;
+      }
+
+      void closeTerminalConnection({ connectionId, remoteConnectionId }).catch(() => {});
+      releaseTerminalEventChannel(connectionId);
+
+      if (hadTerminalErrorRef.current) {
+        terminal.writeln("\x1b[90mOpen a new terminal tab or close this one manually.\x1b[0m");
         return;
       }
 
       const exitCode = lastExitInfoRef.current?.exitCode;
       const signal = lastExitInfoRef.current?.signal;
+      if (exitCode === 0 && signal == null) {
+        onTerminalExitRef.current?.(sessionId);
+        return;
+      }
+
       const details =
         signal != null
           ? `signal ${signal}`
           : exitCode != null
             ? `exit code ${exitCode}`
             : "unknown status";
-
       terminal.writeln(`\r\n\x1b[33mTerminal process exited unexpectedly (${details}).\x1b[0m`);
       terminal.writeln("\x1b[90mOpen a new terminal tab or close this one manually.\x1b[0m");
     });
 
+    sendTerminalSize(terminal);
+
     return () => {
-      if (outputFlushFrameRef.current !== null) {
-        cancelAnimationFrame(outputFlushFrameRef.current);
-        flushOutputBuffer();
-      }
       void flush();
-      for (const disposable of disposables) {
-        disposable.dispose();
-      }
+      if (outputPausedRef.current) setOutputPaused(false);
+      for (const disposable of disposables) disposable.dispose();
       unlistenThemeChange();
-      unlistenOutput.then((fn) => fn());
-      unlistenError.then((fn) => fn());
-      unlistenExit.then((fn) => fn());
-      unlistenClosed.then((fn) => fn());
+      unsubscribeEvents();
     };
   }, [
+    applyTerminalTheme,
     connectionId,
     flush,
     getTerminalTheme,
     isInitialized,
+    remoteConnectionId,
+    sendTerminalSize,
     sessionId,
+    setOutputPaused,
     terminal,
     updateSession,
     write,
-    remoteConnectionId,
+    writeBinary,
   ]);
 
   useEffect(() => {
@@ -340,6 +272,7 @@ export function useTerminalConnection({
 
   return {
     currentConnectionIdRef,
+    sendTerminalSize,
     writeBuffered: write,
   };
 }

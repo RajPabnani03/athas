@@ -1,12 +1,17 @@
 import type { DiffLineWithIndex, ParsedHunk } from "../types/git-diff.types";
 import type { GitDiff, GitDiffLine, GitHunk } from "../types/git.types";
-import { writeClipboardText } from "@/utils/clipboard";
-export {
-  getDiffLineVisualState,
-  getDiffLineVisualType,
-  type DiffLineVisualState,
-  type DiffLineVisualType,
-} from "./diff-viewer-visuals";
+
+export function hasGitDiffChanges(diff: GitDiff | null): diff is GitDiff {
+  return (
+    !!diff &&
+    (diff.lines.length > 0 ||
+      diff.is_image === true ||
+      diff.is_binary === true ||
+      diff.is_new ||
+      diff.is_deleted ||
+      diff.is_renamed)
+  );
+}
 
 export interface DiffHunkRange {
   oldStart: number;
@@ -66,8 +71,33 @@ export const createGitHunk = (
   lines: [hunk.header, ...hunk.lines],
 });
 
-export const getImgSrc = (base64: string | undefined) =>
-  base64 ? `data:image/*;base64,${base64}` : undefined;
+export function getImageMimeType(filePath: string): string {
+  const extension = filePath.toLowerCase().split(".").pop();
+  const mimeTypes: Record<string, string> = {
+    apng: "image/apng",
+    avif: "image/avif",
+    bmp: "image/bmp",
+    gif: "image/gif",
+    heic: "image/heic",
+    heif: "image/heif",
+    ico: "image/x-icon",
+    jfif: "image/jpeg",
+    jpeg: "image/jpeg",
+    jpg: "image/jpeg",
+    pjpeg: "image/jpeg",
+    pjp: "image/jpeg",
+    png: "image/png",
+    svg: "image/svg+xml",
+    tif: "image/tiff",
+    tiff: "image/tiff",
+    webp: "image/webp",
+  };
+
+  return extension ? (mimeTypes[extension] ?? "image/png") : "image/png";
+}
+
+export const getImgSrc = (base64: string | undefined, filePath: string) =>
+  base64 ? `data:${getImageMimeType(filePath)};base64,${base64}` : undefined;
 
 export function getFileStatus(diff: GitDiff): string {
   if (diff.is_new) return "added";
@@ -126,8 +156,4 @@ export function countDiffStats(diffs: GitDiff[]): { additions: number; deletions
     }
   }
   return { additions, deletions };
-}
-
-export function copyLineContent(content: string) {
-  void writeClipboardText(content);
 }

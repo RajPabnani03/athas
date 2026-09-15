@@ -1,13 +1,5 @@
-import {
-  WarningCircleIcon as AlertCircle,
-  CheckCircleIcon as CheckCircle2,
-  ClockIcon as Clock3,
-  KeyIcon as KeyRound,
-  SparkleIcon as Sparkles,
-  WrenchIcon as Wrench,
-} from "@phosphor-icons/react";
+import { CheckCircleIcon, ClockIcon, KeyIcon, WarningCircleIcon } from "@/ui/icons";
 import type { ChatAcpEvent } from "@/features/ai/types/chat-ui.types";
-import { cn } from "@/utils/cn";
 import { ChatActivityLine } from "./chat-activity-line";
 
 interface AcpInlineEventProps {
@@ -15,19 +7,13 @@ interface AcpInlineEventProps {
 }
 
 function getEventIcon(event: ChatAcpEvent) {
-  if (event.kind === "tool") return Wrench;
-  if (event.kind === "permission") return KeyRound;
-  if (event.kind === "thinking") return Sparkles;
-  if (event.state === "error") return AlertCircle;
-  if (event.state === "success") return CheckCircle2;
-  return Clock3;
+  if (event.category === "permission") return KeyIcon;
+  if (event.state === "error") return WarningCircleIcon;
+  if (event.state === "success") return CheckCircleIcon;
+  return ClockIcon;
 }
 
 export function AcpInlineEvent({ event }: AcpInlineEventProps) {
-  if (event.kind === "thinking") {
-    return null;
-  }
-
   const Icon = getEventIcon(event);
   const text = event.detail ? `${event.label}: ${event.detail}` : event.label;
   const state =
@@ -40,20 +26,8 @@ export function AcpInlineEvent({ event }: AcpInlineEventProps) {
           : "info";
 
   return (
-    <div className="px-4 py-0.5">
-      <ChatActivityLine
-        icon={
-          <Icon
-            size={13}
-            className={cn(
-              event.state === "success" && "text-success/75",
-              event.state === "error" && "text-error/80",
-            )}
-          />
-        }
-        title={text}
-        state={state}
-      />
+    <div className="min-w-0 px-4 py-0.5">
+      <ChatActivityLine icon={<Icon />} title={text} state={state} />
     </div>
   );
 }

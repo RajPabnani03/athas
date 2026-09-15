@@ -31,6 +31,16 @@ export const currentPlatform: Platform = detectPlatform();
 export const IS_MAC: boolean = currentPlatform === "macos";
 export const IS_WINDOWS: boolean = currentPlatform === "windows";
 export const IS_LINUX: boolean = currentPlatform === "linux";
+export const PLATFORM_CLASS_NAME = IS_MAC
+  ? "platform-macos"
+  : IS_WINDOWS
+    ? "platform-windows"
+    : "platform-other";
+
+export function applyPlatformClass(root?: Element): void {
+  const target = root ?? (typeof document === "undefined" ? null : document.documentElement);
+  target?.classList.add(PLATFORM_CLASS_NAME);
+}
 
 export function isMac(): boolean {
   return IS_MAC;
@@ -51,14 +61,6 @@ export function isLinux(): boolean {
 export function normalizeKey(key: string): string {
   if (IS_MAC) return key;
   return key.replace(/\bcmd\b/gi, "ctrl");
-}
-
-/**
- * Get platform-specific modifier key name.
- * Returns 'cmd' on Mac, 'ctrl' on Windows/Linux.
- */
-export function getModifierKey(): "cmd" | "ctrl" {
-  return IS_MAC ? "cmd" : "ctrl";
 }
 
 /**
@@ -87,7 +89,7 @@ function detectArch(): string {
   }
 }
 
-export const ARCH: string = detectArch();
+const ARCH: string = detectArch();
 
 /**
  * Platform+architecture identifier for extension CDN packages.

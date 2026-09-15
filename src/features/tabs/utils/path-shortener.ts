@@ -7,7 +7,7 @@ import { isVirtualContent } from "@/features/panes/types/pane-content.types";
 function getPathSegments(filePath: string): string[] {
   // Normalize path separators to forward slash
   const normalized = filePath.replace(/\\/g, "/");
-  const parts = normalized.split("/");
+  const parts = normalized.split("/").filter(Boolean);
   // Return all parts except the last one (filename)
   return parts.slice(0, -1);
 }
@@ -22,67 +22,60 @@ function getFileName(filePath: string): string {
 }
 
 /**
- * Check if a path is within the root directory
- */
-/**
  * Calculate minimal distinguishing display names for buffers
  * Returns a map of buffer ID to display name
  */
-export function calculateDisplayNames(
-  buffers: PaneContent[],
-  _rootPath: string | undefined,
-): Map<string, string> {
+export function calculateDisplayNames(buffers: PaneContent[]): Map<string, string> {
   const displayNames = new Map<string, string>();
 
-  // Skip virtual or special buffers
-  const regularBuffers = buffers.filter(
-    (b) => !isVirtualContent(b) && b.path !== "extensions://marketplace",
-  );
-
   // Group buffers by filename
-  const fileNameGroups = new Map<string, PaneContent[]>();
-  for (const buffer of regularBuffers) {
-    const fileName = getFileName(buffer.path);
-    if (!fileNameGroups.has(fileName)) {
-      fileNameGroups.set(fileName, []);
+  const fileNameGroups = new Map<
+    string,
+    { items: Array<{ buffer: PaneContent; segments: string[] }>; maxSegments: number }
+  >();
+  for (const buffer of buffers) {
+    if (isVirtualContent(buffer)) {
+      continue;
     }
-    fileNameGroups.get(fileName)!.push(buffer);
+
+    const fileName = getFileName(buffer.path);
+    const segments = getPathSegments(buffer.path);
+    let group = fileNameGroups.get(fileName);
+    if (!group) {
+      group = { items: [], maxSegments: 0 };
+      fileNameGroups.set(fileName, group);
+    }
+
+    group.items.push({ buffer, segments });
+    if (segments.length > group.maxSegments) {
+      group.maxSegments = segments.length;
+    }
   }
 
   // For each filename group, determine minimal distinguishing paths
-  for (const [fileName, groupBuffers] of fileNameGroups) {
-    if (groupBuffers.length === 1) {
+  for (const [fileName, group] of fileNameGroups) {
+    const { items, maxSegments } = group;
+    if (items.length === 1) {
       // Only one file with this name, just show the filename
-      displayNames.set(groupBuffers[0].id, fileName);
+      displayNames.set(items[0].buffer.id, fileName);
     } else {
-      // Multiple files with same name, need to distinguish
-      const pathSegmentsList = groupBuffers.map((b) => ({
-        buffer: b,
-        segments: getPathSegments(b.path),
-      }));
-
       // Find the minimum number of segments needed to distinguish all files
       let segmentsNeeded = 1;
       let allDistinct = false;
 
-      while (
-        !allDistinct &&
-        segmentsNeeded <= Math.max(...pathSegmentsList.map((p) => p.segments.length))
-      ) {
+      while (!allDistinct && segmentsNeeded <= maxSegments) {
         const displayStrings = new Set<string>();
 
-        for (const item of pathSegmentsList) {
-          const { segments } = item;
+        for (const { segments } of items) {
           const relevantSegments = segments.slice(-segmentsNeeded);
           const displayPath = relevantSegments.join("/");
           displayStrings.add(`${displayPath}/${fileName}`);
         }
 
-        if (displayStrings.size === groupBuffers.length) {
+        if (displayStrings.size === items.length) {
           // All distinct!
           allDistinct = true;
-          for (const item of pathSegmentsList) {
-            const { buffer, segments } = item;
+          for (const { buffer, segments } of items) {
             const relevantSegments = segments.slice(-segmentsNeeded);
             const displayPath =
               relevantSegments.length > 0
@@ -97,8 +90,7 @@ export function calculateDisplayNames(
 
       // Fallback: if still not distinct, use full relative path
       if (!allDistinct) {
-        for (const item of pathSegmentsList) {
-          const { buffer, segments } = item;
+        for (const { buffer, segments } of items) {
           const displayPath =
             segments.length > 0 ? `../${segments.join("/")}/${fileName}` : fileName;
           displayNames.set(buffer.id, displayPath);

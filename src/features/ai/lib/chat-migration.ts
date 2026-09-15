@@ -12,9 +12,6 @@ const OLD_STORAGE_KEY = "athas-ai-chat-v4";
 interface LegacyStorageState {
   state: {
     chats?: any[];
-    currentChatId?: string;
-    mode?: string;
-    outputStyle?: string;
   };
   version: number;
 }
@@ -22,7 +19,7 @@ interface LegacyStorageState {
 /**
  * Check if legacy localStorage data exists
  */
-export function hasLegacyData(): boolean {
+function hasLegacyData(): boolean {
   try {
     const data = localStorage.getItem(OLD_STORAGE_KEY);
     if (!data) return false;
@@ -72,7 +69,7 @@ function getLegacyChats(): Chat[] {
 /**
  * Migrate all chats from localStorage to SQLite
  */
-export async function migrateChatsToSQLite(): Promise<{
+async function migrateChatsToSQLite(): Promise<{
   success: boolean;
   migratedCount: number;
   errors: string[];
@@ -123,7 +120,7 @@ export async function migrateChatsToSQLite(): Promise<{
 /**
  * Clear legacy localStorage data after successful migration
  */
-export function clearLegacyData(): void {
+function clearLegacyData(): void {
   try {
     localStorage.removeItem(OLD_STORAGE_KEY);
   } catch (error) {
@@ -142,7 +139,7 @@ interface MigrationStatus {
   migratedCount: number;
 }
 
-export function getMigrationStatus(): MigrationStatus | null {
+function getMigrationStatus(): MigrationStatus | null {
   try {
     const data = localStorage.getItem(MIGRATION_STATUS_KEY);
     return data ? JSON.parse(data) : null;
@@ -152,7 +149,7 @@ export function getMigrationStatus(): MigrationStatus | null {
   }
 }
 
-export function setMigrationStatus(status: MigrationStatus): void {
+function setMigrationStatus(status: MigrationStatus): void {
   try {
     localStorage.setItem(MIGRATION_STATUS_KEY, JSON.stringify(status));
   } catch (error) {

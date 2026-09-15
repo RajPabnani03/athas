@@ -1,4 +1,4 @@
-import { ArrowLeftIcon as ArrowLeft, ArrowRightIcon as ArrowRight } from "@phosphor-icons/react";
+import { ArrowLeftIcon, ArrowRightIcon } from "@/ui/icons";
 import { useEffect, useState } from "react";
 import { Button } from "@/ui/button";
 import Input from "@/ui/input";
@@ -49,7 +49,7 @@ export default function Pagination({
   if (totalPages <= 1) return null;
 
   return (
-    <div className="flex items-center justify-between border-border border-t bg-secondary-bg px-3 py-2">
+    <div className="flex items-center justify-between border-border border-t bg-surface px-3 py-2">
       <div className="flex items-center gap-2">
         <Select
           value={pageSize.toString()}
@@ -62,10 +62,9 @@ export default function Pagination({
             { value: "500", label: "500" },
           ]}
           onChange={(value) => onPageSizeChange(Number(value))}
-          size="xs"
           className="min-w-16"
         />
-        <span className="ui-font ui-text-sm text-text-lighter">per page</span>
+        <span className="font-sans ui-text-sm text-subtle-foreground">per page</span>
       </div>
 
       <div className="flex items-center gap-1">
@@ -73,40 +72,41 @@ export default function Pagination({
           onClick={() => onPageChange(Math.max(1, currentPage - 1))}
           disabled={currentPage === 1}
           variant="ghost"
-          compact
-          className="text-text-lighter hover:text-text disabled:opacity-50"
+          iconOnly
           aria-label="Previous page"
           tooltip="Previous page"
         >
-          <ArrowLeft />
+          <ArrowLeftIcon />
         </Button>
 
         <form onSubmit={handlePageInputSubmit} className="flex items-center gap-1">
-          <Input
-            type="number"
-            value={pageInput}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              handlePageInputChange(e.target.value)
-            }
-            onBlur={handlePageInputBlur}
-            min={1}
-            max={totalPages}
-            aria-label="Current page"
-            className="ui-font ui-text-sm h-6 w-12 px-1 py-0 text-center"
-          />
-          <span className="ui-font ui-text-sm text-text-lighter">/ {totalPages}</span>
+          <span className="inline-flex min-w-0 w-12">
+            <Input
+              align="center"
+              size="compact"
+              type="number"
+              value={pageInput}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                handlePageInputChange(e.target.value)
+              }
+              onBlur={handlePageInputBlur}
+              min={1}
+              max={totalPages}
+              aria-label="Current page"
+            />
+          </span>
+          <span className="font-sans ui-text-sm text-subtle-foreground">/ {totalPages}</span>
         </form>
 
         <Button
           onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
           disabled={currentPage === totalPages}
           variant="ghost"
-          compact
-          className="text-text-lighter hover:text-text disabled:opacity-50"
+          iconOnly
           aria-label="Next page"
           tooltip="Next page"
         >
-          <ArrowRight />
+          <ArrowRightIcon />
         </Button>
       </div>
     </div>

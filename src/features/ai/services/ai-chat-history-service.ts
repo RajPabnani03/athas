@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentType, Chat, Message, ToolCall } from "@/features/ai/types/ai-chat.types";
+import type { AgentType, Chat, ToolCall } from "@/features/ai/types/ai-chat.types";
+import { coalesceAssistantResponses } from "@/features/ai/lib/assistant-response";
+import { normalizeMessageFollowUpActions } from "@/features/ai/lib/follow-up-actions";
 
 /**
  * Chat History Database Utilities
@@ -15,6 +17,11 @@ interface ChatData {
   agent_id: string | null;
   acp_session_id: string | null;
   workspace_path: string | null;
+  provider_id: string | null;
+  model_id: string | null;
+  branch: string | null;
+  is_pinned: boolean;
+  archived_at: number | null;
 }
 
 interface MessageData {
@@ -26,6 +33,7 @@ interface MessageData {
   is_streaming: boolean;
   is_tool_use: boolean;
   tool_name: string | null;
+  images?: string | null;
 }
 
 interface ToolCallData {
@@ -44,11 +52,10 @@ interface ChatWithMessages {
   tool_calls: ToolCallData[];
 }
 
-interface ChatStats {
-  total_chats: number;
-  total_messages: number;
-  total_tool_calls: number;
-}
+type SerializedChat = ReturnType<typeof chatToData>;
+
+const pendingChatSaves = new Map<string, SerializedChat>();
+const activeChatSaves = new Map<string, Promise<void>>();
 
 /**
  * Initialize the chat history database
@@ -79,6 +86,11 @@ function chatToData(chat: Chat): {
     agent_id: chat.agentId,
     acp_session_id: chat.acpSessionId || null,
     workspace_path: chat.workspacePath || null,
+    provider_id: chat.providerId || null,
+    model_id: chat.modelId || null,
+    branch: chat.branch || null,
+    is_pinned: chat.isPinned || false,
+    archived_at: chat.archivedAt?.getTime() ?? null,
   };
 
   const messages: MessageData[] = chat.messages.map((msg) => ({
@@ -90,6 +102,7 @@ function chatToData(chat: Chat): {
     is_streaming: msg.isStreaming || false,
     is_tool_use: msg.isToolUse || false,
     tool_name: msg.toolName || null,
+    images: msg.images?.length ? JSON.stringify(msg.images) : null,
   }));
 
   const tool_calls: ToolCallData[] = [];
@@ -133,16 +146,21 @@ function dataToChat(data: ChatWithMessages): Chat {
     });
   }
 
-  const messages: Message[] = data.messages.map((msg) => ({
-    id: msg.id,
-    role: msg.role as "user" | "assistant" | "system",
-    content: msg.content,
-    timestamp: new Date(msg.timestamp),
-    isStreaming: msg.is_streaming,
-    isToolUse: msg.is_tool_use,
-    toolName: msg.tool_name || undefined,
-    toolCalls: toolCallsMap.get(msg.id),
-  }));
+  const messages = coalesceAssistantResponses(
+    data.messages.map((msg) =>
+      normalizeMessageFollowUpActions({
+        id: msg.id,
+        role: msg.role as "user" | "assistant" | "system",
+        content: msg.content,
+        images: deserializeMessageImages(msg.images),
+        timestamp: new Date(msg.timestamp),
+        isStreaming: false,
+        isToolUse: msg.is_tool_use,
+        toolName: msg.tool_name || undefined,
+        toolCalls: toolCallsMap.get(msg.id),
+      }),
+    ),
+  );
 
   return {
     id: data.chat.id,
@@ -153,6 +171,11 @@ function dataToChat(data: ChatWithMessages): Chat {
     agentId: (data.chat.agent_id || "custom") as AgentType,
     acpSessionId: data.chat.acp_session_id,
     workspacePath: data.chat.workspace_path,
+    providerId: data.chat.provider_id,
+    modelId: data.chat.model_id,
+    branch: data.chat.branch,
+    isPinned: data.chat.is_pinned,
+    archivedAt: data.chat.archived_at ? new Date(data.chat.archived_at) : null,
   };
 }
 
@@ -160,11 +183,41 @@ function dataToChat(data: ChatWithMessages): Chat {
  * Save a chat to the database
  */
 export const saveChatToDb = async (chat: Chat): Promise<void> => {
+  pendingChatSaves.set(chat.id, chatToData(chat));
+  const activeSave = activeChatSaves.get(chat.id);
+  if (activeSave) return activeSave;
+
+  const save = (async () => {
+    try {
+      while (pendingChatSaves.has(chat.id)) {
+        const next = pendingChatSaves.get(chat.id);
+        pendingChatSaves.delete(chat.id);
+        if (!next) continue;
+
+        await invoke("save_chat", {
+          chat: next.chat,
+          messages: next.messages,
+          toolCalls: next.tool_calls,
+        });
+      }
+    } catch (error) {
+      console.error("Error saving chat to database:", error);
+      throw error;
+    } finally {
+      activeChatSaves.delete(chat.id);
+    }
+  })();
+
+  activeChatSaves.set(chat.id, save);
+  return save;
+};
+
+export const saveChatMetadataToDb = async (chat: Chat): Promise<void> => {
   try {
-    const { chat: chatData, messages, tool_calls } = chatToData(chat);
-    await invoke("save_chat", { chat: chatData, messages, toolCalls: tool_calls });
+    const { chat: chatData } = chatToData(chat);
+    await invoke("update_chat_metadata", { chat: chatData });
   } catch (error) {
-    console.error("Error saving chat to database:", error);
+    console.error(`Error updating chat metadata for ${chat.id}:`, error);
     throw error;
   }
 };
@@ -184,6 +237,11 @@ export const loadAllChatsFromDb = async (): Promise<Omit<Chat, "messages">[]> =>
       agentId: (chat.agent_id || "custom") as AgentType,
       acpSessionId: chat.acp_session_id,
       workspacePath: chat.workspace_path,
+      providerId: chat.provider_id,
+      modelId: chat.model_id,
+      branch: chat.branch,
+      isPinned: chat.is_pinned,
+      archivedAt: chat.archived_at ? new Date(chat.archived_at) : null,
     }));
   } catch (error) {
     console.error("Error loading chats from database:", error);
@@ -217,37 +275,4 @@ export const deleteChatFromDb = async (chatId: string): Promise<void> => {
     throw error;
   }
 };
-
-/**
- * Search chats by title or content
- */
-export const searchChatsInDb = async (query: string): Promise<Omit<Chat, "messages">[]> => {
-  try {
-    const chats = (await invoke("search_chats", { query })) as ChatData[];
-    return chats.map((chat) => ({
-      id: chat.id,
-      title: chat.title,
-      messages: [],
-      createdAt: new Date(chat.created_at),
-      lastMessageAt: new Date(chat.last_message_at),
-      agentId: (chat.agent_id || "custom") as AgentType,
-      acpSessionId: chat.acp_session_id,
-      workspacePath: chat.workspace_path,
-    }));
-  } catch (error) {
-    console.error(`Error searching chats for "${query}":`, error);
-    throw error;
-  }
-};
-
-/**
- * Get chat statistics
- */
-export const getChatStats = async (): Promise<ChatStats> => {
-  try {
-    return (await invoke("get_chat_stats")) as ChatStats;
-  } catch (error) {
-    console.error("Error getting chat stats:", error);
-    throw error;
-  }
-};
+import { deserializeMessageImages } from "@/features/ai/lib/image-attachments";

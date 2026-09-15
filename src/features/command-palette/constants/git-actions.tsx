@@ -1,16 +1,17 @@
 import {
-  ArrowUpIcon as ArrowUp,
-  ArchiveIcon as Archive,
-  ClockCounterClockwiseIcon as ClockCounterClockwise,
-  FolderOpenIcon as FolderOpen,
-  GitBranchIcon as GitBranch,
-  GitCommitIcon as GitCommit,
-  HardDrivesIcon as Server,
-  TagIcon as Tag,
-  ArrowClockwiseIcon as RefreshCw,
-} from "@phosphor-icons/react";
+  ArchiveIcon,
+  ArrowClockwiseIcon,
+  ArrowUpIcon,
+  FolderOpenIcon,
+  GitBranchIcon,
+  GitCommitIcon,
+  HardDrivesIcon,
+  HistoryIcon,
+  NodesIcon,
+  TagIcon,
+} from "@/ui/icons";
 import type { GitRemoteActionResult } from "@/features/git/api/git-remotes-api";
-import { showConfirmDialog, showPromptDialog } from "@/features/dialogs/services/dialog-service";
+import { showConfirmDialog, showPromptDialog } from "@/ui/dialog";
 import type { Action } from "../types/action.types";
 
 interface GitActionsParams {
@@ -19,11 +20,6 @@ interface GitActionsParams {
   setIsSidebarVisible: (v: boolean) => void;
   setActiveView: (view: "files" | "git" | "github-prs") => void;
   showToast: (params: { message: string; type: "success" | "error" | "info" }) => void;
-  gitStore: {
-    actions: {
-      setIsRefreshing: (v: boolean) => void;
-    };
-  };
   gitOperations: {
     stageAllFiles: (path: string) => Promise<boolean>;
     unstageAllFiles: (path: string) => Promise<boolean>;
@@ -43,22 +39,27 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
     setIsSidebarVisible,
     setActiveView,
     showToast,
-    gitStore,
     gitOperations,
     onClose,
   } = params;
   const repoPath = activeRepoPath ?? rootFolderPath;
 
-  const openGitAction = (detail: unknown) => {
+  const openBranchManager = (tab: "branches" | "worktrees" = "branches") => {
     setIsSidebarVisible(true);
     setActiveView("git");
     onClose();
     window.setTimeout(() => {
-      window.dispatchEvent(new CustomEvent("athas:git-palette-action", { detail }));
+      window.dispatchEvent(
+        new CustomEvent("athas:git-palette-action", {
+          detail: { type: "manage-branches", tab },
+        }),
+      );
     }, 0);
   };
 
-  const openGitCommandSurface = (detail: unknown) => {
+  const openGitAction = (detail: unknown) => {
+    setIsSidebarVisible(true);
+    setActiveView("git");
     onClose();
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent("athas:git-palette-action", { detail }));
@@ -70,30 +71,71 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
       id: "git-branch-manager",
       label: "Git: Open Branch Manager",
       description: "Open branch manager dropdown",
-      icon: <GitBranch />,
+      icon: <GitBranchIcon />,
       category: "Git",
-      action: () => {
-        setIsSidebarVisible(true);
-        setActiveView("git");
-        onClose();
-        window.setTimeout(() => {
-          window.dispatchEvent(new Event("athas:open-branch-manager"));
-        }, 0);
-      },
+      action: openBranchManager,
+    },
+    {
+      id: "git-checkout-branch",
+      label: "Git: Checkout Branch",
+      description: "Open branch manager to switch branches",
+      icon: <GitBranchIcon />,
+      category: "Git",
+      action: openBranchManager,
+    },
+    {
+      id: "git-worktree-manager",
+      label: "Git: Manage Worktrees",
+      description: "Open the worktree manager",
+      icon: <NodesIcon />,
+      category: "Git",
+      action: () => openBranchManager("worktrees"),
+    },
+    {
+      id: "git-create-branch",
+      label: "Git: Create Branch",
+      description: "Open branch manager and type a new branch name",
+      icon: <GitBranchIcon />,
+      category: "Git",
+      action: openBranchManager,
+    },
+    {
+      id: "git-delete-branch",
+      label: "Git: Delete Branch",
+      description: "Open branch manager to remove a branch",
+      icon: <GitBranchIcon />,
+      category: "Git",
+      action: openBranchManager,
+    },
+    {
+      id: "git-show-branch-diff",
+      label: "Git: Show Branch Diff",
+      description: "Compare the current branch with another branch",
+      icon: <GitBranchIcon />,
+      category: "Git",
+      action: () => openGitAction({ type: "show-branch-diff" }),
     },
     {
       id: "git-select-repository",
       label: "Git: Select Repository",
       description: "Browse and select a repository",
-      icon: <FolderOpen />,
+      icon: <FolderOpenIcon />,
       category: "Git",
       action: () => openGitAction({ type: "select-repository" }),
+    },
+    {
+      id: "git-initialize-repository",
+      label: "Git: Initialize Repository",
+      description: "Initialize Git in the current folder",
+      icon: <GitBranchIcon />,
+      category: "Git",
+      action: () => openGitAction({ type: "initialize-repository" }),
     },
     {
       id: "git-show-changes",
       label: "Git: Show Changes",
       description: "Open source control changes",
-      icon: <GitBranch />,
+      icon: <GitBranchIcon />,
       category: "Git",
       commandId: "workbench.showSourceControl",
       action: () => openGitAction({ type: "show-tab", tab: "changes" }),
@@ -102,7 +144,7 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
       id: "git-show-history",
       label: "Git: Show History",
       description: "Open commit history",
-      icon: <ClockCounterClockwise />,
+      icon: <HistoryIcon />,
       category: "Git",
       action: () => openGitAction({ type: "show-tab", tab: "history" }),
     },
@@ -110,7 +152,23 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
       id: "git-manage-remotes",
       label: "Git: Manage Remotes",
       description: "Open remote manager",
-      icon: <Server />,
+      icon: <HardDrivesIcon />,
+      category: "Git",
+      action: () => openGitAction({ type: "manage-remotes" }),
+    },
+    {
+      id: "git-add-remote",
+      label: "Git: Add Remote",
+      description: "Open remote manager to add a remote",
+      icon: <HardDrivesIcon />,
+      category: "Git",
+      action: () => openGitAction({ type: "manage-remotes" }),
+    },
+    {
+      id: "git-remove-remote",
+      label: "Git: Remove Remote",
+      description: "Open remote manager to remove a remote",
+      icon: <HardDrivesIcon />,
       category: "Git",
       action: () => openGitAction({ type: "manage-remotes" }),
     },
@@ -118,7 +176,31 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
       id: "git-manage-tags",
       label: "Git: Manage Tags",
       description: "Open tag manager",
-      icon: <Tag />,
+      icon: <TagIcon />,
+      category: "Git",
+      action: () => openGitAction({ type: "manage-tags" }),
+    },
+    {
+      id: "git-create-tag",
+      label: "Git: Create Tag",
+      description: "Open tag manager to create a tag",
+      icon: <TagIcon />,
+      category: "Git",
+      action: () => openGitAction({ type: "manage-tags" }),
+    },
+    {
+      id: "git-delete-tag",
+      label: "Git: Delete Tag",
+      description: "Open tag manager to delete a tag",
+      icon: <TagIcon />,
+      category: "Git",
+      action: () => openGitAction({ type: "manage-tags" }),
+    },
+    {
+      id: "git-compare-tags",
+      label: "Git: Compare Tags",
+      description: "Open tag manager for tag comparisons",
+      icon: <TagIcon />,
       category: "Git",
       action: () => openGitAction({ type: "manage-tags" }),
     },
@@ -126,15 +208,39 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
       id: "git-view-stashes",
       label: "Git: View Stashes",
       description: "Open stash list",
-      icon: <Archive />,
+      icon: <ArchiveIcon />,
       category: "Git",
-      action: () => openGitCommandSurface({ type: "view-stashes" }),
+      action: () => openGitAction({ type: "view-stashes" }),
+    },
+    {
+      id: "git-apply-stash",
+      label: "Git: Apply Stash",
+      description: "Open stash list to apply a stash",
+      icon: <ArchiveIcon />,
+      category: "Git",
+      action: () => openGitAction({ type: "view-stashes" }),
+    },
+    {
+      id: "git-pop-stash",
+      label: "Git: Pop Stash",
+      description: "Open stash list to pop a stash",
+      icon: <ArchiveIcon />,
+      category: "Git",
+      action: () => openGitAction({ type: "view-stashes" }),
+    },
+    {
+      id: "git-drop-stash",
+      label: "Git: Drop Stash",
+      description: "Open stash list to drop a stash",
+      icon: <ArchiveIcon />,
+      category: "Git",
+      action: () => openGitAction({ type: "view-stashes" }),
     },
     {
       id: "git-stage-all",
       label: "Git: Stage All Changes",
       description: "Stage all modified files",
-      icon: <GitBranch />,
+      icon: <GitBranchIcon />,
       category: "Git",
       action: async () => {
         if (!repoPath) {
@@ -146,7 +252,6 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
           const success = await gitOperations.stageAllFiles(repoPath);
           if (success) {
             showToast({ message: "All files staged successfully", type: "success" });
-            window.dispatchEvent(new Event("refresh-git-data"));
           } else {
             showToast({ message: "Failed to stage files", type: "error" });
           }
@@ -160,7 +265,7 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
       id: "git-unstage-all",
       label: "Git: Unstage All Changes",
       description: "Unstage all staged files",
-      icon: <GitBranch />,
+      icon: <GitBranchIcon />,
       category: "Git",
       action: async () => {
         if (!repoPath) {
@@ -172,7 +277,6 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
           const success = await gitOperations.unstageAllFiles(repoPath);
           if (success) {
             showToast({ message: "All files unstaged successfully", type: "success" });
-            window.dispatchEvent(new Event("refresh-git-data"));
           } else {
             showToast({ message: "Failed to unstage files", type: "error" });
           }
@@ -186,7 +290,7 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
       id: "git-commit",
       label: "Git: Commit Changes",
       description: "Commit staged changes",
-      icon: <GitCommit />,
+      icon: <GitCommitIcon />,
       category: "Git",
       action: async () => {
         if (!repoPath) {
@@ -206,7 +310,6 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
           const success = await gitOperations.commitChanges(repoPath, message);
           if (success) {
             showToast({ message: "Changes committed successfully", type: "success" });
-            window.dispatchEvent(new Event("refresh-git-data"));
           } else {
             showToast({ message: "Failed to commit changes", type: "error" });
           }
@@ -220,7 +323,7 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
       id: "git-push",
       label: "Git: Push",
       description: "Push changes to remote",
-      icon: <ArrowUp />,
+      icon: <ArrowUpIcon />,
       category: "Git",
       action: async () => {
         if (!repoPath) {
@@ -249,7 +352,7 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
       id: "git-pull",
       label: "Git: Pull",
       description: "Pull changes from remote",
-      icon: <RefreshCw />,
+      icon: <ArrowClockwiseIcon />,
       category: "Git",
       action: async () => {
         if (!repoPath) {
@@ -262,7 +365,6 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
           const result = await gitOperations.pullChanges(repoPath);
           if (result.success) {
             showToast({ message: "Changes pulled successfully", type: "success" });
-            window.dispatchEvent(new Event("refresh-git-data"));
           } else {
             showToast({
               message: result.error || "Failed to pull changes",
@@ -279,7 +381,7 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
       id: "git-fetch",
       label: "Git: Fetch",
       description: "Fetch changes from remote",
-      icon: <RefreshCw />,
+      icon: <ArrowClockwiseIcon />,
       category: "Git",
       action: async () => {
         if (!repoPath) {
@@ -307,7 +409,7 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
       id: "git-discard-all",
       label: "Git: Discard All Changes",
       description: "Discard all uncommitted changes",
-      icon: <GitBranch />,
+      icon: <GitBranchIcon />,
       category: "Git",
       action: async () => {
         if (!repoPath) {
@@ -327,7 +429,6 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
           const success = await gitOperations.discardAllChanges(repoPath);
           if (success) {
             showToast({ message: "All changes discarded", type: "success" });
-            window.dispatchEvent(new Event("refresh-git-data"));
           } else {
             showToast({ message: "Failed to discard changes", type: "error" });
           }
@@ -341,19 +442,13 @@ export const createGitActions = (params: GitActionsParams): Action[] => {
       id: "git-refresh",
       label: "Git: Refresh Status",
       description: "Refresh Git status",
-      icon: <RefreshCw />,
+      icon: <ArrowClockwiseIcon />,
       category: "Git",
       action: () => {
-        gitStore.actions.setIsRefreshing(true);
         window.dispatchEvent(
           new CustomEvent("athas:git-palette-action", { detail: { type: "refresh" } }),
         );
-        window.dispatchEvent(new Event("refresh-git-data"));
         showToast({ message: "Refreshing Git status...", type: "info" });
-        setTimeout(() => {
-          gitStore.actions.setIsRefreshing(false);
-          showToast({ message: "Git status refreshed", type: "success" });
-        }, 1000);
         onClose();
       },
     },

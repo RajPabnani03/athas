@@ -1,11 +1,7 @@
-import {
-  MinusIcon as Minus,
-  PlusIcon as Plus,
-  MagnifyingGlassPlusIcon as ZoomIn,
-  MagnifyingGlassMinusIcon as ZoomOut,
-} from "@phosphor-icons/react";
+import { MinusIcon, PlusIcon, ZoomInIcon, ZoomOutIcon } from "@/ui/icons";
 import { memo, useCallback, useState } from "react";
 import { Button } from "@/ui/button";
+import { Empty, EmptyDescription } from "@/ui/empty";
 import { cn } from "@/utils/cn";
 import type { ImageContainerProps, ImageDiffViewerProps } from "../../types/git-diff.types";
 import { getFileStatus, getImgSrc } from "../../utils/git-diff-helpers";
@@ -15,32 +11,36 @@ const ZOOM_STEP = 0.25;
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4;
 
-const ImageContainer = memo(({ label, labelColor, base64, alt, zoom }: ImageContainerProps) => (
-  <div className="flex flex-1 flex-col">
-    <div
-      className={cn(
-        "flex items-center justify-center gap-1 py-1 ui-text-xs",
-        "border-border border-b font-medium",
-        labelColor,
-      )}
-    >
-      {label === "Removed" ? <Minus /> : <Plus />}
-      {label}
+const ImageContainer = memo(
+  ({ label, labelColor, base64, alt, filePath, zoom }: ImageContainerProps) => (
+    <div className="flex flex-1 flex-col">
+      <div
+        className={cn(
+          "flex items-center justify-center gap-1 py-1 ui-text-sm",
+          "border-border border-b font-medium",
+          labelColor,
+        )}
+      >
+        {label === "Removed" ? <MinusIcon /> : <PlusIcon />}
+        {label}
+      </div>
+      <div className="flex flex-1 items-center justify-center overflow-auto bg-size-[16px_16px] bg-[repeating-conic-gradient(#1a1a1a_0%_25%,#252525_0%_50%)] p-4">
+        {base64 ? (
+          <img
+            src={getImgSrc(base64, filePath)}
+            alt={alt}
+            className="max-h-full max-w-full object-contain"
+            style={{ transform: `scale(${zoom})`, transformOrigin: "center" }}
+          />
+        ) : (
+          <Empty className="bg-transparent p-0">
+            <EmptyDescription className="italic">No image</EmptyDescription>
+          </Empty>
+        )}
+      </div>
     </div>
-    <div className="flex flex-1 items-center justify-center overflow-auto bg-[length:16px_16px] bg-[repeating-conic-gradient(#1a1a1a_0%_25%,#252525_0%_50%)] p-4">
-      {base64 ? (
-        <img
-          src={getImgSrc(base64)}
-          alt={alt}
-          className="max-h-full max-w-full object-contain"
-          style={{ transform: `scale(${zoom})`, transformOrigin: "center" }}
-        />
-      ) : (
-        <div className="text-text-lighter ui-text-xs italic">No image</div>
-      )}
-    </div>
-  </div>
-));
+  ),
+);
 
 ImageContainer.displayName = "ImageContainer";
 
@@ -60,7 +60,7 @@ const ImageDiffViewer = memo(({ diff, fileName, onClose, commitHash }: ImageDiff
   const hasNewImage = !!diff.new_blob_base64;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-primary-bg">
+    <div className="flex h-full flex-col overflow-hidden bg-background">
       <DiffHeader
         fileName={fileName}
         diff={diff}
@@ -70,44 +70,42 @@ const ImageDiffViewer = memo(({ diff, fileName, onClose, commitHash }: ImageDiff
         onClose={onClose}
       />
 
-      <div className="flex items-center justify-center gap-2 border-border border-b bg-secondary-bg py-1">
+      <div className="flex items-center justify-center gap-2 border-border border-b bg-surface py-1">
         <Button
           onClick={handleZoomOut}
           disabled={zoom <= MIN_ZOOM}
           variant="ghost"
-          className="text-text-lighter disabled:opacity-50"
           tooltip="Zoom out"
           aria-label="Zoom out"
-          compact
+          iconOnly
         >
-          <ZoomOut />
+          <ZoomOutIcon />
         </Button>
-        <span className="ui-font w-12 text-center text-text-lighter ui-text-xs">
+        <span className="font-sans w-12 text-center text-subtle-foreground ui-text-sm">
           {Math.round(zoom * 100)}%
         </span>
         <Button
           onClick={handleZoomIn}
           disabled={zoom >= MAX_ZOOM}
           variant="ghost"
-          compact
-          className="text-text-lighter disabled:opacity-50"
+          iconOnly
           tooltip="Zoom in"
           aria-label="Zoom in"
         >
-          <ZoomIn />
+          <ZoomInIcon />
         </Button>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
         {status === "added" ? (
           <div className="flex flex-1 flex-col">
-            <div className="flex items-center justify-center gap-1 border-border border-b bg-git-added/20 py-1 font-medium ui-text-xs text-git-added">
-              <Plus />
+            <div className="flex items-center justify-center gap-1 border-border border-b bg-git-added/20 py-1 font-medium ui-text-sm text-git-added">
+              <PlusIcon />
               New Image
             </div>
-            <div className="flex flex-1 items-center justify-center overflow-auto bg-[length:16px_16px] bg-[repeating-conic-gradient(#1a1a1a_0%_25%,#252525_0%_50%)] p-4">
+            <div className="flex flex-1 items-center justify-center overflow-auto bg-size-[16px_16px] bg-[repeating-conic-gradient(#1a1a1a_0%_25%,#252525_0%_50%)] p-4">
               <img
-                src={getImgSrc(diff.new_blob_base64)}
+                src={getImgSrc(diff.new_blob_base64, fileName)}
                 alt={fileName}
                 className="max-h-full max-w-full object-contain"
                 style={{ transform: `scale(${zoom})`, transformOrigin: "center" }}
@@ -116,13 +114,13 @@ const ImageDiffViewer = memo(({ diff, fileName, onClose, commitHash }: ImageDiff
           </div>
         ) : status === "deleted" ? (
           <div className="flex flex-1 flex-col">
-            <div className="flex items-center justify-center gap-1 border-border border-b bg-git-deleted/20 py-1 font-medium ui-text-xs text-git-deleted">
-              <Minus />
+            <div className="flex items-center justify-center gap-1 border-border border-b bg-git-deleted/20 py-1 font-medium ui-text-sm text-git-deleted">
+              <MinusIcon />
               Removed Image
             </div>
-            <div className="flex flex-1 items-center justify-center overflow-auto bg-[length:16px_16px] bg-[repeating-conic-gradient(#1a1a1a_0%_25%,#252525_0%_50%)] p-4">
+            <div className="flex flex-1 items-center justify-center overflow-auto bg-size-[16px_16px] bg-[repeating-conic-gradient(#1a1a1a_0%_25%,#252525_0%_50%)] p-4">
               <img
-                src={getImgSrc(diff.old_blob_base64)}
+                src={getImgSrc(diff.old_blob_base64, fileName)}
                 alt={fileName}
                 className="max-h-full max-w-full object-contain"
                 style={{ transform: `scale(${zoom})`, transformOrigin: "center" }}
@@ -137,6 +135,7 @@ const ImageDiffViewer = memo(({ diff, fileName, onClose, commitHash }: ImageDiff
                 labelColor="bg-git-deleted/20 text-git-deleted"
                 base64={diff.old_blob_base64}
                 alt={`${fileName} (old)`}
+                filePath={fileName}
                 zoom={zoom}
               />
             )}
@@ -147,6 +146,7 @@ const ImageDiffViewer = memo(({ diff, fileName, onClose, commitHash }: ImageDiff
                 labelColor="bg-git-added/20 text-git-added"
                 base64={diff.new_blob_base64}
                 alt={`${fileName} (new)`}
+                filePath={fileName}
                 zoom={zoom}
               />
             )}

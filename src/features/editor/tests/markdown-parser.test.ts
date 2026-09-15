@@ -60,4 +60,61 @@ Body text`,
     expect(html).toContain('class="language-python"');
     expect(html).not.toContain("language-{r setup}");
   });
+
+  it("closes quotes before following fenced code blocks", () => {
+    const html = parseMarkdown("> A focused note.\n\n```ts\nconst ready = true;\n```");
+
+    expect(html).toContain("<blockquote>\n<p>A focused note.</p>\n</blockquote>\n<pre>");
+    expect(html).not.toContain("</pre>\n</blockquote>");
+  });
+
+  it("keeps adjacent list types as separate blocks", () => {
+    const html = parseMarkdown("- First\n- Second\n\n- [x] Done\n- [ ] Next");
+
+    expect(html).toContain('<li>First</li>\n<li>Second</li>\n</ul>\n<ul class="task-list">');
+  });
+
+  it("preserves underscores in linked image URLs", () => {
+    const source =
+      "https://dependabot-badges.githubapp.com/badges/compatibility_score?dependency-name=serde_with&package-manager=cargo";
+    const html = parseMarkdown(
+      `[![Dependabot compatibility score](${source})](https://docs.github.com/dependabot)`,
+    );
+
+    expect(html).toContain(`<img src="${source}" alt="Dependabot compatibility score" />`);
+    expect(html).toContain('<a href="https://docs.github.com/dependabot"');
+    expect(html).not.toContain("<em>score");
+  });
+
+  it("renders block content inside blockquotes", () => {
+    const html = parseMarkdown(`> ### Title
+> - first
+> - second
+>
+> Second paragraph`);
+
+    expect(html).toContain("<blockquote>\n<h3>Title</h3>");
+    expect(html).toContain("<ul>\n<li>first</li>\n<li>second</li>\n</ul>");
+    expect(html).toContain("<p>Second paragraph</p>\n</blockquote>");
+    expect(html).not.toContain("<p>&gt;</p>");
+  });
+
+  it("renders GitHub alerts from blockquote markers", () => {
+    const html = parseMarkdown(`> [!WARNING]
+> Be careful.`);
+
+    expect(html).toContain('<div class="markdown-alert markdown-alert-warning">');
+    expect(html).toContain('<p class="markdown-alert-title">Warning</p>');
+    expect(html).toContain("<p>Be careful.</p>\n</div>");
+    expect(html).not.toContain("[!WARNING]");
+  });
+
+  it("nests blockquotes", () => {
+    const html = parseMarkdown(`> outer
+> > inner`);
+
+    expect(html).toContain(
+      "<blockquote>\n<p>outer</p>\n<blockquote>\n<p>inner</p>\n</blockquote>\n</blockquote>",
+    );
+  });
 });

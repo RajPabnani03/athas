@@ -30,8 +30,19 @@ export interface AuthUser {
   created_at: string;
 }
 
+export type ProductCapability =
+  | "intelligence"
+  | "hostedAi"
+  | "settingsSync"
+  | "cloudWorkspaces"
+  | "collaboration"
+  | "enterprisePolicy";
+
+type ProductCapabilities = Record<ProductCapability, boolean>;
+
 export interface SubscriptionInfo {
   status: "free" | "pro";
+  capabilities?: ProductCapabilities;
   subscription: {
     plan: "free" | "pro" | "teams" | "enterprise" | string;
     renews_at: string | null;
@@ -195,7 +206,7 @@ export interface EnterprisePolicy {
   updatedAt: string | null;
 }
 
-export interface CollaborationDocumentUpdatePull {
+interface CollaborationDocumentUpdatePull {
   document: {
     id: number;
     path: string;
@@ -242,37 +253,6 @@ export type CollaborationDocumentStreamEvent =
       status?: number;
     };
 
-export interface CollaborationAdminAnalytics {
-  generatedAt: string;
-  workspace: {
-    id: number;
-    name: string;
-    slug: string;
-  };
-  totals: {
-    members: number;
-    activeMembers: number;
-    pendingInvitations: number;
-    channels: number;
-    projects: number;
-    presenceSessions: number;
-    documents: number;
-    documentUpdates: number;
-    activityEvents: number;
-  };
-  roles: Record<string, number>;
-  memberStatuses: Record<string, number>;
-  updateTypes: Record<string, number>;
-  recentActivity: Array<{
-    id: number;
-    action: string;
-    actorUserId: number | null;
-    targetType: string | null;
-    targetId: string | null;
-    createdAt: string | null;
-  }>;
-}
-
 export interface CloudSettingsSyncSnapshot {
   schemaVersion: number;
   updatedAt: string;
@@ -310,10 +290,41 @@ function parseSubscriptionInfoResponse(payload: unknown): SubscriptionInfo | nul
   const subscription = parseSubscriptionPlanSnapshot(payload.subscription);
   const enterprise = asRecord(payload.enterprise);
   const collaboration = parseCollaborationSnapshot(payload.collaboration);
+  const capabilities = asRecord(payload.capabilities);
 
   return {
     ...(payload as unknown as SubscriptionInfo),
     status: payload.status,
+    capabilities: {
+      intelligence:
+        typeof capabilities.intelligence === "boolean"
+          ? capabilities.intelligence
+          : typeof capabilities.hostedAi === "boolean"
+            ? capabilities.hostedAi
+            : payload.status === "pro",
+      hostedAi:
+        typeof capabilities.hostedAi === "boolean"
+          ? capabilities.hostedAi
+          : typeof capabilities.intelligence === "boolean"
+            ? capabilities.intelligence
+            : payload.status === "pro",
+      settingsSync:
+        typeof capabilities.settingsSync === "boolean"
+          ? capabilities.settingsSync
+          : payload.status === "pro",
+      cloudWorkspaces:
+        typeof capabilities.cloudWorkspaces === "boolean"
+          ? capabilities.cloudWorkspaces
+          : payload.status === "pro",
+      collaboration:
+        typeof capabilities.collaboration === "boolean"
+          ? capabilities.collaboration
+          : collaboration?.enabled === true,
+      enterprisePolicy:
+        typeof capabilities.enterprisePolicy === "boolean"
+          ? capabilities.enterprisePolicy
+          : enterprise.has_access === true,
+    },
     subscription,
     collaboration,
     enterprise: {
@@ -503,6 +514,12 @@ function shouldFallbackFromAuthApiBase(apiBase: string): boolean {
   );
 }
 
+function shouldTryNextAuthApiBase(apiBase: string, status: number): boolean {
+  return (
+    shouldFallbackFromAuthApiBase(apiBase) && (status === 401 || status === 403 || status === 404)
+  );
+}
+
 // Secure token storage via Rust backend
 export const getAuthToken = async (): Promise<string | null> => {
   if (authTokenCache !== undefined) {
@@ -529,7 +546,7 @@ export const removeAuthToken = async (): Promise<void> => {
 };
 
 // Authenticated API fetch helper
-async function authenticatedFetch(
+export async function authenticatedFetch(
   path: string,
   options: RequestInit = {},
   tokenOverride?: string,
@@ -552,8 +569,11 @@ async function authenticatedFetch(
   for (const apiBase of getAuthApiBaseCandidates()) {
     try {
       const response = await tauriFetch(`${apiBase}${path}`, requestOptions);
-      if (response.status === 404 && shouldFallbackFromAuthApiBase(apiBase)) {
-        fallbackError = new Error(`Auth endpoint not found at ${apiBase}`);
+      if (shouldTryNextAuthApiBase(apiBase, response.status)) {
+        fallbackError = new AuthApiError(
+          `Auth request was rejected at ${apiBase}: ${response.status}`,
+          response.status,
+        );
         continue;
       }
 
@@ -859,36 +879,6 @@ export async function registerCollaborationDocument(input: {
   return payload?.collaboration ?? null;
 }
 
-export async function fetchCollaborationDocumentUpdates(input: {
-  documentId: number;
-  afterVersion?: number;
-  limit?: number;
-}): Promise<CollaborationDocumentUpdatePull> {
-  const params = new URLSearchParams({
-    afterVersion: String(input.afterVersion ?? 0),
-    limit: String(input.limit ?? 100),
-  });
-  const response = await authenticatedFetch(
-    `/api/collaboration/documents/${input.documentId}/updates?${params.toString()}`,
-  );
-
-  const payload = (await response.json().catch(() => null)) as
-    | (CollaborationDocumentUpdatePull & { error?: string })
-    | null;
-
-  if (!response.ok || !payload?.document) {
-    throw new AuthApiError(
-      payload?.error || `Failed to fetch collaboration document updates: ${response.status}`,
-      response.status,
-    );
-  }
-
-  return {
-    document: payload.document,
-    updates: payload.updates ?? [],
-  };
-}
-
 export async function appendCollaborationDocumentUpdate(input: {
   documentId: number;
   clientId: string;
@@ -1044,23 +1034,6 @@ export async function streamCollaborationDocumentUpdates(input: {
 
   const trailingEvent = parseCollaborationSseBlock(buffer.trim());
   if (trailingEvent) await input.onEvent(trailingEvent);
-}
-
-export async function fetchCollaborationAdminAnalytics(): Promise<CollaborationAdminAnalytics> {
-  const response = await authenticatedFetch("/api/collaboration/admin/analytics");
-  const payload = (await response.json().catch(() => null)) as {
-    analytics?: CollaborationAdminAnalytics;
-    error?: string;
-  } | null;
-
-  if (!response.ok || !payload?.analytics) {
-    throw new AuthApiError(
-      payload?.error || `Failed to fetch collaboration analytics: ${response.status}`,
-      response.status,
-    );
-  }
-
-  return payload.analytics;
 }
 
 export async function fetchSettingsSyncSnapshot(
@@ -1313,4 +1286,5 @@ export const __test__ = {
   parseCollaborationSseBlock,
   getApiBaseUnavailableMessage,
   getAuthApiBaseCandidates,
+  shouldTryNextAuthApiBase,
 };

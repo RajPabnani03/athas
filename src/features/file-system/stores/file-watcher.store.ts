@@ -1,196 +1,110 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { dirname } from "@tauri-apps/api/path";
-import { create } from "zustand";
 import { combine } from "zustand/middleware";
-import { useBufferStore } from "@/features/editor/stores/buffer.store";
-import { useFileSystemStore } from "../stores/file-system.store";
-
-interface FileChangeEvent {
-  path: string;
-  event_type: "opened" | "reloaded" | "deleted";
-}
-
-// Store the unlisten function outside of the store to prevent re-renders
-let unlistenFileChanged: UnlistenFn | null = null;
+import { createStore } from "zustand/vanilla";
+import { createWorkspaceScopedStore } from "@/features/workspace/stores/create-workspace-scoped-store";
 
 const initialState = {
   watchedPaths: new Set<string>(),
   pendingSaves: new Map<string, number>(), // path -> timestamp
 };
 
-export const useFileWatcherStore = create(
-  combine(initialState, (set, get) => ({
-    // Set the project root and start watching it
-    setProjectRoot: async (path: string) => {
-      try {
-        await invoke("set_project_root", { path });
-      } catch (error) {
-        console.error("Failed to set project root:", path, error);
-      }
-    },
+const createFileWatcherStore = () =>
+  createStore(
+    combine(initialState, (set, get) => ({
+      actions: {
+        // Set the project root and start watching it
+        setProjectRoot: async (path: string) => {
+          if (!path.trim()) {
+            return;
+          }
 
-    // Start watching a path (file or directory)
-    startWatching: async (path: string) => {
-      const { watchedPaths } = get();
-      if (watchedPaths.has(path)) {
-        return;
-      }
+          try {
+            await invoke("set_project_root", { path });
+          } catch (error) {
+            console.error("Failed to set project root:", path, error);
+          }
+        },
 
-      try {
-        await invoke("start_watching", { path });
-        set((state) => ({
-          watchedPaths: new Set(state.watchedPaths).add(path),
-        }));
-      } catch (error) {
-        console.error("Failed to start watching:", path, error);
-      }
-    },
+        // Start watching a path (file or directory)
+        startWatching: async (path: string) => {
+          const { watchedPaths } = get();
+          if (watchedPaths.has(path)) {
+            return;
+          }
 
-    // Stop watching a path
-    stopWatching: async (path: string) => {
-      const { watchedPaths } = get();
-      if (!watchedPaths.has(path)) {
-        return;
-      }
+          try {
+            await invoke("start_watching", { path });
+            set((state) => ({
+              watchedPaths: new Set(state.watchedPaths).add(path),
+            }));
+          } catch (error) {
+            console.error("Failed to start watching:", path, error);
+          }
+        },
 
-      try {
-        await invoke("stop_watching", { path });
-        set((state) => {
-          const newSet = new Set(state.watchedPaths);
-          newSet.delete(path);
-          return { watchedPaths: newSet };
-        });
-      } catch (error) {
-        console.error("Failed to stop watching:", path, error);
-      }
-    },
+        // Stop watching a path
+        stopWatching: async (path: string) => {
+          const { watchedPaths } = get();
+          if (!watchedPaths.has(path)) {
+            return;
+          }
 
-    // Clear pending save status for a file
-    clearPendingSave: (path: string) => {
-      set((state) => {
-        const newPendingSaves = new Map(state.pendingSaves);
-        newPendingSaves.delete(path);
-        return { pendingSaves: newPendingSaves };
-      });
-    },
+          try {
+            await invoke("stop_watching", { path });
+            set((state) => {
+              const newSet = new Set(state.watchedPaths);
+              newSet.delete(path);
+              return { watchedPaths: newSet };
+            });
+          } catch (error) {
+            console.error("Failed to stop watching:", path, error);
+          }
+        },
 
-    // Mark a file as having a pending save
-    markPendingSave: (path: string) => {
-      set((state) => {
-        const newPendingSaves = new Map(state.pendingSaves);
-        newPendingSaves.set(path, Date.now());
-        return { pendingSaves: newPendingSaves };
-      });
-
-      // Auto-clear after 800ms to prevent stuck states (longer than Rust's 300ms debounce)
-      setTimeout(() => {
-        const { pendingSaves } = get();
-        const timestamp = pendingSaves.get(path);
-        if (timestamp && Date.now() - timestamp >= 800) {
-          // Clear the pending save using set directly
+        // Clear pending save status for a file
+        clearPendingSave: (path: string) => {
           set((state) => {
             const newPendingSaves = new Map(state.pendingSaves);
             newPendingSaves.delete(path);
             return { pendingSaves: newPendingSaves };
           });
-        }
-      }, 800);
-    },
+        },
 
-    // Reset state
-    reset: () => {
-      set({
-        watchedPaths: new Set(),
-        pendingSaves: new Map(),
-      });
-    },
-  })),
-);
+        // Mark a file as having a pending save
+        markPendingSave: (path: string) => {
+          set((state) => {
+            const newPendingSaves = new Map(state.pendingSaves);
+            newPendingSaves.set(path, Date.now());
+            return { pendingSaves: newPendingSaves };
+          });
 
-// Debounce map for directory refreshes
-const pendingRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
-const REFRESH_DEBOUNCE_MS = 300;
+          // Auto-clear after 800ms to prevent stuck states (longer than Rust's 300ms debounce)
+          setTimeout(() => {
+            const { pendingSaves } = get();
+            const timestamp = pendingSaves.get(path);
+            if (timestamp && Date.now() - timestamp >= 800) {
+              // Clear the pending save using set directly
+              set((state) => {
+                const newPendingSaves = new Map(state.pendingSaves);
+                newPendingSaves.delete(path);
+                return { pendingSaves: newPendingSaves };
+              });
+            }
+          }, 800);
+        },
 
-function scheduleDirectoryRefresh(dirPath: string) {
-  const existing = pendingRefreshes.get(dirPath);
-  if (existing) clearTimeout(existing);
-
-  pendingRefreshes.set(
-    dirPath,
-    setTimeout(async () => {
-      pendingRefreshes.delete(dirPath);
-      await useFileSystemStore.getState().refreshDirectory(dirPath);
-    }, REFRESH_DEBOUNCE_MS),
+        // Reset state
+        reset: () => {
+          set({
+            watchedPaths: new Set(),
+            pendingSaves: new Map(),
+          });
+        },
+      },
+    })),
   );
-}
 
-// Initialize event listener (called only once)
-export async function initializeFileWatcherListener() {
-  // Clean up existing listener first
-  await cleanupFileWatcherListener();
-
-  // Listen for file changes
-  unlistenFileChanged = await listen<FileChangeEvent>("file-changed", async (event) => {
-    const { path, event_type } = event.payload;
-    const parentDir = await dirname(path);
-
-    window.dispatchEvent(
-      new CustomEvent("file-external-change", {
-        detail: { path, event_type },
-      }),
-    );
-
-    // Handle deleted files - refresh parent directory
-    if (event_type === "deleted") {
-      scheduleDirectoryRefresh(parentDir);
-      return;
-    }
-
-    // Handle new files created externally - refresh parent directory
-    if (event_type === "opened") {
-      scheduleDirectoryRefresh(parentDir);
-      return;
-    }
-
-    // Handle reloaded files (content changed externally)
-    // Check if this file has a pending save
-    const { pendingSaves } = useFileWatcherStore.getState();
-    if (pendingSaves.has(path)) {
-      // Don't clear here - let the auto-clear timeout handle it
-      return;
-    }
-
-    // Handle the file change directly
-    const { buffers } = useBufferStore.getState();
-    const { reloadBufferFromDisk } = useBufferStore.getState().actions;
-    const buffer = buffers.find((b) => b.path === path);
-
-    if (buffer) {
-      // Reload buffer content from disk
-      await reloadBufferFromDisk(buffer.id);
-
-      // Dispatch custom event for file reload notification
-      window.dispatchEvent(new CustomEvent("file-reloaded", { detail: { path } }));
-
-      // Also trigger git gutter update for external file changes
-      window.dispatchEvent(
-        new CustomEvent("git-status-updated", {
-          detail: { filePath: path },
-        }),
-      );
-    }
-  });
-}
-
-// Cleanup event listener
-export async function cleanupFileWatcherListener() {
-  if (unlistenFileChanged) {
-    try {
-      unlistenFileChanged();
-    } catch (error) {
-      console.error("Error cleaning up file change listener:", error);
-    }
-    unlistenFileChanged = null;
-  }
-}
+export const useFileWatcherStore = createWorkspaceScopedStore(
+  "file-watcher",
+  createFileWatcherStore,
+);

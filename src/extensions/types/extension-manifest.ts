@@ -4,7 +4,6 @@
  */
 
 export type Platform = "darwin" | "linux" | "win32";
-export type Architecture = "arm64" | "x64";
 export type PlatformArch =
   | "darwin-arm64"
   | "darwin-x64"
@@ -24,7 +23,7 @@ export type ToolRuntime =
   | "system"
   // Uses a system executable when present, otherwise an Athas-managed binary.
   | "binary";
-export type ExtensionKind = "ui" | "workspace" | "web";
+type ExtensionKind = "ui" | "workspace" | "web";
 
 export interface ExtensionManifest {
   // Core metadata
@@ -54,6 +53,15 @@ export interface ExtensionManifest {
 
   // ACP agent contributions
   agents?: AgentContribution[];
+
+  // AI provider contributions
+  aiProviders?: AIProviderContribution[];
+
+  // External service integrations
+  integrations?: IntegrationContribution[];
+
+  // Reusable agent instructions
+  skills?: SkillContribution[];
 
   // Color theme contributions
   themes?: ThemeContribution[];
@@ -99,6 +107,9 @@ export interface ExtensionManifest {
   main?: string;
   browser?: string;
 
+  // Explicit host capabilities granted to executable extension code.
+  permissions?: ExtensionPermissions;
+
   // Runtime capability metadata used by Athas extension packages before they
   // are normalized into concrete LSP/formatter/linter/grammar fields.
   capabilities?: Record<string, unknown>;
@@ -122,7 +133,10 @@ export interface ExtensionManifest {
 export type ExtensionCategory =
   | "Language"
   | "Database"
+  | "AI"
+  | "Integration"
   | "Agent"
+  | "Skill"
   | "Icon Theme"
   | "Linter"
   | "Formatter"
@@ -172,28 +186,7 @@ export interface LspConfiguration {
   capabilities?: Record<string, any>;
 }
 
-// Extended LSP configuration with platform+arch support for downloadable extensions
-export interface LspConfigurationWithArch {
-  // Server executable paths per platform+arch (relative paths within extension)
-  server: PlatformArchExecutable;
-
-  // Server arguments
-  args?: string[];
-
-  // Environment variables
-  env?: Record<string, string>;
-
-  // Initialization options
-  initializationOptions?: Record<string, unknown>;
-
-  // File extensions this LSP supports
-  fileExtensions: string[];
-
-  // Language IDs this LSP supports
-  languageIds: string[];
-}
-
-export interface PlatformArchExecutable {
+interface PlatformArchExecutable {
   "darwin-arm64"?: string;
   "darwin-x64"?: string;
   "linux-x64"?: string;
@@ -213,21 +206,71 @@ export interface DatabaseProviderContribution {
   sidecar: PlatformArchExecutable;
 }
 
-export interface AgentContribution {
+interface AgentContribution {
   id: string;
   name: string;
   binaryName: string;
   description?: string;
   args?: string[];
+  argsByPlatform?: Partial<Record<PlatformArch | "win32-arm64", string[]>>;
   envVars?: Record<string, string>;
   icon?: string;
   install?: {
     runtime: ToolRuntime;
     package: string;
+    version?: string;
     command?: string;
+    commandsByPlatform?: Partial<Record<PlatformArch | "win32-arm64", string>>;
     downloadUrl?: string;
     downloadUrls?: Partial<Record<PlatformArch | "win32-arm64", string>>;
   };
+}
+
+interface AIProviderModelContribution {
+  id: string;
+  name: string;
+  maxTokens: number;
+  proOnly?: boolean;
+}
+
+export interface AIProviderContribution {
+  id: string;
+  name: string;
+  apiUrl: string;
+  requiresApiKey: boolean;
+  requiresAuth?: boolean;
+  transport?: "browser" | "tauri";
+  maxTokens?: number;
+  apiKeyUrl?: string;
+  apiKeyPlaceholder?: string;
+  models: AIProviderModelContribution[];
+}
+
+export type IntegrationKind = "code-host" | "observability" | "project-management" | "other";
+
+export interface IntegrationContribution {
+  id: string;
+  name: string;
+  description?: string;
+  kind: IntegrationKind;
+  icon?: string;
+}
+
+export interface SkillContribution {
+  id: string;
+  name: string;
+  description?: string;
+  path: string;
+  tags?: string[];
+}
+
+export interface ExtensionPermissions {
+  network?: string[];
+  secrets?: boolean;
+  settings?: string[];
+  workspace?: "read";
+  openExternal?: boolean;
+  clipboardWrite?: boolean;
 }
 
 export interface ThemeContribution {
@@ -243,7 +286,12 @@ export interface IconThemeContribution {
   id: string;
   name: string;
   description?: string;
+  preview?: {
+    fileName: string;
+    kind: "file" | "folder";
+  };
   iconDefinitions: Record<string, string>;
+  lightIconDefinitions?: Record<string, string>;
   fileExtensions?: Record<string, string>;
   filenames?: Record<string, string>;
   folders?: Record<string, string>;
@@ -263,7 +311,7 @@ export interface PlatformExecutable {
   win32?: string; // Windows
 }
 
-export interface GrammarConfiguration {
+interface GrammarConfiguration {
   // Path to tree-sitter grammar WASM
   wasmPath: string;
 
@@ -281,7 +329,7 @@ export interface CommandContribution {
   icon?: string; // Icon for command
 }
 
-export interface KeybindingContribution {
+interface KeybindingContribution {
   command: string; // Command to execute
   key: string; // Key combination (e.g., "ctrl+shift+p")
   when?: string; // Context condition
@@ -315,19 +363,6 @@ export type ExtensionState =
   | "deactivating"
   | "deactivated"
   | "error";
-
-export interface ExtensionError {
-  code: string;
-  message: string;
-  stack?: string;
-}
-
-export interface ExtensionActivationContext {
-  extensionPath: string;
-  storagePath: string;
-  globalStoragePath: string;
-  subscriptions: Array<{ dispose: () => void }>;
-}
 
 export interface FormatterConfiguration {
   // Tool metadata for runtime installation
@@ -419,28 +454,23 @@ export interface Snippet {
   scope?: string;
 }
 
-export interface InstallationMetadata {
+interface InstallationMetadata {
+  type?: "download" | "bundled";
+
   // Download URL for the extension package (used when no platform-specific packages)
-  downloadUrl: string;
+  downloadUrl?: string;
 
   // Package size in bytes
-  size: number;
+  size?: number;
 
   // SHA256 checksum for verification
-  checksum: string;
+  checksum?: string;
 
   // Minimum editor version required
   minEditorVersion?: string;
 
   // Maximum editor version supported
   maxEditorVersion?: string;
-
-  // Platform-specific packages (legacy, platform-only)
-  platforms?: {
-    darwin?: PlatformPackage;
-    linux?: PlatformPackage;
-    win32?: PlatformPackage;
-  };
 
   // Platform+arch specific packages (for extensions with native binaries)
   platformArch?: Partial<Record<PlatformArch, PlatformPackage>>;
@@ -462,6 +492,9 @@ export interface UIContributions {
   databases?: DatabaseProviderContribution[];
   databaseProviders?: DatabaseProviderContribution[];
   agents?: AgentContribution[];
+  aiProviders?: AIProviderContribution[];
+  integrations?: IntegrationContribution[];
+  skills?: SkillContribution[];
   grammars?: GrammarConfiguration[];
   snippets?: SnippetContribution[];
   themes?: ThemeContribution[];
@@ -481,7 +514,7 @@ export interface SidebarViewContribution {
   when?: string;
 }
 
-export interface ToolbarActionContribution {
+interface ToolbarActionContribution {
   id: string;
   title: string;
   icon: string;
@@ -490,7 +523,7 @@ export interface ToolbarActionContribution {
   when?: string;
 }
 
-export interface MenuContribution {
+interface MenuContribution {
   id: string;
   items: Array<{ command: string; group?: string; when?: string }>;
 }

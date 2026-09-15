@@ -1,10 +1,7 @@
-import {
-  FilePlusIcon as FilePlus,
-  PaperPlaneTiltIcon as PaperPlaneTilt,
-} from "@phosphor-icons/react";
-import { chatComposerIconButtonClassName } from "@/features/ai/components/input/chat-composer-control-styles";
+import { FilePlusIcon, PaperPlaneIcon } from "@/ui/icons";
+import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
-import { LoadingIndicator } from "@/ui/loading";
+import { Spinner } from "@/ui/spinner";
 import { SidebarComposerBody, SidebarFooter } from "@/ui/sidebar";
 import Textarea from "@/ui/textarea";
 
@@ -32,9 +29,13 @@ export function CollaborationMessageComposer({
   const isSubmitDisabled = !value.trim() || disabled || isSending;
 
   return (
-    <SidebarFooter surface className="mx-0 mb-0">
-      {error ? <div className="ui-text-xs mb-1.5 px-1 text-error">{error}</div> : null}
-      <SidebarComposerBody className="border-0">
+    <SidebarFooter>
+      {error ? (
+        <Alert tone="error" className="mb-1.5">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      <SidebarComposerBody variant="plain">
         <Textarea
           value={value}
           variant="ghost"
@@ -47,7 +48,8 @@ export function CollaborationMessageComposer({
           }}
           placeholder={placeholder}
           disabled={disabled || isSending}
-          className="ui-text-xs max-h-24 min-h-12 resize-none px-2 py-1.5 leading-5"
+          resize="none"
+          className="max-h-24 min-h-12"
         />
       </SidebarComposerBody>
       <div className="mt-1 flex items-center justify-between gap-2 px-1 pb-1">
@@ -55,13 +57,12 @@ export function CollaborationMessageComposer({
           <Button
             type="button"
             variant="ghost"
-            className={chatComposerIconButtonClassName()}
             disabled={disabled || isSending}
             tooltip="Share Documents"
-            tooltipSide="top"
             onClick={onShareDocuments}
+            iconOnly
           >
-            <FilePlus />
+            <FilePlusIcon />
           </Button>
         ) : (
           <span />
@@ -69,13 +70,12 @@ export function CollaborationMessageComposer({
         <Button
           type="button"
           variant="accent"
-          className="size-6 rounded-md p-0 [&_svg]:size-3.5"
           disabled={isSubmitDisabled}
           tooltip={isSending ? "Sending" : "Send"}
-          tooltipSide="top"
           onClick={onSubmit}
+          iconOnly
         >
-          {isSending ? <LoadingIndicator label="Sending" compact /> : <PaperPlaneTilt />}
+          {isSending ? <Spinner label="Sending" compact /> : <PaperPlaneIcon />}
         </Button>
       </div>
     </SidebarFooter>

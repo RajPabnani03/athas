@@ -1,6 +1,6 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useState } from "react";
-import { toast } from "@/ui/toast";
+import { toast } from "sonner";
 import { useAuthStore } from "@/features/window/stores/auth.store";
 import {
   beginDesktopAuthSession,
@@ -14,7 +14,7 @@ interface UseDesktopSignInOptions {
 }
 
 export function useDesktopSignIn(options: UseDesktopSignInOptions = {}) {
-  const handleAuthCallback = useAuthStore((state) => state.handleAuthCallback);
+  const handleAuthCallback = useAuthStore((state) => state.actions.handleAuthCallback);
   const [isSigningIn, setIsSigningIn] = useState(false);
 
   const signIn = async () => {

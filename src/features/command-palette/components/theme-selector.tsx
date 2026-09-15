@@ -1,29 +1,22 @@
-import {
-  CaretLeftIcon as CaretLeft,
-  MonitorIcon as Monitor,
-  MoonIcon as Moon,
-  PaletteIcon as Palette,
-  GearSixIcon as Settings,
-  SunIcon as Sun,
-  UploadIcon as Upload,
-} from "@phosphor-icons/react";
-import type React from "react";
+import { ChevronLeftIcon, SettingsIcon, UploadIcon } from "@/ui/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getThemeAppearancePreview } from "@/extensions/appearance/appearance-preview";
+import { AppearancePreviewGraphic } from "@/extensions/appearance/components/appearance-preview";
 import { themeRegistry } from "@/extensions/themes/theme-registry";
 import { useRegisteredThemes } from "@/extensions/themes/use-registered-themes";
+import { chooseThemeFile, uploadTheme } from "@/features/settings/utils/theme-upload";
 import { useUIState } from "@/features/window/stores/ui-state.store";
-import Badge from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { CommandEmpty, CommandHeader, CommandInput, CommandItem, CommandList } from "@/ui/command";
+import {
+  CommandEmpty,
+  CommandHeader,
+  CommandHeaderAction,
+  CommandInput,
+  CommandItemBadge,
+  CommandItemRow,
+  CommandList,
+} from "@/ui/command";
+import { toast } from "sonner";
 import { matchesSearchQuery } from "@/utils/search-match";
-
-interface ThemeInfo {
-  id: string;
-  name: string;
-  description: string;
-  category: "System" | "Light" | "Dark" | "Colorful";
-  icon?: React.ReactNode;
-}
 
 interface ThemeSelectorContentProps {
   isActive: boolean;
@@ -32,19 +25,6 @@ interface ThemeSelectorContentProps {
   onThemeChange: (theme: string) => void;
   currentTheme?: string;
 }
-
-const getThemeIcon = (category: string): React.ReactNode => {
-  switch (category) {
-    case "System":
-      return <Monitor />;
-    case "Light":
-      return <Sun />;
-    case "Dark":
-      return <Moon />;
-    default:
-      return <Palette />;
-  }
-};
 
 const clampSelectedIndex = (index: number, size: number): number => {
   if (size <= 0) return 0;
@@ -67,14 +47,11 @@ export const ThemeSelectorContent = ({
   const activeThemeSnapshotRef = useRef<string | undefined>(undefined);
   const didCommitRef = useRef(false);
 
-  const themes = useMemo<ThemeInfo[]>(
+  const themes = useMemo(
     () =>
       registeredThemes.map((theme) => ({
-        id: theme.id,
-        name: theme.name,
-        description: theme.description,
-        category: theme.category,
-        icon: getThemeIcon(theme.category),
+        ...theme,
+        preview: getThemeAppearancePreview(theme),
       })),
     [registeredThemes],
   );
@@ -199,79 +176,68 @@ export const ThemeSelectorContent = ({
     onBack();
   }, [initialTheme, onBack, applyPreviewTheme]);
 
-  const handleUploadTheme = async () => {
-    // Create file input element
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".json";
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) {
-        const { uploadTheme } = await import("@/features/settings/utils/theme-upload");
-        const result = await uploadTheme(file);
-        if (result.success) {
-          console.log("Theme uploaded successfully:", result.theme?.name);
-          // Optionally switch to the newly uploaded theme
-          if (result.theme) {
-            didCommitRef.current = true;
-            onThemeChange(result.theme.id);
-            onClose();
-          }
-        } else {
-          console.error("Theme upload failed:", result.error);
+  const handleUploadTheme = () => {
+    chooseThemeFile((file) => {
+      void uploadTheme(file).then((result) => {
+        if (!result.success || !result.theme) {
+          toast.error(result.error ?? "Failed to import theme", {
+            description: result.details?.slice(0, 4).join("\n"),
+          });
+          return;
         }
-      }
-    };
-    input.click();
+
+        toast.success(
+          result.themes?.length === 1
+            ? `Imported ${result.theme.name}`
+            : `Imported ${result.themes?.length ?? 0} theme variants`,
+        );
+        didCommitRef.current = true;
+        onThemeChange(result.theme.id);
+        onClose();
+      });
+    });
   };
 
   return (
     <>
       <CommandHeader onClose={handleClose}>
-        <div className="flex w-full items-center gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            className="rounded"
-            onClick={handleBack}
-            aria-label="Back to commands"
-            compact
-          >
-            <CaretLeft className="text-text-lighter" />
-          </Button>
-          <CommandInput
-            ref={inputRef}
-            value={query}
-            onChange={setQuery}
-            onKeyDown={handleKeyDown}
-            placeholder="Search themes..."
-            className="flex-1"
-          />
-          <Button
-            onClick={handleUploadTheme}
-            variant="ghost"
-            className="shrink-0 gap-1 px-2"
-            aria-label="Upload theme"
-            compact
-          >
-            <Upload />
-          </Button>
-          <Button
-            onClick={() => {
-              onClose();
-              useUIState.getState().openSettingsDialog("appearance");
-            }}
-            variant="ghost"
-            compact
-            className="shrink-0 gap-1 px-2"
-            aria-label="Open appearance settings"
-          >
-            <Settings />
-          </Button>
-        </div>
+        <CommandHeaderAction type="button" onClick={handleBack} aria-label="Back to commands">
+          <ChevronLeftIcon />
+        </CommandHeaderAction>
+        <CommandInput
+          ref={inputRef}
+          value={query}
+          onChange={setQuery}
+          onKeyDown={handleKeyDown}
+          placeholder="Search themes..."
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded="true"
+          aria-controls="theme-selector-results"
+          aria-activedescendant={
+            filteredThemes.length ? `theme-selector-option-${selectedIndex}` : undefined
+          }
+        />
+        <CommandHeaderAction onClick={handleUploadTheme} aria-label="Upload theme">
+          <UploadIcon />
+        </CommandHeaderAction>
+        <CommandHeaderAction
+          onClick={() => {
+            onClose();
+            useUIState.getState().openSettingsDialog("appearance");
+          }}
+          aria-label="Open appearance settings"
+        >
+          <SettingsIcon />
+        </CommandHeaderAction>
       </CommandHeader>
 
-      <CommandList ref={resultsRef}>
+      <CommandList
+        ref={resultsRef}
+        id="theme-selector-results"
+        role="listbox"
+        aria-label="Color themes"
+      >
         {filteredThemes.length === 0 ? (
           <CommandEmpty>No themes found</CommandEmpty>
         ) : (
@@ -280,8 +246,13 @@ export const ThemeSelectorContent = ({
             const isCurrent = theme.id === initialTheme;
 
             return (
-              <CommandItem
+              <CommandItemRow
                 key={theme.id}
+                as="div"
+                id={`theme-selector-option-${index}`}
+                role="option"
+                tabIndex={-1}
+                aria-selected={isSelected}
                 data-index={index}
                 onClick={() => {
                   didCommitRef.current = true;
@@ -292,20 +263,14 @@ export const ThemeSelectorContent = ({
                   setSelectedIndex(index);
                 }}
                 isSelected={isSelected}
-                className="gap-3 px-2 py-1.5"
-              >
-                <div className="shrink-0 text-text-lighter">{theme.icon || <Moon />}</div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 truncate ui-text-xs">
-                    <span className="truncate">{theme.name}</span>
-                    {isCurrent && (
-                      <Badge variant="accent" size="compact">
-                        Current
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              </CommandItem>
+                icon={
+                  theme.preview ? <AppearancePreviewGraphic preview={theme.preview} /> : undefined
+                }
+                contentLayout="stacked"
+                title={theme.name}
+                description={theme.description || theme.category}
+                accessory={isCurrent ? <CommandItemBadge>Current</CommandItemBadge> : undefined}
+              />
             );
           })
         )}
@@ -315,5 +280,3 @@ export const ThemeSelectorContent = ({
 };
 
 ThemeSelectorContent.displayName = "ThemeSelectorContent";
-
-export default ThemeSelectorContent;

@@ -1,17 +1,17 @@
 import type { SubscriptionInfo } from "@/features/window/services/auth-api";
 
 type CollaborationSnapshot = NonNullable<SubscriptionInfo["collaboration"]>;
-type CollaborationChannel = CollaborationSnapshot["channels"][number];
+export type CollaborationChannel = CollaborationSnapshot["channels"][number];
 type CollaborationNote = CollaborationSnapshot["channelNotes"][number];
 
-export interface CollaborationChatEntry {
+interface CollaborationChatEntry {
   id: string;
   author: string;
   body: string;
   kind: "message" | "document";
 }
 
-export interface CollaborationChatGroup {
+interface CollaborationChatGroup {
   id: string;
   author: string;
   entries: CollaborationChatEntry[];
@@ -28,13 +28,13 @@ export interface CollaborationParticipant {
   followableUserId: number | null;
 }
 
-export interface CollaborationNoteFile {
+interface CollaborationNoteFile {
   type: "file";
   path: string;
   content: string;
 }
 
-export interface CollaborationNoteFolder {
+interface CollaborationNoteFolder {
   type: "folder";
   path: string;
 }

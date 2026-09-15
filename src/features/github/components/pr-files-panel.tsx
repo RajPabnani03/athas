@@ -1,33 +1,12 @@
+import { memo, useMemo } from "react";
+import type { FileNavigatorItem } from "@/features/file-explorer/components/file-navigator-sidebar";
+import { ReviewWorkspace } from "@/features/git/components/diff/review-workspace";
 import {
-  ListBulletsIcon as ListBullets,
-  MagnifyingGlassIcon as Search,
-  SlidersHorizontalIcon as SlidersHorizontal,
-} from "@phosphor-icons/react";
-import { memo, useMemo, useState } from "react";
-import {
-  FileNavigatorSidebar,
-  type FileNavigatorItem,
-  type FileNavigatorViewMode,
-} from "@/features/file-explorer/components/file-navigator-sidebar";
-import { Button, buttonVariants } from "@/ui/button";
-import Input from "@/ui/input";
-import { LoadingIndicator } from "@/ui/loading";
-import Select from "@/ui/select";
-import { cn } from "@/utils/cn";
-import type { FileStatusFilter } from "../types/github-pr-viewer.types";
+  ViewerErrorState,
+  ViewerLoadingState,
+  ViewerState,
+} from "@/features/viewer/components/viewer-state";
 import { FileDiffView } from "./file-diff-view";
-
-const compactToolbarButtonClass = cn(
-  buttonVariants({ variant: "ghost", compact: true }),
-  "h-5 rounded px-1.5 ui-text-xs text-text-lighter hover:bg-hover hover:text-text",
-);
-
-const statusClass: Record<DiffFileItem["status"], string> = {
-  added: "text-git-added",
-  deleted: "text-git-deleted",
-  modified: "text-git-modified",
-  renamed: "text-git-renamed",
-};
 
 interface DiffFileItem {
   path: string;
@@ -38,27 +17,16 @@ interface DiffFileItem {
   lines?: string[];
 }
 
-interface DiffDebugSummary {
-  errorCount: number;
-}
-
 interface PRFilesPanelProps {
   selectedPRDiff: string | null;
   isLoadingContent: boolean;
   contentError: string | null;
   diffFiles: DiffFileItem[];
-  filteredDiff: DiffFileItem[];
   selectedDiffFile: DiffFileItem | null;
-  fileQuery: string;
-  fileStatusFilter: FileStatusFilter;
   selectedFilePath: string | null;
-  isFileTreeVisible: boolean;
-  diffDebugSummary: DiffDebugSummary;
+  isActive: boolean;
   patchError?: string;
   onRetry: () => void;
-  onToggleFileTree: () => void;
-  onFileQueryChange: (value: string) => void;
-  onFileStatusFilterChange: (value: FileStatusFilter) => void;
   onSelectFile: (path: string) => void;
   onOpenChangedFile: (relativePath: string) => void;
 }
@@ -69,166 +37,74 @@ export const PRFilesPanel = memo(
     isLoadingContent,
     contentError,
     diffFiles,
-    filteredDiff,
     selectedDiffFile,
-    fileQuery,
-    fileStatusFilter,
     selectedFilePath,
-    isFileTreeVisible,
-    diffDebugSummary,
+    isActive,
     patchError,
     onRetry,
-    onToggleFileTree,
-    onFileQueryChange,
-    onFileStatusFilterChange,
     onSelectFile,
     onOpenChangedFile,
   }: PRFilesPanelProps) => {
-    const [fileNavigatorViewMode, setFileNavigatorViewMode] =
-      useState<FileNavigatorViewMode>("flat");
-
-    const fileTreeItems = useMemo<FileNavigatorItem[]>(
+    const diffNavigationItems = useMemo<FileNavigatorItem[]>(
       () =>
-        filteredDiff.map((file) => ({
+        diffFiles.map((file) => ({
           key: file.path,
           path: file.path,
-          iconClassName: statusClass[file.status],
+          iconTone: file.status,
           metadata: [
             ...(file.additions > 0
-              ? [{ label: `+${file.additions}`, className: "text-git-added" }]
+              ? [{ label: `+${file.additions}`, tone: "added" as const }]
               : []),
             ...(file.deletions > 0
-              ? [{ label: `-${file.deletions}`, className: "text-git-deleted" }]
+              ? [{ label: `-${file.deletions}`, tone: "deleted" as const }]
               : []),
           ],
         })),
-      [filteredDiff],
+      [diffFiles],
     );
 
     if (isLoadingContent && !selectedPRDiff) {
-      return (
-        <div className="flex items-center justify-center p-8">
-          <LoadingIndicator label="Loading diff" showLabel />
-        </div>
-      );
+      return <ViewerLoadingState label="Loading diff" layout="section" className="min-h-0" />;
     }
 
     if (contentError) {
       return (
-        <div className="flex items-center justify-center p-8 text-center">
-          <div>
-            <p className="ui-font ui-text-sm text-error">{contentError}</p>
-            <Button
-              onClick={onRetry}
-              variant="default"
-              className="mt-2 border-error/40 text-error/90 hover:bg-error/10"
-              compact
-            >
-              Retry
-            </Button>
-          </div>
-        </div>
+        <ViewerErrorState
+          message={contentError}
+          actionLabel="Retry"
+          onAction={onRetry}
+          layout="section"
+          className="min-h-0"
+        />
       );
     }
 
     if (diffFiles.length === 0) {
-      return (
-        <div className="flex items-center justify-center p-8">
-          <p className="ui-font ui-text-sm text-text-lighter">No file changes</p>
-        </div>
-      );
-    }
-
-    if (filteredDiff.length === 0) {
-      return (
-        <div className="flex items-center justify-center p-8">
-          <p className="ui-font ui-text-sm text-text-lighter">No files match your filters</p>
-        </div>
-      );
+      return <ViewerState description="No file changes" layout="section" className="min-h-0" />;
     }
 
     return (
-      <div className="flex min-h-[560px] min-w-0 items-stretch overflow-hidden rounded-md border border-border/70 bg-primary-bg">
-        {isFileTreeVisible ? (
-          <FileNavigatorSidebar
-            items={fileTreeItems}
-            selectedKey={selectedFilePath}
-            onSelect={onSelectFile}
-            ariaLabel="Changed files"
-            viewMode={fileNavigatorViewMode}
-            onViewModeChange={setFileNavigatorViewMode}
+      <ReviewWorkspace
+        items={diffNavigationItems}
+        selectedKey={selectedFilePath}
+        onSelect={onSelectFile}
+        isActive={isActive}
+      >
+        {selectedDiffFile ? (
+          <FileDiffView
+            file={selectedDiffFile}
+            isExpanded
+            isStatic
+            showHeader={false}
+            onToggle={() => {}}
+            onOpenFile={onOpenChangedFile}
+            isLoadingPatch={false}
+            patchError={patchError}
           />
-        ) : null}
-
-        <div className="min-w-0 flex-1 space-y-3 p-2">
-          <div className="rounded-md border border-border/60 bg-terniary-bg px-2 py-1">
-            <div className="flex min-h-7 flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 flex-wrap items-center gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={onToggleFileTree}
-                  className={compactToolbarButtonClass}
-                  aria-label={isFileTreeVisible ? "Hide changed files" : "Show changed files"}
-                  compact
-                >
-                  <ListBullets weight="duotone" />
-                </Button>
-                <span className="ui-text-sm text-text-lighter">
-                  {filteredDiff.length} of {diffFiles.length} files
-                </span>
-                {diffDebugSummary.errorCount > 0 ? (
-                  <span className="ui-text-xs text-error">
-                    {diffDebugSummary.errorCount} patch errors
-                  </span>
-                ) : null}
-              </div>
-              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
-                <Input
-                  value={fileQuery}
-                  onChange={(e) => onFileQueryChange(e.target.value)}
-                  placeholder="Search files..."
-                  leftIcon={Search}
-                  size="sm"
-                  className="h-7 w-full border-0 bg-primary-bg/70 sm:w-56"
-                />
-                <Select
-                  value={fileStatusFilter}
-                  onChange={(value) => onFileStatusFilterChange(value as FileStatusFilter)}
-                  options={[
-                    { value: "all", label: "All" },
-                    { value: "added", label: "Added" },
-                    { value: "modified", label: "Modified" },
-                    { value: "deleted", label: "Deleted" },
-                    { value: "renamed", label: "Renamed" },
-                  ]}
-                  size="sm"
-                  leftIcon={SlidersHorizontal}
-                  className="h-7 border-0 bg-primary-bg/70"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="min-h-[560px] min-w-0 overflow-hidden rounded-xl bg-secondary-bg/12">
-            {selectedDiffFile ? (
-              <FileDiffView
-                file={selectedDiffFile}
-                isExpanded
-                isStatic
-                onToggle={() => {}}
-                onOpenFile={onOpenChangedFile}
-                isLoadingPatch={false}
-                patchError={patchError}
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center p-8">
-                <p className="ui-font ui-text-sm text-text-lighter">Select a file</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+        ) : (
+          <ViewerState description="Select a file" className="h-full" />
+        )}
+      </ReviewWorkspace>
     );
   },
 );

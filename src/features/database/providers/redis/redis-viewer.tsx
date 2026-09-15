@@ -1,34 +1,31 @@
 import {
-  ClockIcon as Clock,
-  KeyIcon as Key,
-  ArrowClockwiseIcon as RefreshCw,
-  MagnifyingGlassIcon as Search,
-  HardDrivesIcon as Server,
-  TrashIcon as Trash2,
-} from "@phosphor-icons/react";
+  ArrowClockwiseIcon,
+  ClockIcon,
+  HardDrivesIcon,
+  KeyIcon,
+  SearchIcon,
+  TrashIcon,
+} from "@/ui/icons";
 import { useEffect, useRef, useState } from "react";
+import { PathBreadcrumb } from "@/features/editor/components/toolbar/path-breadcrumb";
+import { PaneContentHeader } from "@/features/panes/components/pane-content-chrome";
+import { Alert, AlertDescription } from "@/ui/alert";
 import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/ui/empty";
 import Input from "@/ui/input";
-import { LoadingIndicator } from "@/ui/loading";
-import { cn } from "@/utils/cn";
-import { useRedisStore } from "./stores/redis.store";
-
-const TYPE_COLORS: Record<string, string> = {
-  string: "text-accent",
-  list: "text-text",
-  set: "text-text",
-  hash: "text-text",
-  zset: "text-text",
-  stream: "text-text",
-};
+import { Spinner } from "@/ui/spinner";
+import { ScrollArea } from "@/ui/scroll-area";
+import { databaseCodeBlockClassName, databasePanelClassName } from "../../utils/database-surface";
+import { createRedisStore } from "./stores/redis.store";
 
 interface RedisViewerProps {
   connectionId: string;
 }
 
 export default function RedisViewer({ connectionId }: RedisViewerProps) {
-  const store = useRedisStore();
+  const [useStore] = useState(() => createRedisStore());
+  const store = useStore();
   const { actions } = store;
   const [patternInput, setPatternInput] = useState("*");
   const [showInfo, setShowInfo] = useState(false);
@@ -75,18 +72,20 @@ export default function RedisViewer({ connectionId }: RedisViewerProps) {
   }, [actions, store.hasMore, store.isScanningKeys, store.keys.length]);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-secondary-bg/30 text-text">
-      <div className="mx-2 mt-2 rounded-2xl bg-primary-bg/85 px-3 py-2">
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 rounded-full bg-secondary-bg/70 px-2.5 py-1">
-            <Server className="text-text-lighter" />
-            <span className="ui-font ui-text-sm">{store.fileName}</span>
-          </div>
-          <div className="ml-auto flex items-center gap-1">
+    <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
+      <PaneContentHeader
+        context={
+          <PathBreadcrumb
+            segments={[store.fileName]}
+            icons={[<HardDrivesIcon key="server" />]}
+            ariaLabel="Redis connection"
+          />
+        }
+        actions={
+          <>
             <Button
               onClick={() => setShowInfo(!showInfo)}
               variant="ghost"
-              compact
               data-active={showInfo}
               aria-label="Toggle server info"
             >
@@ -95,74 +94,72 @@ export default function RedisViewer({ connectionId }: RedisViewerProps) {
             <Button
               onClick={() => actions.scanKeys(undefined, true)}
               variant="ghost"
-              compact
-              className="rounded-full"
+              iconOnly
               disabled={store.isScanningKeys}
               aria-label="Refresh keys"
             >
               {store.isScanningKeys ? (
-                <LoadingIndicator label="Refreshing keys" compact />
+                <Spinner label="Refreshing keys" compact />
               ) : (
-                <RefreshCw />
+                <ArrowClockwiseIcon />
               )}
             </Button>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
-      <div className="flex min-h-0 flex-1 gap-2 p-2 pt-1.5">
-        <div className="flex w-64 flex-col overflow-hidden rounded-2xl bg-primary-bg/85">
-          <div className="flex items-center gap-1.5 border-border/60 border-b px-3 py-2">
-            <Search className="text-text-lighter" />
-            <Input
-              className="border-0 bg-transparent p-0 focus:border-transparent focus:ring-0"
-              placeholder="Pattern (e.g. user:*)"
-              value={patternInput}
-              onChange={(e) => setPatternInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              aria-label="Key pattern"
-            />
-            <Button
-              onClick={handleSearch}
-              variant="ghost"
-              className="rounded-full"
-              disabled={store.isScanningKeys}
-              aria-label="Search keys"
-              compact
-            >
-              {store.isScanningKeys ? (
-                <LoadingIndicator label="Scanning keys" compact />
-              ) : (
-                <Search />
-              )}
-            </Button>
-          </div>
-          <div ref={keyListRef} className="flex-1 space-y-0.5 overflow-y-auto p-1.5">
+      <div className="flex min-h-0 flex-1">
+        <div className={databasePanelClassName("w-64 shrink-0 border-border/60 border-r")}>
+          <PaneContentHeader
+            leading={<SearchIcon />}
+            context={
+              <Input
+                grow
+                variant="bare"
+                placeholder="Pattern (e.g. user:*)"
+                value={patternInput}
+                onChange={(e) => setPatternInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                aria-label="Key pattern"
+              />
+            }
+            actions={
+              <Button
+                onClick={handleSearch}
+                variant="ghost"
+                disabled={store.isScanningKeys}
+                aria-label="Search keys"
+                iconOnly
+              >
+                {store.isScanningKeys ? <Spinner label="Scanning keys" compact /> : <SearchIcon />}
+              </Button>
+            }
+          />
+          <ScrollArea
+            fill="flex"
+            contentPadding="sm"
+            contentGap="xs"
+            viewportProps={{ ref: keyListRef }}
+          >
             {store.keys.map((keyInfo) => (
               <Button
                 key={keyInfo.key}
                 type="button"
-                variant="ghost"
+                variant="list"
                 onClick={() => actions.selectKey(keyInfo.key)}
-                className={cn(
-                  "h-auto w-full justify-start gap-1.5 px-2 py-1 leading-[1.35]",
-                  store.selectedKey === keyInfo.key && "bg-selected",
-                )}
+                width="full"
+                align="start"
+                active={store.selectedKey === keyInfo.key}
                 aria-label={`Select key ${keyInfo.key}`}
               >
-                <Badge
-                  className={cn(
-                    "border-0 bg-secondary-bg/70 px-1.5 font-bold uppercase",
-                    TYPE_COLORS[keyInfo.type] || "text-text-lighter",
-                  )}
-                >
+                <Badge variant={keyInfo.type === "string" ? "accent" : "muted"}>
                   {keyInfo.type.substring(0, 3)}
                 </Badge>
-                <span className="flex-1 truncate leading-[1.35]">{keyInfo.key}</span>
+                <span className="flex-1 truncate leading-row">{keyInfo.key}</span>
                 {keyInfo.ttl > 0 && (
-                  <span className="flex items-center gap-0.5 text-text-lighter">
-                    <Clock />
-                    <span className="ui-text-xs">{keyInfo.ttl}s</span>
+                  <span className="flex items-center gap-0.5 text-subtle-foreground">
+                    <ClockIcon />
+                    <span className="ui-text-sm">{keyInfo.ttl}s</span>
                   </span>
                 )}
               </Button>
@@ -171,74 +168,70 @@ export default function RedisViewer({ connectionId }: RedisViewerProps) {
               <div
                 ref={loadMoreRef}
                 aria-label="Loading more keys"
-                className="px-2 py-1 text-text-lighter ui-text-xs"
+                className="px-2 py-1 text-subtle-foreground ui-text-sm"
               >
                 {store.isScanningKeys ? "Loading keys..." : "More keys..."}
               </div>
             )}
             {store.isScanningKeys && !store.hasMore && (
-              <div className="px-2 py-1 text-text-lighter ui-text-xs">Loading keys...</div>
+              <div className="px-2 py-1 text-subtle-foreground ui-text-sm">Loading keys...</div>
             )}
-          </div>
+          </ScrollArea>
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-primary-bg/85">
+        <div className={databasePanelClassName("flex-1")}>
           {store.error && (
-            <div className="mx-3 mt-3 rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-error ui-text-xs">
-              {store.error}
-            </div>
+            <Alert tone="error" className="mx-3 mt-3 w-auto">
+              <AlertDescription>{store.error}</AlertDescription>
+            </Alert>
           )}
 
           {store.isLoading && (
-            <div className="flex flex-1 items-center justify-center p-8">
-              <LoadingIndicator label="Loading" showLabel />
-            </div>
+            <Empty>
+              <EmptyDescription>
+                <Spinner label="Loading" showLabel />
+              </EmptyDescription>
+            </Empty>
           )}
 
           {!store.isLoading && showInfo && store.serverInfo && (
             <div className="flex-1 overflow-auto p-3">
-              <div className="rounded-2xl border border-border/60 bg-secondary-bg/40 p-3">
-                <div className="mb-3 text-text-lighter ui-text-xs uppercase tracking-[0.08em]">
+              <section className="border-y border-border/60 py-3">
+                <div className="mb-3 text-subtle-foreground ui-text-sm uppercase tracking-[0.08em]">
                   Server Info
                 </div>
                 <div className="space-y-2">
                   {Object.entries(store.serverInfo).map(([key, value]) => (
-                    <div key={key} className="flex gap-2 ui-text-xs">
-                      <span className="ui-font min-w-[140px] text-text-lighter">{key}</span>
-                      <span className="ui-font">{value}</span>
+                    <div key={key} className="flex gap-2 ui-text-sm">
+                      <span className="font-sans min-w-35 text-subtle-foreground">{key}</span>
+                      <span className="font-sans">{value}</span>
                     </div>
                   ))}
                 </div>
-              </div>
+              </section>
             </div>
           )}
 
           {!store.isLoading && !showInfo && store.selectedKey && (
             <div className="flex flex-1 flex-col overflow-hidden">
-              <div className="flex items-center gap-2 border-border/60 border-b px-3 py-2">
-                <Key className="text-text-lighter" />
-                <span className="ui-font font-medium ui-text-xs">{store.selectedKey}</span>
-                <Badge
-                  className={cn(
-                    "border-0 bg-secondary-bg/70 px-1.5 font-bold uppercase",
-                    TYPE_COLORS[store.selectedKeyType || ""] || "text-text-lighter",
-                  )}
-                >
-                  {store.selectedKeyType}
-                </Badge>
-                <div className="flex-1" />
-                <Button
-                  onClick={() => actions.deleteKey(store.selectedKey!)}
-                  variant="ghost"
-                  compact
-                  className="text-error hover:bg-error/10 hover:text-error"
-                  aria-label="Delete key"
-                >
-                  <Trash2 />
-                </Button>
-              </div>
+              <PaneContentHeader
+                leading={<KeyIcon />}
+                title={store.selectedKey}
+                detail={store.selectedKeyType}
+                actions={
+                  <Button
+                    onClick={() => actions.deleteKey(store.selectedKey!)}
+                    variant="danger"
+                    iconOnly
+                    tone="danger"
+                    aria-label="Delete key"
+                  >
+                    <TrashIcon />
+                  </Button>
+                }
+              />
               <div className="flex-1 overflow-auto p-3">
-                <pre className="ui-font whitespace-pre-wrap rounded-2xl bg-secondary-bg/40 p-3 ui-text-xs leading-5">
+                <pre className={databaseCodeBlockClassName()}>
                   {typeof store.keyValue === "string"
                     ? store.keyValue
                     : JSON.stringify(store.keyValue, null, 2)}
@@ -248,14 +241,14 @@ export default function RedisViewer({ connectionId }: RedisViewerProps) {
           )}
 
           {!store.isLoading && !showInfo && !store.selectedKey && (
-            <div className="flex flex-1 items-center justify-center px-6">
-              <div className="rounded-2xl border border-border/60 bg-secondary-bg/40 px-5 py-4 text-center">
-                <div className="ui-text-sm">Select a key</div>
-                <div className="mt-1 text-text-lighter ui-text-xs">
+            <Empty>
+              <EmptyHeader>
+                <EmptyTitle>Select a key</EmptyTitle>
+                <EmptyDescription>
                   Pick a Redis key from the sidebar to inspect its value.
-                </div>
-              </div>
-            </div>
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           )}
         </div>
       </div>

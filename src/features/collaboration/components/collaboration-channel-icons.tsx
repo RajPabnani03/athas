@@ -1,30 +1,32 @@
 import {
-  ChatCircleTextIcon as ChatCircleText,
-  CodeIcon as Code,
-  HashIcon as Hash,
-  LightningIcon as Lightning,
-  LockKeyIcon as LockKey,
-  MegaphoneIcon as Megaphone,
-  PushPinIcon as PushPin,
-  RocketLaunchIcon as RocketLaunch,
-  WrenchIcon as Wrench,
-} from "@phosphor-icons/react";
+  BoltIcon,
+  ChatBubbleTextIcon,
+  CodeIcon,
+  HashIcon,
+  LockKeyIcon,
+  MegaphoneIcon,
+  PinIcon,
+  RocketIcon,
+  WrenchIcon,
+} from "@/ui/icons";
+import { Button } from "@/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/ui/tabs";
+import { Toggle } from "@/ui/toggle";
 import { EmojiPicker } from "./emoji-picker";
 import Tooltip from "@/ui/tooltip";
-import { cn } from "@/utils/cn";
 
 const CHANNEL_ICON_STORAGE_KEY = "athas.collaboration.channel-icons";
 
 const CHANNEL_SYMBOL_OPTIONS = [
-  { id: "hash", label: "Channel", icon: Hash },
-  { id: "chat", label: "Chat", icon: ChatCircleText },
-  { id: "wrench", label: "Tools", icon: Wrench },
-  { id: "rocket", label: "Launch", icon: RocketLaunch },
-  { id: "code", label: "Code", icon: Code },
-  { id: "megaphone", label: "Announce", icon: Megaphone },
-  { id: "lock", label: "Private", icon: LockKey },
-  { id: "pin", label: "Pinned", icon: PushPin },
-  { id: "lightning", label: "Fast", icon: Lightning },
+  { id: "hash", label: "Channel", icon: HashIcon },
+  { id: "chat", label: "Chat", icon: ChatBubbleTextIcon },
+  { id: "wrench", label: "Tools", icon: WrenchIcon },
+  { id: "rocket", label: "Launch", icon: RocketIcon },
+  { id: "code", label: "Code", icon: CodeIcon },
+  { id: "megaphone", label: "Announce", icon: MegaphoneIcon },
+  { id: "lock", label: "Private", icon: LockKeyIcon },
+  { id: "pin", label: "Pinned", icon: PinIcon },
+  { id: "lightning", label: "Fast", icon: BoltIcon },
 ];
 
 export function loadChannelIcons() {
@@ -43,12 +45,12 @@ export function saveChannelIcons(icons: Record<string, string>) {
 }
 
 export function renderChannelIcon(value: string | undefined) {
-  if (!value) return <Hash className="size-3.5 text-text-lighter" weight="duotone" />;
+  if (!value) return <HashIcon className="size-3.5 text-subtle-foreground" />;
   if (!value.startsWith("icon:")) return value;
 
   const symbol = CHANNEL_SYMBOL_OPTIONS.find((option) => option.id === value.slice(5));
-  const Icon = symbol?.icon ?? Hash;
-  return <Icon className="size-3.5" weight="duotone" />;
+  const Icon = symbol?.icon ?? HashIcon;
+  return <Icon className="size-3.5" />;
 }
 
 export function ChannelIconPicker({
@@ -66,21 +68,12 @@ export function ChannelIconPicker({
 }) {
   return (
     <div className="w-60 p-1">
-      <div className="grid grid-cols-2 gap-1 rounded-lg bg-primary-bg/70 p-1">
-        {(["emoji", "icon"] as const).map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            className={cn(
-              "ui-text-xs h-7 rounded-md capitalize text-text-lighter hover:bg-hover hover:text-text",
-              activeTab === tab && "bg-hover text-text",
-            )}
-            onClick={() => onTabChange(tab)}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
+      <Tabs value={activeTab} onValueChange={(value) => onTabChange(value as "emoji" | "icon")}>
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="emoji">Emoji</TabsTrigger>
+          <TabsTrigger value="icon">Icon</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       <div className="mt-2">
         {activeTab === "emoji" ? (
@@ -91,17 +84,15 @@ export function ChannelIconPicker({
               const Icon = option.icon;
               const value = `icon:${option.id}`;
               return (
-                <Tooltip key={option.id} content={option.label} side="top">
-                  <button
+                <Tooltip key={option.id} content={option.label}>
+                  <Toggle
                     type="button"
-                    className={cn(
-                      "flex size-8 items-center justify-center rounded-md text-text-lighter hover:bg-hover hover:text-text",
-                      selected === value && "bg-hover text-text",
-                    )}
-                    onClick={() => onSelect(value)}
+                    pressed={selected === value}
+                    onPressedChange={(pressed) => pressed && onSelect(value)}
+                    aria-label={`Select ${option.label} icon`}
                   >
-                    <Icon className="size-4" weight="duotone" />
-                  </button>
+                    <Icon className="size-4" />
+                  </Toggle>
                 </Tooltip>
               );
             })}
@@ -110,13 +101,11 @@ export function ChannelIconPicker({
       </div>
 
       {activeTab === "icon" ? (
-        <button
-          type="button"
-          className="ui-text-xs mt-2 h-7 w-full rounded-md text-center text-text-lighter hover:bg-hover hover:text-text"
-          onClick={onClear}
-        >
-          Reset to default
-        </button>
+        <span className="inline-flex min-w-0 mt-2">
+          <Button type="button" variant="ghost" width="full" onClick={onClear}>
+            Reset to default
+          </Button>
+        </span>
       ) : null}
     </div>
   );

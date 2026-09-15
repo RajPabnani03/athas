@@ -3,9 +3,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { exit } from "@tauri-apps/plugin-process";
 import type React from "react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useRegisteredThemes } from "@/extensions/themes/use-registered-themes";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { createAppWindow } from "@/features/window/utils/create-app-window";
 import {
   Menubar,
   MenubarContent,
@@ -18,30 +19,96 @@ import {
   MenubarTrigger,
 } from "@/ui/menubar";
 import { cn } from "@/utils/cn";
-import { IS_LINUX } from "@/utils/platform";
+import { IS_LINUX, IS_WINDOWS } from "@/utils/platform";
 
 interface Props {
   activeMenu: string | null;
   setActiveMenu: React.Dispatch<React.SetStateAction<string | null>>;
   compactFloating?: boolean;
+  onCompactClose?: () => void;
 }
 
-const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: Props) => {
-  const { settings } = useSettingsStore();
+const WindowMenuBar = ({
+  activeMenu,
+  setActiveMenu,
+  compactFloating = false,
+  onCompactClose,
+}: Props) => {
+  const compactMenuBar = useSettingsStore((state) => state.settings.compactMenuBar);
   const themes = useRegisteredThemes();
+  const menuWindowRaiseRef = useRef<{ restoreTo: boolean } | null>(null);
+  const shouldRaiseWindowForMenu = (IS_WINDOWS || IS_LINUX) && Boolean(activeMenu);
+  const closeMenu = useCallback(() => {
+    setActiveMenu(null);
+    onCompactClose?.();
+  }, [onCompactClose, setActiveMenu]);
+
+  useEffect(() => {
+    let disposed = false;
+    const window = getCurrentWindow();
+
+    const restoreWindowLevel = async () => {
+      const previous = menuWindowRaiseRef.current;
+      if (!previous) return;
+
+      menuWindowRaiseRef.current = null;
+
+      try {
+        await window.setAlwaysOnTop(previous.restoreTo);
+      } catch (error) {
+        console.error("Failed to restore window menu level:", error);
+      }
+    };
+
+    if (!shouldRaiseWindowForMenu) {
+      void restoreWindowLevel();
+      return;
+    }
+
+    if (menuWindowRaiseRef.current) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const wasAlwaysOnTop = await window.isAlwaysOnTop();
+
+        if (!wasAlwaysOnTop) {
+          await window.setAlwaysOnTop(true);
+        }
+
+        if (disposed) {
+          if (!wasAlwaysOnTop) {
+            await window.setAlwaysOnTop(false);
+          }
+          return;
+        }
+
+        menuWindowRaiseRef.current = { restoreTo: wasAlwaysOnTop };
+      } catch (error) {
+        console.error("Failed to raise window menu level:", error);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      void restoreWindowLevel();
+    };
+  }, [shouldRaiseWindowForMenu]);
 
   const handleClickEmit = useCallback(
     (event: string, payload?: unknown) => {
-      void getCurrentWebviewWindow().emit(event, payload);
-      setActiveMenu(null);
+      const currentWindow = getCurrentWebviewWindow();
+      void currentWindow.emitTo(currentWindow.label, event, payload);
+      closeMenu();
     },
-    [setActiveMenu],
+    [closeMenu],
   );
 
   const handleOpenWebInspector = useCallback(() => {
     void invoke("reopen_current_webview_devtools");
-    setActiveMenu(null);
-  }, [setActiveMenu]);
+    closeMenu();
+  }, [closeMenu]);
 
   const handleCommand = useCallback(
     (commandId: string) => {
@@ -50,6 +117,11 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
     [handleClickEmit],
   );
 
+  const handleNewWindow = useCallback(() => {
+    void createAppWindow();
+    closeMenu();
+  }, [closeMenu]);
+
   const menus = useMemo(
     () => ({
       File: (
@@ -57,7 +129,7 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
           <MenubarItem shortcut="mod+n" onClick={() => handleCommand("workbench.newTab")}>
             New Tab
           </MenubarItem>
-          <MenubarItem shortcut="mod+shift+n" onClick={() => handleClickEmit("menu_new_window")}>
+          <MenubarItem shortcut="mod+shift+n" onClick={handleNewWindow}>
             New Window
           </MenubarItem>
           <MenubarItem onClick={() => handleClickEmit("menu_new_file")}>New File</MenubarItem>
@@ -84,6 +156,12 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
           <MenubarSeparator />
           <MenubarItem shortcut="mod+w" onClick={() => handleClickEmit("menu_close_tab")}>
             Close Tab
+          </MenubarItem>
+          <MenubarItem
+            shortcut="mod+shift+w"
+            onClick={() => handleCommand("workbench.closeWindow")}
+          >
+            Close Window
           </MenubarItem>
           <MenubarItem onClick={() => handleCommand("file.closeAll")}>Close All Tabs</MenubarItem>
           <MenubarItem onClick={() => handleCommand("file.closeOthers")}>
@@ -186,8 +264,14 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
       ),
       View: (
         <MenubarContent>
-          <MenubarItem shortcut="mod+b" onClick={() => handleClickEmit("menu_toggle_sidebar")}>
-            Toggle Sidebar
+          <MenubarItem
+            shortcut="mod+b"
+            onClick={() => handleClickEmit("menu_toggle_activity_sidebar")}
+          >
+            Toggle Activity Sidebar
+          </MenubarItem>
+          <MenubarItem shortcut="mod+e" onClick={() => handleClickEmit("menu_toggle_sidebar")}>
+            Toggle Secondary Sidebar
           </MenubarItem>
           <MenubarItem shortcut="mod+j" onClick={() => handleClickEmit("menu_toggle_terminal")}>
             Toggle Terminal
@@ -238,9 +322,6 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
           <MenubarItem onClick={() => handleCommand("editor.toggleRenderWhitespace")}>
             Toggle Render Whitespace
           </MenubarItem>
-          <MenubarItem onClick={() => handleCommand("workbench.toggleSidebarPosition")}>
-            Toggle Sidebar Position
-          </MenubarItem>
           <MenubarSeparator />
           <MenubarItem shortcut="mod+=" onClick={() => handleCommand("workbench.zoomIn")}>
             Zoom In
@@ -271,9 +352,6 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
         <MenubarContent>
           <MenubarItem shortcut="mod+p" onClick={() => handleClickEmit("menu_quick_open")}>
             Quick Open
-          </MenubarItem>
-          <MenubarItem shortcut="mod+g" onClick={() => handleClickEmit("menu_go_to_line")}>
-            Go to Line
           </MenubarItem>
           <MenubarSeparator />
           <MenubarItem shortcut="ctrl+-" onClick={() => handleCommand("navigation.goBack")}>
@@ -316,7 +394,12 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
       Terminal: (
         <MenubarContent>
           <MenubarItem onClick={() => handleCommand("terminal.new")}>New Terminal</MenubarItem>
-          <MenubarItem onClick={() => handleCommand("terminal.split")}>Split Terminal</MenubarItem>
+          <MenubarItem shortcut="mod+d" onClick={() => handleCommand("terminal.split")}>
+            Split Terminal Right
+          </MenubarItem>
+          <MenubarItem shortcut="mod+shift+d" onClick={() => handleCommand("terminal.splitDown")}>
+            Split Terminal Down
+          </MenubarItem>
           <MenubarItem onClick={() => handleCommand("terminal.close")}>Close Terminal</MenubarItem>
         </MenubarContent>
       ),
@@ -333,11 +416,8 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
           </MenubarItem>
         </MenubarContent>
       ),
-      AI: (
+      Agent: (
         <MenubarContent>
-          <MenubarItem shortcut="mod+r" onClick={() => handleClickEmit("menu_toggle_ai_chat")}>
-            Toggle AI Chat
-          </MenubarItem>
           <MenubarItem
             shortcut="mod+shift+space"
             onClick={() => handleCommand("workbench.agentLauncher")}
@@ -361,7 +441,7 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
             Preferences
           </MenubarItem>
           <MenubarItem onClick={() => handleClickEmit("menu_open_extensions")}>
-            Extensions
+            Integrations
           </MenubarItem>
           <MenubarItem onClick={() => handleCommand("workbench.openKeyboardShortcuts")}>
             Keyboard Shortcuts
@@ -374,7 +454,7 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
             shortcut="alt+f9"
             onClick={async () => {
               await getCurrentWindow().minimize();
-              setActiveMenu(null);
+              closeMenu();
             }}
           >
             Minimize
@@ -383,7 +463,7 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
             shortcut="alt+f10"
             onClick={async () => {
               await getCurrentWindow().maximize();
-              setActiveMenu(null);
+              closeMenu();
             }}
           >
             Maximize
@@ -403,7 +483,7 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
               const window = getCurrentWindow();
               const isFull = await window.isFullscreen();
               await window.setFullscreen(!isFull);
-              setActiveMenu(null);
+              closeMenu();
             }}
           >
             Toggle Fullscreen
@@ -432,30 +512,25 @@ const WindowMenuBar = ({ activeMenu, setActiveMenu, compactFloating = false }: P
         </MenubarContent>
       ),
     }),
-    [handleClickEmit, handleCommand, setActiveMenu, themes],
+    [closeMenu, handleClickEmit, handleCommand, handleNewWindow, themes],
   );
-
-  if (settings.compactMenuBar && !activeMenu) return null;
 
   return (
     <div
       className={cn(
-        "z-[10030] flex flex-col",
-        settings.compactMenuBar && compactFloating && "absolute top-full left-0 mt-1",
-        settings.compactMenuBar && !compactFloating && "absolute inset-0",
+        "z-100000 flex flex-col",
+        compactMenuBar && compactFloating && "absolute top-full left-0 mt-1",
+        compactMenuBar && !compactFloating && "absolute inset-0",
       )}
     >
       <Menubar
         value={activeMenu ?? ""}
         onValueChange={(value) => setActiveMenu(value || null)}
-        className={cn(
-          settings.compactMenuBar &&
-            compactFloating &&
-            "rounded-2xl border border-border bg-primary-bg/95 px-1 py-1 shadow-[var(--shadow-popover)] backdrop-blur-sm",
-          settings.compactMenuBar &&
-            !compactFloating &&
-            "h-full rounded-none border-none bg-transparent px-2 py-0",
-        )}
+        className={
+          compactMenuBar && !compactFloating
+            ? "h-full rounded-none border-none bg-transparent px-2 py-0"
+            : undefined
+        }
       >
         {Object.entries(menus).map(([menuName, menuContent]) => (
           <MenubarMenu key={menuName} value={menuName}>

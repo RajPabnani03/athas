@@ -1,3 +1,20 @@
+import type { Terminal as XtermTerminal } from "@xterm/xterm";
+import type { PaneNode, SplitPlacement } from "@/features/panes/types/pane.types";
+export type TerminalSplitDirection = "right" | "down";
+
+/** OSC 9;4 progress report: 0 clears, 1 sets, 2 errors, 3 is indeterminate, 4 pauses. */
+export interface TerminalProgress {
+  state: 0 | 1 | 2 | 3 | 4;
+  value: number;
+}
+
+export interface TerminalCommandSummary {
+  status: "success" | "failure";
+  exitCode: number | null;
+  durationMs: number;
+  finishedAt: number;
+}
+
 export interface Terminal {
   id: string;
   name: string;
@@ -7,15 +24,16 @@ export interface Terminal {
   shell?: string;
   profileId?: string;
   initialCommand?: string;
+  environment?: Record<string, string>;
   createdAt: Date;
   lastActivity?: Date;
   connectionId?: string;
   selection?: string;
   title?: string;
+  progress?: TerminalProgress;
+  lastCommand?: TerminalCommandSummary;
   customName?: boolean;
   ref?: any;
-  splitMode?: boolean;
-  splitWithId?: string; // ID of the terminal to split with
   remoteConnectionId?: string;
 }
 
@@ -24,6 +42,8 @@ export interface Shell {
   name: string;
   exec_unix?: string; // search for common paths like /bin/shell_name
   exec_win?: string; // search for paths in %PATH% matching *.exe
+  kind?: "windows" | "unix" | "wsl";
+  wsl_distribution?: string;
 }
 
 export interface TerminalProfile {
@@ -40,7 +60,38 @@ export interface TerminalProfile {
 export interface TerminalState {
   terminals: Terminal[];
   activeTerminalId: string | null;
+  layouts: PaneNode[];
 }
+
+export interface TerminalSize {
+  rows: number;
+  cols: number;
+  pixelWidth: number;
+  pixelHeight: number;
+}
+
+export type TerminalInput = { kind: "text"; data: string } | { kind: "binary"; data: number[] };
+
+export type TerminalCommandNavigationDirection = "previous" | "next";
+
+export interface TerminalSessionHandle {
+  focus: () => void;
+  showSearch: () => void;
+  navigateCommand: (direction: TerminalCommandNavigationDirection) => void;
+  clear: () => void;
+  selectAll: () => void;
+  copyLastCommandOutput: () => void;
+}
+
+export interface TerminalEmulatorHandle extends TerminalSessionHandle {
+  terminal: XtermTerminal;
+}
+
+export type TerminalEvent =
+  | { event: "output"; data: Uint8Array }
+  | { event: "error"; message: string }
+  | { event: "exit"; exitCode?: number | null; signal?: string | null }
+  | { event: "closed" };
 
 export interface PersistedTerminal {
   id: string;
@@ -65,6 +116,7 @@ export type TerminalAction =
         remoteConnectionId?: string;
         profileId?: string;
         initialCommand?: string;
+        environment?: Record<string, string>;
         customName?: boolean;
       };
     }
@@ -82,8 +134,22 @@ export type TerminalAction =
       payload: { fromIndex: number; toIndex: number };
     }
   | {
-      type: "SET_TERMINAL_SPLIT_MODE";
-      payload: { id: string; splitMode: boolean; splitWithId?: string };
+      type: "SPLIT_TERMINAL";
+      payload: {
+        terminalId: string;
+        newTerminalId: string;
+        direction: TerminalSplitDirection;
+        placement?: SplitPlacement;
+      };
     }
+  | { type: "UNSPLIT_TERMINAL"; payload: { terminalId: string } }
+  | {
+      type: "RESIZE_TERMINAL_SPLIT";
+      payload: { splitId: string; index: number; sizes: [number, number] };
+    }
+  | { type: "DISTRIBUTE_TERMINAL_SPLIT"; payload: { splitId: string } }
   | { type: "RESET_TERMINALS"; payload: Record<string, never> }
-  | { type: "RESTORE_TERMINALS"; payload: { terminals: PersistedTerminal[] } };
+  | {
+      type: "RESTORE_TERMINALS";
+      payload: { terminals: PersistedTerminal[]; layouts?: PaneNode[] };
+    };

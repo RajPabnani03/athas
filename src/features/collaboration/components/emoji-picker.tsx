@@ -1,81 +1,15 @@
-import { MagnifyingGlassIcon as Search } from "@phosphor-icons/react";
+import { SearchIcon } from "@/ui/icons";
 import { useMemo, useState } from "react";
+import { Button } from "@/ui/button";
+import { Empty, EmptyDescription } from "@/ui/empty";
 import Input from "@/ui/input";
+import { Toggle } from "@/ui/toggle";
 import Tooltip from "@/ui/tooltip";
 import { cn } from "@/utils/cn";
+import { defaultEmojiPickerOptions, emojiLabels } from "@/utils/emoji-catalog";
 
 const RECENT_EMOJI_STORAGE_KEY = "athas.ui.emoji-picker.recent";
 const MAX_RECENT_EMOJIS = 8;
-
-export const defaultEmojiPickerOptions = [
-  "💬",
-  "🛠️",
-  "🚀",
-  "🧪",
-  "📣",
-  "🔒",
-  "📌",
-  "⚡",
-  "✅",
-  "🔥",
-  "🎯",
-  "🧠",
-  "👀",
-  "🙌",
-  "🙏",
-  "❤️",
-  "✨",
-  "⭐",
-  "💡",
-  "📎",
-  "📁",
-  "📝",
-  "🐛",
-  "🚨",
-  "⏳",
-  "🔍",
-  "🎨",
-  "⚙️",
-  "🧩",
-  "🧵",
-  "📦",
-  "🧹",
-];
-
-const emojiLabels: Record<string, { label: string; keywords: string[] }> = {
-  "💬": { label: "Message", keywords: ["chat", "comment", "thread"] },
-  "🛠️": { label: "Tools", keywords: ["fix", "build", "work"] },
-  "🚀": { label: "Launch", keywords: ["ship", "release", "deploy"] },
-  "🧪": { label: "Test", keywords: ["lab", "qa", "experiment"] },
-  "📣": { label: "Announcement", keywords: ["news", "broadcast"] },
-  "🔒": { label: "Private", keywords: ["lock", "secure"] },
-  "📌": { label: "Pinned", keywords: ["pin", "important"] },
-  "⚡": { label: "Fast", keywords: ["bolt", "performance"] },
-  "✅": { label: "Done", keywords: ["check", "complete"] },
-  "🔥": { label: "Hot", keywords: ["fire", "urgent"] },
-  "🎯": { label: "Goal", keywords: ["target", "focus"] },
-  "🧠": { label: "Ideas", keywords: ["brain", "think"] },
-  "👀": { label: "Review", keywords: ["eyes", "look"] },
-  "🙌": { label: "Celebrate", keywords: ["hands", "thanks"] },
-  "🙏": { label: "Request", keywords: ["please", "pray"] },
-  "❤️": { label: "Love", keywords: ["heart", "like"] },
-  "✨": { label: "Polish", keywords: ["sparkles", "clean"] },
-  "⭐": { label: "Star", keywords: ["favorite", "important"] },
-  "💡": { label: "Idea", keywords: ["light", "bulb"] },
-  "📎": { label: "Attachment", keywords: ["clip", "file"] },
-  "📁": { label: "Files", keywords: ["folder", "project"] },
-  "📝": { label: "Notes", keywords: ["memo", "write"] },
-  "🐛": { label: "Bug", keywords: ["issue", "debug"] },
-  "🚨": { label: "Alert", keywords: ["warning", "incident"] },
-  "⏳": { label: "Waiting", keywords: ["hourglass", "pending"] },
-  "🔍": { label: "Search", keywords: ["find", "inspect"] },
-  "🎨": { label: "Design", keywords: ["paint", "style"] },
-  "⚙️": { label: "Settings", keywords: ["gear", "config"] },
-  "🧩": { label: "Integration", keywords: ["plugin", "piece"] },
-  "🧵": { label: "Thread", keywords: ["conversation", "topic"] },
-  "📦": { label: "Package", keywords: ["box", "bundle"] },
-  "🧹": { label: "Cleanup", keywords: ["sweep", "refactor"] },
-};
 
 interface EmojiPickerProps {
   selected?: string;
@@ -156,20 +90,15 @@ export function EmojiPicker({
   };
 
   const renderEmojiButton = (emoji: string) => (
-    <Tooltip key={emoji} content={getEmojiLabel(emoji)} side="top">
-      <button
+    <Tooltip key={emoji} content={getEmojiLabel(emoji)}>
+      <Toggle
         type="button"
-        className={cn(
-          "flex size-8 items-center justify-center rounded-md border border-transparent ui-text-base hover:bg-hover",
-          "focus-visible:border-accent focus-visible:outline-none",
-          selected === emoji && "border-accent/50 bg-hover",
-        )}
-        onClick={() => handleSelect(emoji)}
+        pressed={selected === emoji}
+        onPressedChange={(pressed) => pressed && handleSelect(emoji)}
         aria-label={`Select ${getEmojiLabel(emoji)}`}
-        aria-pressed={selected === emoji}
       >
         {emoji}
-      </button>
+      </Toggle>
     </Tooltip>
   );
 
@@ -180,13 +109,12 @@ export function EmojiPicker({
         onChange={(event) => setQuery(event.target.value)}
         placeholder="Search emoji..."
         aria-label="Search emoji"
-        size="xs"
-        leftIcon={Search}
+        leftIcon={SearchIcon}
       />
 
       {visibleRecentEmojis.length > 0 ? (
         <div className="mt-2">
-          <div className="mb-1 px-1 ui-text-xs text-text-lighter uppercase">Recent</div>
+          <div className="mb-1 px-1 ui-text-sm text-subtle-foreground uppercase">Recent</div>
           <div
             className="grid gap-1"
             style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
@@ -204,19 +132,17 @@ export function EmojiPicker({
       </div>
 
       {filteredOptions.length === 0 ? (
-        <div className="mt-2 rounded-md border border-border/60 px-2 py-3 text-center ui-text-xs text-text-lighter">
-          No matching emoji
-        </div>
+        <Empty className="mt-2">
+          <EmptyDescription>No matching emoji</EmptyDescription>
+        </Empty>
       ) : null}
 
       {onClear ? (
-        <button
-          type="button"
-          className="mt-2 h-7 w-full rounded-md text-center ui-text-xs text-text-lighter hover:bg-hover hover:text-text"
-          onClick={onClear}
-        >
-          {clearLabel}
-        </button>
+        <span className="inline-flex min-w-0 mt-2">
+          <Button type="button" variant="ghost" width="full" onClick={onClear}>
+            {clearLabel}
+          </Button>
+        </span>
       ) : null}
     </div>
   );

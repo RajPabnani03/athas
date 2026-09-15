@@ -1,64 +1,43 @@
-import {
-  CheckIcon as Check,
-  CaretDownIcon as ChevronDown,
-  CaretRightIcon as ChevronRight,
-  ColumnsIcon as Columns2,
-  ArrowSquareOutIcon as ExternalLink,
-  ListBulletsIcon as ListBullets,
-  RowsIcon as Rows3,
-  TrashIcon as Trash2,
-} from "@phosphor-icons/react";
-import {
-  type MouseEvent,
-  type WheelEvent,
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { ColumnsIcon, DotsIcon, RowsIcon, SearchIcon } from "@/ui/icons";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import CodeEditor from "@/features/editor/components/code-editor";
-import Breadcrumb, {
-  BreadcrumbActionButton,
-} from "@/features/editor/components/toolbar/breadcrumb";
-import { EDITOR_CONSTANTS } from "@/features/editor/config/constants";
-import { FileExplorerIcon } from "@/features/file-explorer/components/file-explorer-icon";
+import Breadcrumb from "@/features/editor/components/toolbar/breadcrumb";
+import { getBufferById } from "@/features/editor/utils/buffer-index";
 import {
-  FileNavigatorSidebar,
   type FileNavigatorItem,
-  type FileNavigatorViewMode,
+  type FileNavigatorTone,
 } from "@/features/file-explorer/components/file-navigator-sidebar";
+import { ReviewWorkspace } from "@/features/git/components/diff/review-workspace";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
-import { useEditorSettingsStore } from "@/features/editor/stores/settings.store";
-import { calculateLineHeight, splitLines } from "@/features/editor/utils/lines";
-import { useZoomStore } from "@/features/window/stores/zoom.store";
+import { useUIState } from "@/features/window/stores/ui-state.store";
+import { useAuthStore } from "@/features/window/stores/auth.store";
 import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
-import { cn } from "@/utils/cn";
-import { formatRelativeDate } from "@/utils/date";
-import { joinPath } from "@/utils/path-helpers";
+import { buildSearchRegex, type SearchOptions } from "@/features/editor/utils/search";
+import { Avatar } from "@/ui/avatar";
+import { Button } from "@/ui/button";
+import { showAlertDialog } from "@/ui/dialog";
+import { Empty, EmptyDescription } from "@/ui/empty";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/ui/dropdown";
+import Tooltip from "@/ui/tooltip";
+import { SEARCH_TOGGLE_ICONS, SearchPopover } from "@/ui/search";
+import { getFileDiff } from "../../api/git-diff-api";
 import { getRemotes } from "../../api/git-remotes-api";
-import { getGitStatus } from "../../api/git-status-api";
-import { useDiffEditorBuffer } from "../../hooks/use-diff-editor-buffer";
+import { isGitChangeRelevant, subscribeToGitChanges } from "../../events/git-events";
 import type { MultiFileDiff } from "../../types/git-diff.types";
 import type { GitDiff } from "../../types/git.types";
 import { gitDiffCache } from "../../utils/git-diff-cache";
 import { getFileStatus } from "../../utils/git-diff-helpers";
-import {
-  getInitialExpandedDiffFileKeys,
-  shouldUseScrollableDiffEditor,
-} from "../../utils/diff-viewer-scale";
-import { buildWorkingTreeMultiDiff } from "../../utils/working-tree-multi-diff";
-import {
-  serializeGitDiffForEditor,
-  serializeGitDiffSourceForEditor,
-  serializeGitDiffSourceForSplitEditor,
-} from "../../utils/diff-editor-content";
-import DiffLineBackgroundLayer from "./diff-line-background-layer";
-import ImageDiffViewer from "./git-diff-image";
-import TextDiffViewer from "./git-diff-text";
-import Badge from "@/ui/badge";
+import { getGitAuthorAvatarUrl } from "../../utils/git-author-avatar";
+import { openCommitFileBuffer } from "../../utils/open-commit-file-buffer";
+import { findMultiDiffMatches, getMultiDiffSectionKey } from "../../utils/multi-diff-search";
+import { resolveMultiDiffSelection, selectMultiDiffFile } from "../../utils/multi-diff-selection";
+import { createSingleFileWorkingTreeDiff } from "../../utils/working-tree-multi-diff";
+import { DiffFileContent } from "./diff-file-content";
 
 function countStats(diff: GitDiff) {
   if (typeof diff.additions === "number" || typeof diff.deletions === "number") {
@@ -79,25 +58,16 @@ function countStats(diff: GitDiff) {
   return { additions, deletions };
 }
 
-const statusTextClass: Record<string, string> = {
-  added: "text-git-added",
-  deleted: "text-git-deleted",
-  modified: "text-git-modified",
-  renamed: "text-git-renamed",
-};
-
-const statusBadgeClass: Record<string, string> = {
-  added: "bg-git-added/12 text-git-added",
-  deleted: "bg-git-deleted/12 text-git-deleted",
-  modified: "bg-git-modified/12 text-git-modified",
-  renamed: "bg-git-renamed/12 text-git-renamed",
-};
-
-const MAX_HUNK_ACTION_DIFF_LINES = 1200;
-
-function getDiffSectionKey(multiDiff: MultiFileDiff, diff: GitDiff, index: number): string {
-  return multiDiff.fileKeys?.[index] ?? `${diff.file_path}:${index}`;
+function hasRenderableDiff(diff: GitDiff | null): diff is GitDiff {
+  return !!diff && (diff.lines.length > 0 || diff.is_image === true || diff.is_binary === true);
 }
+
+const statusTone: Record<string, FileNavigatorTone> = {
+  added: "added",
+  deleted: "deleted",
+  modified: "modified",
+  renamed: "renamed",
+};
 
 function parseGitHubRemoteSlug(remoteUrl: string): { owner: string; repo: string } | null {
   const normalized = remoteUrl.trim();
@@ -131,433 +101,56 @@ function buildGitHubReferenceUrl(remoteUrl: string, gitRef: string): string | nu
   return `https://github.com/${slug.owner}/${slug.repo}/commit/${encodeURIComponent(gitRef)}`;
 }
 
-function LargeDiffSectionEditor({ diff, cacheKey }: { diff: GitDiff; cacheKey: string }) {
-  const sourcePath = diff.new_path || diff.old_path || diff.file_path;
-  const editorContent = useMemo(() => serializeGitDiffForEditor(diff), [diff]);
-  const bufferId = useDiffEditorBuffer({
-    cacheKey: `${cacheKey}_large`,
-    content: editorContent,
-    sourcePath,
-    name: `${sourcePath.split("/").pop() || "Diff"}.diff`,
-  });
-
-  return (
-    <div
-      className="relative overflow-hidden border-border border-t bg-primary-bg"
-      style={{ height: "min(72vh, 760px)", minHeight: "420px" }}
-    >
-      <CodeEditor
-        bufferId={bufferId}
-        isActiveSurface={false}
-        showToolbar={false}
-        readOnly={true}
-        scrollable={true}
-      />
-    </div>
-  );
-}
-
-function EmbeddedDiffSectionEditor({
-  diff,
-  cacheKey,
-  viewMode,
-}: {
-  diff: GitDiff;
-  cacheKey: string;
-  viewMode: "unified" | "split";
-}) {
-  const fontSize = useEditorSettingsStore.use.fontSize();
-  const editorLineHeight = useEditorSettingsStore.use.lineHeight();
-  const zoomLevel = useZoomStore.use.editorZoomLevel();
-  const rootFolderPath = useFileSystemStore((state) => state.rootFolderPath);
-  const sourcePath = diff.new_path || diff.old_path || diff.file_path;
-  const unifiedContent = useMemo(() => serializeGitDiffSourceForEditor(diff), [diff]);
-  const splitContent = useMemo(() => serializeGitDiffSourceForSplitEditor(diff), [diff]);
-  const unifiedBufferId = useDiffEditorBuffer({
-    cacheKey,
-    content: unifiedContent.content,
-    sourcePath,
-    name: sourcePath.split("/").pop() || "Diff",
-    pathOverride: sourcePath,
-  });
-  const leftSplitBufferId = useDiffEditorBuffer({
-    cacheKey: `${cacheKey}_left`,
-    content: splitContent.left.content,
-    sourcePath,
-    name: `${sourcePath.split("/").pop() || "Diff"} (left)`,
-    pathOverride: sourcePath,
-  });
-  const rightSplitBufferId = useDiffEditorBuffer({
-    cacheKey: `${cacheKey}_right`,
-    content: splitContent.right.content,
-    sourcePath,
-    name: `${sourcePath.split("/").pop() || "Diff"} (right)`,
-    pathOverride: sourcePath,
-  });
-  const height = useMemo(() => {
-    const lineCount =
-      viewMode === "split"
-        ? Math.max(
-            splitLines(splitContent.left.content).length,
-            splitLines(splitContent.right.content).length,
-          )
-        : splitLines(unifiedContent.content).length;
-    const lineHeight = calculateLineHeight(fontSize * zoomLevel, editorLineHeight);
-
-    return Math.max(
-      lineCount * lineHeight +
-        EDITOR_CONSTANTS.EDITOR_PADDING_TOP +
-        EDITOR_CONSTANTS.EDITOR_PADDING_BOTTOM,
-      160,
-    );
-  }, [
-    fontSize,
-    editorLineHeight,
-    splitContent.left.content,
-    splitContent.right.content,
-    unifiedContent.content,
-    viewMode,
-    zoomLevel,
-  ]);
-  const lineHeight = useMemo(
-    () => calculateLineHeight(fontSize * zoomLevel, editorLineHeight),
-    [fontSize, editorLineHeight, zoomLevel],
-  );
-  const resolveAbsolutePath = useCallback(() => {
-    if (sourcePath.startsWith("/") || sourcePath.startsWith("remote://")) return sourcePath;
-    if (!rootFolderPath) return sourcePath;
-    return `${rootFolderPath.replace(/\/$/, "")}/${sourcePath.replace(/^\//, "")}`;
-  }, [rootFolderPath, sourcePath]);
-  const findNearestActualLine = useCallback((actualLines: Array<number | null>, line: number) => {
-    if (actualLines[line] != null) return actualLines[line];
-    for (let delta = 1; delta < actualLines.length; delta++) {
-      const before = line - delta;
-      if (before >= 0 && actualLines[before] != null) return actualLines[before];
-      const after = line + delta;
-      if (after < actualLines.length && actualLines[after] != null) return actualLines[after];
-    }
-    return 1;
-  }, []);
-  const openSourceLocation = useCallback(
-    async (line: number, column: number, actualLines: Array<number | null>) => {
-      const targetPath = resolveAbsolutePath();
-      const targetLine = findNearestActualLine(actualLines, line) ?? 1;
-      await useFileSystemStore
-        .getState()
-        .handleFileSelect(targetPath, false, targetLine, column + 1, undefined, false);
-    },
-    [findNearestActualLine, resolveAbsolutePath],
-  );
-
-  if (viewMode === "split") {
-    return (
-      <div
-        className="grid grid-cols-2 border-border border-t bg-primary-bg"
-        style={{ height: `${height}px` }}
-      >
-        <div className="relative overflow-hidden border-border border-r bg-primary-bg">
-          <DiffLineBackgroundLayer
-            lineKinds={splitContent.left.lineKinds}
-            lineHeight={lineHeight}
-          />
-          <CodeEditor
-            bufferId={leftSplitBufferId}
-            isActiveSurface={false}
-            showToolbar={false}
-            readOnly={true}
-            scrollable={false}
-            onReadonlySurfaceClick={({ line, column }) =>
-              void openSourceLocation(line, column, splitContent.left.actualLines)
-            }
-          />
-        </div>
-        <div className="relative overflow-hidden bg-primary-bg">
-          <DiffLineBackgroundLayer
-            lineKinds={splitContent.right.lineKinds}
-            lineHeight={lineHeight}
-          />
-          <CodeEditor
-            bufferId={rightSplitBufferId}
-            isActiveSurface={false}
-            showToolbar={false}
-            readOnly={true}
-            scrollable={false}
-            onReadonlySurfaceClick={({ line, column }) =>
-              void openSourceLocation(line, column, splitContent.right.actualLines)
-            }
-          />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="relative overflow-hidden border-border border-t bg-primary-bg"
-      style={{ height: `${height}px` }}
-    >
-      <DiffLineBackgroundLayer lineKinds={unifiedContent.lineKinds} lineHeight={lineHeight} />
-      <CodeEditor
-        bufferId={unifiedBufferId}
-        isActiveSurface={false}
-        showToolbar={false}
-        readOnly={true}
-        scrollable={false}
-        onReadonlySurfaceClick={({ line, column }) =>
-          void openSourceLocation(line, column, unifiedContent.actualLines)
-        }
-      />
-    </div>
-  );
-}
-
-function DiffSectionEditor({
-  diff,
-  cacheKey,
-  viewMode,
-}: {
-  diff: GitDiff;
-  cacheKey: string;
-  viewMode: "unified" | "split";
-}) {
-  if (shouldUseScrollableDiffEditor(diff)) {
-    return <LargeDiffSectionEditor diff={diff} cacheKey={cacheKey} />;
-  }
-
-  return <EmbeddedDiffSectionEditor diff={diff} cacheKey={cacheKey} viewMode={viewMode} />;
-}
-
-const LazyDiffSectionBody = memo(function LazyDiffSectionBody({
-  expanded,
-  children,
-}: {
-  expanded: boolean;
-  children: React.ReactNode;
-}) {
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const [shouldMount, setShouldMount] = useState(expanded);
-
-  useEffect(() => {
-    if (!expanded) {
-      setShouldMount(false);
-      return;
-    }
-
-    const element = bodyRef.current;
-    if (!element) {
-      setShouldMount(true);
-      return;
-    }
-
-    const scrollContainer = element.closest("[data-diff-stack-scroll-container]");
-    if (!(scrollContainer instanceof HTMLDivElement)) {
-      setShouldMount(true);
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (entry?.isIntersecting) {
-          setShouldMount(true);
-          observer.disconnect();
-        }
-      },
-      {
-        root: scrollContainer,
-        rootMargin: "1200px 0px",
-      },
-    );
-
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [expanded]);
-
-  return (
-    <div
-      ref={bodyRef}
-      className="border-border border-t"
-      style={{ contentVisibility: "auto", containIntrinsicSize: "960px" }}
-    >
-      {shouldMount ? children : <div className="h-[320px] bg-primary-bg" />}
-    </div>
-  );
-});
-
-const DiffFileSection = memo(function DiffFileSection({
-  diff,
-  sectionKey,
-  expanded,
-  onToggle,
-  viewMode,
-  showWhitespace,
-  onOpenFile,
-}: {
-  diff: GitDiff;
-  sectionKey: string;
-  expanded: boolean;
-  onToggle: (sectionKey: string) => void;
-  onOpenFile: (filePath: string) => void | Promise<void>;
-  viewMode: "unified" | "split";
-  showWhitespace: boolean;
-}) {
-  const filePath = diff.new_path || diff.old_path || diff.file_path;
-  const fileName = filePath.split("/").pop() || filePath;
-  const directoryPath = filePath.includes("/")
-    ? filePath.slice(0, filePath.lastIndexOf("/") + 1)
-    : "";
-  const status = getFileStatus(diff) as "added" | "deleted" | "modified" | "renamed";
-  const { additions, deletions } = countStats(diff);
-  const handleToggle = useCallback(() => {
-    onToggle(sectionKey);
-  }, [onToggle, sectionKey]);
-  const handleOpenFile = useCallback(
-    (event: MouseEvent<HTMLButtonElement>) => {
-      event.stopPropagation();
-      void onOpenFile(filePath);
-    },
-    [filePath, onOpenFile],
-  );
-  const shouldUseInlineTextDiff =
-    !shouldUseScrollableDiffEditor(diff) && diff.lines.length <= MAX_HUNK_ACTION_DIFF_LINES;
-
-  return (
-    <section className="relative isolate min-w-0 max-w-full rounded-md bg-primary-bg">
-      <div className="sticky top-0 z-50 min-w-0 max-w-full bg-primary-bg">
-        <div
-          className={cn(
-            "min-w-0 max-w-full overflow-hidden border border-border/70 bg-primary-bg shadow-[0_1px_0_rgba(0,0,0,0.04)]",
-            expanded ? "rounded-t-md" : "rounded-md",
-          )}
-        >
-          <div className="flex min-w-0 items-center">
-            <button
-              type="button"
-              onClick={handleToggle}
-              className="relative z-50 flex size-8 shrink-0 items-center justify-center text-text-lighter hover:bg-hover/30 hover:text-text"
-              aria-label={expanded ? "Collapse file diff" : "Expand file diff"}
-              aria-expanded={expanded}
-            >
-              {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenFile}
-              className="relative z-50 flex min-w-0 flex-1 items-center gap-2 overflow-hidden py-2 pr-3 text-left hover:bg-hover/30"
-              aria-label={`Open ${filePath}`}
-            >
-              <FileExplorerIcon
-                fileName={fileName}
-                isDir={false}
-                size={16}
-                className="shrink-0 text-text-lighter"
-              />
-              <span className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden">
-                <span
-                  className={cn(
-                    "min-w-0 max-w-[45%] truncate ui-text-sm font-medium",
-                    statusTextClass[status],
-                  )}
-                >
-                  {fileName}
-                </span>
-                <span className="min-w-0 flex-1 truncate ui-text-sm editor-font text-text-lighter">
-                  {directoryPath}
-                </span>
-              </span>
-              <span className="ml-auto flex shrink-0 items-center gap-2 ui-text-xs">
-                {additions > 0 ? <span className="text-git-added">+{additions}</span> : null}
-                {deletions > 0 ? <span className="text-git-deleted">-{deletions}</span> : null}
-                <Badge
-                  size="compact"
-                  variant="muted"
-                  className={`rounded px-1.5 py-0.5 capitalize ${statusBadgeClass[status]}`}
-                >
-                  {status}
-                </Badge>
-              </span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {expanded ? (
-        diff.is_image ? (
-          <div className="-mt-px min-w-0 max-w-full overflow-hidden rounded-b-md border-border/70 border-x border-b">
-            <LazyDiffSectionBody expanded={expanded}>
-              <ImageDiffViewer diff={diff} fileName={fileName} onClose={() => {}} />
-            </LazyDiffSectionBody>
-          </div>
-        ) : (
-          <div className="-mt-px min-w-0 max-w-full overflow-hidden rounded-b-md border-border/70 border-x border-b">
-            <LazyDiffSectionBody expanded={expanded}>
-              {shouldUseInlineTextDiff ? (
-                <TextDiffViewer
-                  diff={diff}
-                  isStaged={sectionKey.startsWith("staged:")}
-                  viewMode={viewMode}
-                  showWhitespace={showWhitespace}
-                  isEmbeddedInScrollView={true}
-                />
-              ) : (
-                <DiffSectionEditor diff={diff} cacheKey={sectionKey} viewMode={viewMode} />
-              )}
-            </LazyDiffSectionBody>
-          </div>
-        )
-      ) : null}
-    </section>
-  );
-});
-
-function getInitialExpandedFiles(multiDiff: MultiFileDiff): Set<string> {
-  return new Set(getInitialExpandedDiffFileKeys(multiDiff));
-}
-
 const GitDiffEditorStack = memo(function GitDiffEditorStack({
   multiDiff,
 }: {
   multiDiff: MultiFileDiff;
 }) {
-  const buffers = useBufferStore.use.buffers();
-  const activeBufferId = useBufferStore.use.activeBufferId();
+  const activeBuffer = useBufferStore((state) => {
+    return getBufferById(state.buffers, state.activeBufferId);
+  });
   const updateBufferContent = useBufferStore.use.actions().updateBufferContent;
   const closeBuffer = useBufferStore.use.actions().closeBuffer;
   const rootFolderPath = useFileSystemStore((state) => state.rootFolderPath);
+  const account = useAuthStore((state) => state.user);
+  const isFindVisible = useUIState((state) => state.isFindVisible);
+  const setIsFindVisible = useUIState((state) => state.setIsFindVisible);
   const [viewMode, setViewMode] = useState<"unified" | "split">("unified");
   const [showWhitespace, setShowWhitespace] = useState(false);
-  const [isFileTreeVisible, setIsFileTreeVisible] = useState(true);
-  const [fileNavigatorViewMode, setFileNavigatorViewMode] = useState<FileNavigatorViewMode>("flat");
   const isWorkingTree = multiDiff.commitHash === "working-tree";
-  const activeBuffer = buffers.find((buffer) => buffer.id === activeBufferId) || null;
+  const isCommitDiff = /^[0-9a-f]{7,40}$/i.test(multiDiff.commitHash);
   const isWorkingTreeBuffer = activeBuffer?.path === "diff://working-tree/all-files";
+  const isActiveMultiDiff = activeBuffer?.type === "diff" && activeBuffer.diffData === multiDiff;
   const isRefreshingRef = useRef(false);
-  const sectionElementsRef = useRef(new Map<string, HTMLDivElement>());
-  const [selectedFileKey, setSelectedFileKey] = useState<string | null>(
-    () =>
-      multiDiff.initiallyExpandedFileKey ??
-      (multiDiff.files[0] ? getDiffSectionKey(multiDiff, multiDiff.files[0], 0) : null),
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const diffStackScrollRef = useRef<HTMLDivElement>(null);
+  const selectedSectionRef = useRef<HTMLDivElement>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOptions, setSearchOptions] = useState<SearchOptions>({
+    caseSensitive: false,
+    wholeWord: false,
+    useRegex: false,
+  });
+  const [currentSearchMatchIndex, setCurrentSearchMatchIndex] = useState(-1);
+  const searchMatches = useMemo(
+    () => findMultiDiffMatches(multiDiff, searchQuery, searchOptions),
+    [multiDiff, searchOptions, searchQuery],
   );
-  const handleOpenFile = useCallback(
-    async (filePath: string) => {
-      const repoPath = multiDiff.repoPath ?? rootFolderPath;
-      const targetPath =
-        filePath.startsWith("/") || filePath.startsWith("remote://")
-          ? filePath
-          : repoPath
-            ? joinPath(repoPath, filePath)
-            : filePath;
-
-      await useFileSystemStore
-        .getState()
-        .handleFileSelect(targetPath, false, undefined, undefined, undefined, false);
-    },
-    [multiDiff.repoPath, rootFolderPath],
-  );
+  const currentSearchMatch =
+    currentSearchMatchIndex >= 0 ? (searchMatches[currentSearchMatchIndex] ?? null) : null;
+  const isInvalidSearch =
+    searchOptions.useRegex &&
+    searchQuery.length > 0 &&
+    buildSearchRegex(searchQuery, searchOptions) === null;
   const [githubCommitUrl, setGitHubCommitUrl] = useState<string | null>(null);
-  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(() =>
-    getInitialExpandedFiles(multiDiff),
-  );
+  const indexingProgress = multiDiff.indexingProgress;
+  const isIndexingDiffs = Boolean(multiDiff.isLoading);
+  const indexingLabel = indexingProgress
+    ? `${indexingProgress.label ?? "Indexing"} ${indexingProgress.processed.toLocaleString()}/${indexingProgress.total.toLocaleString()}`
+    : "Indexing changes";
+  const indexedFileLabel = indexingProgress
+    ? `${multiDiff.files.length.toLocaleString()} of ${indexingProgress.total.toLocaleString()} changed files`
+    : `${multiDiff.totalFiles.toLocaleString()} changed file${multiDiff.totalFiles !== 1 ? "s" : ""}`;
   const diffFileItems = useMemo<FileNavigatorItem[]>(
     () =>
       multiDiff.files.map((diff, index) => {
@@ -566,113 +159,176 @@ const GitDiffEditorStack = memo(function GitDiffEditorStack({
         const status = getFileStatus(diff);
 
         return {
-          key: getDiffSectionKey(multiDiff, diff, index),
+          key: getMultiDiffSectionKey(multiDiff, diff, index),
           path: filePath,
-          iconClassName: statusTextClass[status],
+          iconTone: statusTone[status] ?? "neutral",
           metadata: [
-            ...(additions > 0 ? [{ label: `+${additions}`, className: "text-git-added" }] : []),
-            ...(deletions > 0 ? [{ label: `-${deletions}`, className: "text-git-deleted" }] : []),
+            ...(additions > 0 ? [{ label: `+${additions}`, tone: "added" as const }] : []),
+            ...(deletions > 0 ? [{ label: `-${deletions}`, tone: "deleted" as const }] : []),
           ],
         };
       }),
     [multiDiff],
   );
-  const handleToggleSection = useCallback((sectionKey: string) => {
-    setExpandedFiles((prev) => {
-      const next = new Set(prev);
-      if (next.has(sectionKey)) next.delete(sectionKey);
-      else next.add(sectionKey);
-      return next;
-    });
-  }, []);
-  const registerSectionElement = useCallback((sectionKey: string, node: HTMLDivElement | null) => {
-    if (node) {
-      sectionElementsRef.current.set(sectionKey, node);
+  const selectedFile = useMemo(() => resolveMultiDiffSelection(multiDiff), [multiDiff]);
+  const selectedFileKey = selectedFile?.key ?? null;
+  const selectedDiffFile = selectedFile
+    ? { diff: selectedFile.diff, sectionKey: selectedFile.key }
+    : null;
+  const canOpenCommitFile = Boolean(multiDiff.repoPath ?? rootFolderPath) && isCommitDiff;
+  const commitAuthor = multiDiff.commitAuthor?.trim() || "Unknown author";
+  const commitAvatarUrl = isCommitDiff
+    ? getGitAuthorAvatarUrl({ email: multiDiff.commitEmail }, account)
+    : null;
+  const handleOpenCommitFile = useCallback(
+    async (sectionKey: string) => {
+      const repoPath = multiDiff.repoPath ?? rootFolderPath;
+      if (!repoPath || !canOpenCommitFile) return;
+
+      const fileIndex = multiDiff.files.findIndex(
+        (diff, index) => getMultiDiffSectionKey(multiDiff, diff, index) === sectionKey,
+      );
+      const diff = multiDiff.files[fileIndex];
+      if (!diff) return;
+      const filePath = diff.new_path || diff.old_path || diff.file_path;
+
+      try {
+        await openCommitFileBuffer({ repoPath, commitHash: multiDiff.commitHash, filePath });
+      } catch (error) {
+        await showAlertDialog(
+          `Failed to open ${filePath} at ${multiDiff.commitHash.slice(0, 7)}:\n${error}`,
+          "Open Commit File",
+        );
+      }
+    },
+    [canOpenCommitFile, multiDiff, rootFolderPath],
+  );
+  const navigateSearch = useCallback(
+    (direction: 1 | -1) => {
+      if (searchMatches.length === 0) return;
+      setCurrentSearchMatchIndex((current) => {
+        const base = current >= 0 ? current : direction === 1 ? -1 : 0;
+        return (base + direction + searchMatches.length) % searchMatches.length;
+      });
+    },
+    [searchMatches.length],
+  );
+  const handleSelectFile = useCallback(
+    (sectionKey: string) => {
+      const nextMultiDiff = selectMultiDiffFile(multiDiff, sectionKey);
+      if (activeBuffer?.type === "diff" && nextMultiDiff !== multiDiff) {
+        updateBufferContent(activeBuffer.id, activeBuffer.content, false, nextMultiDiff);
+      }
+      window.requestAnimationFrame(() => {
+        diffStackScrollRef.current?.scrollTo({ top: 0, left: 0 });
+      });
+    },
+    [activeBuffer, multiDiff, updateBufferContent],
+  );
+
+  useEffect(() => {
+    if (searchMatches.length === 0) {
+      setCurrentSearchMatchIndex(-1);
       return;
     }
 
-    sectionElementsRef.current.delete(sectionKey);
-  }, []);
-  const handleSelectFileFromTree = useCallback((sectionKey: string) => {
-    setSelectedFileKey(sectionKey);
-    setExpandedFiles((prev) => {
-      if (prev.has(sectionKey)) return prev;
-      const next = new Set(prev);
-      next.add(sectionKey);
-      return next;
-    });
-
-    window.requestAnimationFrame(() => {
-      sectionElementsRef.current.get(sectionKey)?.scrollIntoView({
-        block: "start",
-      });
-    });
-  }, []);
-  const handleStackWheelCapture = useCallback((event: WheelEvent<HTMLDivElement>) => {
-    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-
-    const scrollContainer = event.currentTarget;
-    const canScroll =
-      (event.deltaY < 0 && scrollContainer.scrollTop > 0) ||
-      (event.deltaY > 0 &&
-        scrollContainer.scrollTop + scrollContainer.clientHeight < scrollContainer.scrollHeight);
-
-    if (!canScroll) return;
-
-    scrollContainer.scrollTop += event.deltaY;
-    event.preventDefault();
-    event.stopPropagation();
-  }, []);
+    setCurrentSearchMatchIndex(0);
+  }, [searchMatches]);
 
   useEffect(() => {
-    const nextKeys = new Set(
-      multiDiff.files.map((diff, index) => getDiffSectionKey(multiDiff, diff, index)),
-    );
+    if (!isFindVisible || !isActiveMultiDiff) return;
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
+  }, [isActiveMultiDiff, isFindVisible]);
 
-    setExpandedFiles((previous) => {
-      const nextExpanded = new Set(Array.from(previous).filter((key) => nextKeys.has(key)));
+  useEffect(() => {
+    if (!currentSearchMatch) return;
 
-      if (nextExpanded.size === 0) {
-        return getInitialExpandedFiles(multiDiff);
-      }
+    handleSelectFile(currentSearchMatch.sectionKey);
 
-      if (multiDiff.initiallyExpandedFileKey && nextKeys.has(multiDiff.initiallyExpandedFileKey)) {
-        nextExpanded.add(multiDiff.initiallyExpandedFileKey);
-      }
-
-      return nextExpanded;
+    let revealTimer: number | null = null;
+    const revealFrame = window.requestAnimationFrame(() => {
+      revealTimer = window.setTimeout(() => {
+        const line = selectedSectionRef.current?.querySelector(
+          `[data-diff-search-line="${currentSearchMatch.lineIndex}"]`,
+        );
+        line?.scrollIntoView({ block: "center", inline: "nearest" });
+      }, 50);
     });
 
-    setSelectedFileKey((previous) => {
-      if (previous && nextKeys.has(previous)) return previous;
-      return (
-        multiDiff.initiallyExpandedFileKey ??
-        (multiDiff.files[0] ? getDiffSectionKey(multiDiff, multiDiff.files[0], 0) : null)
-      );
-    });
-  }, [multiDiff.fileKeys, multiDiff.files, multiDiff.initiallyExpandedFileKey]);
+    return () => {
+      window.cancelAnimationFrame(revealFrame);
+      if (revealTimer !== null) window.clearTimeout(revealTimer);
+    };
+  }, [currentSearchMatch, handleSelectFile]);
+
+  useEffect(() => {
+    if (!isActiveMultiDiff) return;
+
+    const handleSearchShortcut = (event: KeyboardEvent) => {
+      const hasCommandModifier = event.metaKey || event.ctrlKey;
+      const key = event.key.toLowerCase();
+
+      if (hasCommandModifier && key === "f") {
+        event.preventDefault();
+        setIsFindVisible(true);
+        window.requestAnimationFrame(() => searchInputRef.current?.select());
+        return;
+      }
+
+      if (hasCommandModifier && key === "g" && searchMatches.length > 0) {
+        event.preventDefault();
+        setIsFindVisible(true);
+        navigateSearch(event.shiftKey ? -1 : 1);
+      }
+    };
+
+    document.addEventListener("keydown", handleSearchShortcut, { capture: true });
+    return () => document.removeEventListener("keydown", handleSearchShortcut, { capture: true });
+  }, [isActiveMultiDiff, navigateSearch, searchMatches.length, setIsFindVisible]);
 
   const refreshWorkingTreeBuffer = useCallback(async () => {
-    if (!isWorkingTree || !isWorkingTreeBuffer || !rootFolderPath || !activeBuffer) return;
+    if (
+      !isWorkingTree ||
+      !isWorkingTreeBuffer ||
+      !rootFolderPath ||
+      !activeBuffer ||
+      !selectedDiffFile
+    ) {
+      return;
+    }
     if (isRefreshingRef.current) return;
 
     isRefreshingRef.current = true;
 
     try {
       gitDiffCache.invalidate(rootFolderPath);
-      const gitStatus = await getGitStatus(rootFolderPath);
-      const nextMultiDiff = await buildWorkingTreeMultiDiff({
-        repoPath: rootFolderPath,
-        status: gitStatus,
-        previousFileKeys: multiDiff.fileKeys,
-      });
+      const selectedFileKey = selectedDiffFile.sectionKey;
+      const selectedFilePath = selectedFileKey.replace(/^(staged|unstaged):/, "");
+      let isStaged = selectedFileKey.startsWith("staged:");
+      let nextDiff = await getFileDiff(rootFolderPath, selectedFilePath, isStaged);
 
-      if (nextMultiDiff.files.length === 0) {
+      if (!hasRenderableDiff(nextDiff)) {
+        isStaged = !isStaged;
+        nextDiff = await getFileDiff(rootFolderPath, selectedFilePath, isStaged);
+      }
+
+      if (!hasRenderableDiff(nextDiff)) {
         closeBuffer(activeBuffer.id);
         return;
       }
 
-      updateBufferContent(activeBuffer.id, "", false, nextMultiDiff);
+      const nextFileKey = `${isStaged ? "staged" : "unstaged"}:${selectedFilePath}`;
+      updateBufferContent(
+        activeBuffer.id,
+        "",
+        false,
+        createSingleFileWorkingTreeDiff({
+          repoPath: rootFolderPath,
+          fileKey: nextFileKey,
+          diff: nextDiff,
+          title: multiDiff.title,
+        }),
+      );
     } finally {
       isRefreshingRef.current = false;
     }
@@ -681,25 +337,38 @@ const GitDiffEditorStack = memo(function GitDiffEditorStack({
     closeBuffer,
     isWorkingTree,
     isWorkingTreeBuffer,
-    multiDiff.fileKeys,
+    multiDiff.title,
     rootFolderPath,
+    selectedDiffFile,
     updateBufferContent,
   ]);
 
   useEffect(() => {
     if (!isWorkingTree) return;
 
-    const handleGitStatusChanged = () => {
-      window.setTimeout(() => {
+    let timeoutId: number | null = null;
+    const unsubscribe = subscribeToGitChanges((change) => {
+      const selectedFilePath = selectedDiffFile?.sectionKey.replace(/^(staged|unstaged):/, "");
+      if (!isGitChangeRelevant(change, multiDiff.repoPath ?? rootFolderPath, selectedFilePath)) {
+        return;
+      }
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => {
         void refreshWorkingTreeBuffer();
       }, 50);
-    };
+    });
 
-    window.addEventListener("git-status-changed", handleGitStatusChanged);
     return () => {
-      window.removeEventListener("git-status-changed", handleGitStatusChanged);
+      unsubscribe();
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [isWorkingTree, refreshWorkingTreeBuffer]);
+  }, [
+    isWorkingTree,
+    multiDiff.repoPath,
+    refreshWorkingTreeBuffer,
+    rootFolderPath,
+    selectedDiffFile?.sectionKey,
+  ]);
 
   useEffect(() => {
     if (isWorkingTree || multiDiff.commitHash.startsWith("stash@{")) {
@@ -733,150 +402,217 @@ const GitDiffEditorStack = memo(function GitDiffEditorStack({
   }, [isWorkingTree, multiDiff.commitHash, multiDiff.repoPath, rootFolderPath]);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-primary-bg">
+    <div className="relative flex h-full flex-col overflow-hidden bg-background">
       <Breadcrumb
         filePathOverride={multiDiff.title || "Uncommitted Changes"}
         interactive={false}
         showPath={false}
-        showDefaultActions={true}
+        showDefaultActions={false}
         extraLeftContent={
-          <div className="ui-text-sm flex items-center gap-2 text-text-lighter">
-            <span>
-              {multiDiff.totalFiles} changed file
-              {multiDiff.totalFiles !== 1 ? "s" : ""}
-            </span>
-            <span className="text-git-added">+{multiDiff.totalAdditions}</span>
-            <span className="text-git-deleted">-{multiDiff.totalDeletions}</span>
-          </div>
+          isCommitDiff ? (
+            <div className="ui-text-sm flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap">
+              <Avatar name={commitAuthor} src={commitAvatarUrl} size="sm" />
+              <span className="truncate font-medium text-foreground">
+                {multiDiff.commitMessage || multiDiff.title || "Commit"}
+              </span>
+            </div>
+          ) : (
+            <div className="ui-text-sm flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-subtle-foreground">
+              <span className="shrink-0 font-medium text-foreground">
+                {multiDiff.title || "Uncommitted Changes"}
+              </span>
+              <span className="truncate">{indexedFileLabel}</span>
+              <span className="shrink-0 text-git-added">+{multiDiff.totalAdditions}</span>
+              <span className="shrink-0 text-git-deleted">-{multiDiff.totalDeletions}</span>
+              {isIndexingDiffs ? <span>{indexingLabel}</span> : null}
+            </div>
+          )
         }
         rightContent={
           <div className="flex items-center gap-1">
-            <BreadcrumbActionButton
+            <Button
+              variant="ghost"
+              iconOnly
               type="button"
-              active={isFileTreeVisible}
-              onClick={() => setIsFileTreeVisible((current) => !current)}
-              className="gap-1"
-              tooltip={isFileTreeVisible ? "Hide changed files" : "Show changed files"}
-              tooltipSide="bottom"
-              aria-label={isFileTreeVisible ? "Hide changed files" : "Show changed files"}
+              active={isFindVisible}
+              onClick={() => setIsFindVisible(!isFindVisible)}
+              tooltip="Search changes"
+              aria-label="Search changes"
             >
-              <ListBullets weight="duotone" />
-            </BreadcrumbActionButton>
-            {githubCommitUrl ? (
-              <BreadcrumbActionButton
-                type="button"
-                onClick={() => void openUrl(githubCommitUrl)}
-                className="gap-1 ui-text-sm"
-                tooltip="View on GitHub"
-                tooltipSide="bottom"
-                aria-label="View on GitHub"
-              >
-                <ExternalLink weight="duotone" />
-                View on GitHub
-              </BreadcrumbActionButton>
-            ) : null}
-            <BreadcrumbActionButton
-              type="button"
-              active={showWhitespace}
-              onClick={() => setShowWhitespace((prev) => !prev)}
-              className="gap-1"
-              tooltip={showWhitespace ? "Hide whitespace" : "Show whitespace"}
-              tooltipSide="bottom"
-              aria-label={showWhitespace ? "Hide whitespace" : "Show whitespace"}
-            >
-              <Trash2 weight="duotone" />
-              {showWhitespace ? <Check weight="duotone" /> : null}
-            </BreadcrumbActionButton>
+              <SearchIcon />
+            </Button>
             <div className="flex items-center gap-0.5">
-              <BreadcrumbActionButton
+              <Button
+                variant="ghost"
+                iconOnly
                 type="button"
                 active={viewMode === "unified"}
                 onClick={() => setViewMode("unified")}
                 tooltip="Unified view"
-                tooltipSide="bottom"
                 aria-label="Unified view"
               >
-                <Rows3 weight="duotone" />
-              </BreadcrumbActionButton>
-              <BreadcrumbActionButton
+                <RowsIcon />
+              </Button>
+              <Button
+                variant="ghost"
+                iconOnly
                 type="button"
                 active={viewMode === "split"}
                 onClick={() => setViewMode("split")}
                 tooltip="Split view"
-                tooltipSide="bottom"
                 aria-label="Split view"
               >
-                <Columns2 weight="duotone" />
-              </BreadcrumbActionButton>
+                <ColumnsIcon />
+              </Button>
             </div>
+            <DropdownMenu>
+              <Tooltip content="Diff actions">
+                <DropdownMenuTrigger
+                  render={
+                    <Button type="button" variant="ghost" iconOnly aria-label="Diff actions" />
+                  }
+                >
+                  <DotsIcon />
+                </DropdownMenuTrigger>
+              </Tooltip>
+              <DropdownMenuContent>
+                {canOpenCommitFile && selectedFileKey ? (
+                  <DropdownMenuItem onClick={() => void handleOpenCommitFile(selectedFileKey)}>
+                    Open file at {multiDiff.commitHash.slice(0, 7)}
+                  </DropdownMenuItem>
+                ) : null}
+                {githubCommitUrl ? (
+                  <DropdownMenuItem onClick={() => void openUrl(githubCommitUrl)}>
+                    View on GitHub
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem onClick={() => setShowWhitespace((current) => !current)}>
+                  {showWhitespace ? "Hide whitespace" : "Show whitespace"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         }
       />
 
-      {!isWorkingTree &&
-      (multiDiff.commitMessage || multiDiff.commitAuthor || multiDiff.commitDate) ? (
-        <div className="bg-primary-bg px-2 py-2">
-          <div className="px-1 py-1.5">
-            {multiDiff.commitMessage ? (
-              <div className="ui-text-sm font-medium text-text">{multiDiff.commitMessage}</div>
-            ) : null}
-            {multiDiff.commitDescription ? (
-              <div className="ui-text-sm mt-2 whitespace-pre-wrap text-text-lighter">
-                {multiDiff.commitDescription}
-              </div>
-            ) : null}
-            <div className="ui-text-sm mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-text-lighter">
-              {multiDiff.commitAuthor ? <span>{multiDiff.commitAuthor}</span> : null}
-              {multiDiff.commitDate ? (
-                <span>{formatRelativeDate(multiDiff.commitDate)}</span>
-              ) : null}
-              <Badge size="compact" variant="muted">
-                {multiDiff.commitHash}
-              </Badge>
-            </div>
-          </div>
-        </div>
+      {isFindVisible && isActiveMultiDiff ? (
+        <SearchPopover
+          value={searchQuery}
+          onChange={setSearchQuery}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setIsFindVisible(false);
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              navigateSearch(event.shiftKey ? -1 : 1);
+            }
+          }}
+          onClose={() => setIsFindVisible(false)}
+          placeholder="Search changes"
+          inputRef={searchInputRef}
+          matchLabel={
+            searchQuery
+              ? isInvalidSearch
+                ? "Invalid expression"
+                : searchMatches.length > 0
+                  ? `${currentSearchMatchIndex + 1} of ${searchMatches.length}`
+                  : "No results"
+              : null
+          }
+          matchTone={
+            isInvalidSearch || (searchQuery.length > 0 && searchMatches.length === 0)
+              ? "warning"
+              : "default"
+          }
+          onNext={() => navigateSearch(1)}
+          onPrevious={() => navigateSearch(-1)}
+          canNavigate={searchMatches.length > 0}
+          options={[
+            {
+              id: "case-sensitive",
+              label: "Match case",
+              icon: SEARCH_TOGGLE_ICONS.caseSensitive,
+              active: searchOptions.caseSensitive,
+              onToggle: () =>
+                setSearchOptions((current) => ({
+                  ...current,
+                  caseSensitive: !current.caseSensitive,
+                })),
+            },
+            {
+              id: "whole-word",
+              label: "Match whole word",
+              icon: SEARCH_TOGGLE_ICONS.wholeWord,
+              active: searchOptions.wholeWord,
+              onToggle: () =>
+                setSearchOptions((current) => ({
+                  ...current,
+                  wholeWord: !current.wholeWord,
+                })),
+            },
+            {
+              id: "regex",
+              label: "Use regular expression",
+              icon: SEARCH_TOGGLE_ICONS.regex,
+              active: searchOptions.useRegex,
+              onToggle: () =>
+                setSearchOptions((current) => ({
+                  ...current,
+                  useRegex: !current.useRegex,
+                })),
+            },
+          ]}
+          className="absolute top-9 right-2 z-50 max-w-[calc(100%-1rem)]"
+        />
       ) : null}
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {isFileTreeVisible ? (
-          <FileNavigatorSidebar
-            items={diffFileItems}
-            selectedKey={selectedFileKey}
-            onSelect={handleSelectFileFromTree}
-            ariaLabel="Changed files"
-            viewMode={fileNavigatorViewMode}
-            onViewModeChange={setFileNavigatorViewMode}
-          />
-        ) : null}
+      {isIndexingDiffs && multiDiff.files.length === 0 ? (
+        <Empty className="bg-background" role="status" aria-live="polite">
+          <EmptyDescription>{indexingLabel}</EmptyDescription>
+        </Empty>
+      ) : null}
 
-        <div
-          className="min-h-0 flex-1 overflow-auto px-2 pb-2"
-          style={{ overflowAnchor: "none" }}
-          data-diff-stack-scroll-container
-          onWheelCapture={handleStackWheelCapture}
+      {isIndexingDiffs && multiDiff.files.length === 0 ? null : (
+        <ReviewWorkspace
+          items={diffFileItems}
+          selectedKey={selectedFileKey}
+          onSelect={handleSelectFile}
+          isActive={isActiveMultiDiff}
+          fileNavigation={multiDiff.fileNavigation}
+          contentRef={diffStackScrollRef}
         >
-          <div className="flex min-w-0 max-w-full flex-col gap-1.5 rounded-md">
-            {multiDiff.files.map((diff, index) => {
-              const sectionKey = getDiffSectionKey(multiDiff, diff, index);
-
-              return (
-                <div key={sectionKey} ref={(node) => registerSectionElement(sectionKey, node)}>
-                  <DiffFileSection
-                    diff={diff}
-                    sectionKey={sectionKey}
-                    expanded={expandedFiles.has(sectionKey)}
-                    viewMode={viewMode}
-                    showWhitespace={showWhitespace}
-                    onToggle={handleToggleSection}
-                    onOpenFile={handleOpenFile}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
+          {selectedDiffFile ? (
+            <div
+              key={selectedDiffFile.sectionKey}
+              ref={selectedSectionRef}
+              className="min-w-0 max-w-full overflow-hidden bg-background"
+            >
+              <DiffFileContent
+                diff={selectedDiffFile.diff}
+                sectionKey={selectedDiffFile.sectionKey}
+                viewMode={viewMode}
+                showWhitespace={showWhitespace}
+                searchMatches={
+                  isFindVisible
+                    ? searchMatches.filter(
+                        (match) => match.sectionKey === selectedDiffFile.sectionKey,
+                      )
+                    : []
+                }
+                currentSearchMatch={isFindVisible ? currentSearchMatch : null}
+                searchQuery={isFindVisible ? searchQuery : ""}
+                searchOptions={searchOptions}
+                canStageHunks={isWorkingTree}
+              />
+            </div>
+          ) : (
+            <Empty className="h-full bg-background">
+              <EmptyDescription>No changed file selected</EmptyDescription>
+            </Empty>
+          )}
+        </ReviewWorkspace>
+      )}
     </div>
   );
 });

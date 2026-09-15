@@ -1,3 +1,4 @@
+import { BUNDLED_FONTS } from "@/features/settings/config/bundled-fonts";
 import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
@@ -21,22 +22,8 @@ interface FontActions {
   clearError: () => void;
 }
 
-const FONT_CACHE_KEY = "athas_font_cache";
+const FONT_CACHE_KEY = "athas_font_cache_v3";
 const FONT_CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-const FALLBACK_FONTS: FontInfo[] = [
-  {
-    name: "IBM Plex Sans Variable",
-    family: "IBM Plex Sans Variable",
-    style: "Regular",
-    is_monospace: false,
-  },
-  {
-    name: "JetBrains Mono Variable",
-    family: "JetBrains Mono Variable",
-    style: "Regular",
-    is_monospace: true,
-  },
-];
 
 interface FontCache {
   availableFonts: FontInfo[];
@@ -90,7 +77,7 @@ const isTauriBridgeError = (error: unknown): boolean => {
   return message.includes("postMessage") || message.includes("__TAURI_INTERNALS__");
 };
 
-const getFallbackMonospaceFonts = () => FALLBACK_FONTS.filter((font) => font.is_monospace);
+const getFallbackMonospaceFonts = () => BUNDLED_FONTS.filter((font) => font.is_monospace);
 
 export const useFontStore = createSelectors(
   create<FontState>()(
@@ -148,13 +135,13 @@ export const useFontStore = createSelectors(
               if (isTauriBridgeError(error)) {
                 const monospaceFonts = getFallbackMonospaceFonts();
                 set((state) => {
-                  state.availableFonts = FALLBACK_FONTS;
+                  state.availableFonts = BUNDLED_FONTS;
                   state.monospaceFonts = monospaceFonts;
                   state.error = null;
                   state.isLoading = false;
                   state.lastCacheTime = Date.now();
                 });
-                saveFontsToCache(FALLBACK_FONTS, monospaceFonts);
+                saveFontsToCache(BUNDLED_FONTS, monospaceFonts);
                 return;
               }
 
@@ -208,7 +195,7 @@ export const useFontStore = createSelectors(
                 saveFontsToCache(
                   updatedState.availableFonts.length > 0
                     ? updatedState.availableFonts
-                    : FALLBACK_FONTS,
+                    : BUNDLED_FONTS,
                   fonts,
                 );
                 return;
@@ -222,12 +209,13 @@ export const useFontStore = createSelectors(
           },
 
           validateFont: async (fontFamily: string): Promise<boolean> => {
+            if (BUNDLED_FONTS.some((font) => font.family === fontFamily)) return true;
             try {
               return await invoke<boolean>("validate_font", { fontFamily });
             } catch (error) {
               console.error("Failed to validate font:", error);
               if (isTauriBridgeError(error)) {
-                return FALLBACK_FONTS.some((font) => font.family === fontFamily);
+                return BUNDLED_FONTS.some((font) => font.family === fontFamily);
               }
               return false;
             }

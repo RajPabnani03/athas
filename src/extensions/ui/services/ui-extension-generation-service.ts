@@ -1,25 +1,15 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { getAuthToken } from "@/features/window/services/auth-api";
 import { getApiBase } from "@/utils/api-base";
+import {
+  parseUIExtensionGenerationResult,
+  type UIExtensionContributionType,
+  type UIExtensionGenerationResult,
+} from "./ui-extension-generation-result";
 
 const API_BASE = getApiBase();
 
-export type UIExtensionContributionType = "sidebar" | "toolbar" | "command";
-
-export interface UIExtensionGenerationResult {
-  id: string;
-  name: string;
-  description: string;
-  code: string;
-  preview?: {
-    title?: string;
-    summary?: string;
-    highlights?: string[];
-    primaryAction?: string;
-  };
-}
-
-export class UIExtensionGenerationError extends Error {
+class UIExtensionGenerationError extends Error {
   status: number;
 
   constructor(message: string, status: number) {
@@ -35,7 +25,7 @@ export async function requestUIExtensionGeneration(params: {
 }): Promise<UIExtensionGenerationResult> {
   const token = await getAuthToken();
   if (!token) {
-    throw new UIExtensionGenerationError("Sign in to Athas to use hosted UI generation.", 401);
+    throw new UIExtensionGenerationError("Sign in to use Athas Intelligence.", 401);
   }
 
   const response = await tauriFetch(`${API_BASE}/api/ai/ui-extension`, {
@@ -61,27 +51,23 @@ export async function requestUIExtensionGeneration(params: {
       "error" in body &&
       typeof (body as { error?: unknown }).error === "string"
         ? (body as { error: string }).error
-        : `UI extension generation failed (${response.status})`;
+        : `UI integration generation failed (${response.status})`;
 
     if (response.status === 401) {
-      message = "Sign in to Athas to use hosted UI generation.";
-    } else if (response.status === 403) {
-      message = "Athas Pro is required to generate hosted UI extensions.";
+      message = "Sign in to use Athas Intelligence.";
+    } else if (response.status === 402 || response.status === 403) {
+      message = "Athas Intelligence is included with Athas Pro.";
     }
 
     throw new UIExtensionGenerationError(message, response.status);
   }
 
-  if (
-    !body ||
-    typeof body !== "object" ||
-    typeof (body as { id?: unknown }).id !== "string" ||
-    typeof (body as { name?: unknown }).name !== "string" ||
-    typeof (body as { description?: unknown }).description !== "string" ||
-    typeof (body as { code?: unknown }).code !== "string"
-  ) {
-    throw new UIExtensionGenerationError("Invalid UI extension generation response.", 500);
+  try {
+    return parseUIExtensionGenerationResult(body);
+  } catch (error) {
+    if (error instanceof Error && error.message !== "Invalid UI integration generation response.") {
+      throw new UIExtensionGenerationError(error.message, 500);
+    }
+    throw new UIExtensionGenerationError("Invalid UI integration generation response.", 500);
   }
-
-  return body as UIExtensionGenerationResult;
 }

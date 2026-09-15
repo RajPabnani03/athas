@@ -9,10 +9,12 @@ interface LineRange {
   endLine: number;
 }
 
-const LINE_BASED_LANGUAGE_IDS = new Set(["gitignore", "gitattributes", "lockfile"]);
+const LINE_BASED_LANGUAGE_IDS = new Set(["diff", "gitignore", "gitattributes", "lockfile"]);
 const LINE_BASED_FALLBACK_LANGUAGE_IDS = new Set([
   ...LINE_BASED_LANGUAGE_IDS,
+  "typescript",
   "typescriptreact",
+  "rust",
   "zig",
   "elm",
   "elisp",
@@ -205,6 +207,47 @@ function tokenizeLockfileLine(
   }
 }
 
+function tokenizeDiffLine(tokens: LineBasedSyntaxToken[], line: string, lineStart: number): void {
+  if (
+    line.startsWith("diff --git ") ||
+    line.startsWith("index ") ||
+    line.startsWith("new file mode ") ||
+    line.startsWith("deleted file mode ") ||
+    line.startsWith("rename from ") ||
+    line.startsWith("rename to ") ||
+    line.startsWith("similarity index ") ||
+    line.startsWith("dissimilarity index ") ||
+    line.startsWith("Binary files ")
+  ) {
+    pushToken(tokens, lineStart, lineStart + line.length, "token-keyword");
+    return;
+  }
+
+  if (line.startsWith("@@")) {
+    pushToken(tokens, lineStart, lineStart + line.length, "token-attribute");
+    return;
+  }
+
+  if (line.startsWith("+++ ")) {
+    pushToken(tokens, lineStart, lineStart + line.length, "token-string");
+    return;
+  }
+
+  if (line.startsWith("--- ")) {
+    pushToken(tokens, lineStart, lineStart + line.length, "token-variable");
+    return;
+  }
+
+  if (line.startsWith("+")) {
+    pushToken(tokens, lineStart, lineStart + line.length, "token-string");
+    return;
+  }
+
+  if (line.startsWith("-")) {
+    pushToken(tokens, lineStart, lineStart + line.length, "token-variable");
+  }
+}
+
 function tokenizeTypeScriptReactLine(
   tokens: LineBasedSyntaxToken[],
   line: string,
@@ -252,6 +295,69 @@ function tokenizeZigLine(tokens: LineBasedSyntaxToken[], line: string, lineStart
     [/@[A-Za-z_][\w]*/g, "token-function"],
     [/\b0x[0-9a-fA-F_]+\b|\b\d[\d_]*(\.\d[\d_]*)?\b/g, "token-number"],
   ]);
+}
+
+function tokenizeRustLine(tokens: LineBasedSyntaxToken[], line: string, lineStart: number): void {
+  const claimed: Array<{ start: number; end: number }> = [];
+  const claimMatches = (pattern: RegExp, className: string, endLimit = line.length) => {
+    for (const match of line.slice(0, endLimit).matchAll(pattern)) {
+      const start = match.index ?? 0;
+      const end = start + match[0].length;
+      if (claimed.some((range) => start < range.end && end > range.start)) continue;
+      claimed.push({ start, end });
+      pushToken(tokens, lineStart + start, lineStart + end, className);
+    }
+  };
+
+  let commentStart = -1;
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  for (let index = 0; index < line.length - 1; index++) {
+    const character = line[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote && character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === '"' || (character === "'" && line[index + 2] === "'")) {
+      quote = quote === character ? null : (quote ?? character);
+      continue;
+    }
+    if (!quote && character === "/" && line[index + 1] === "/") {
+      commentStart = index;
+      break;
+    }
+  }
+
+  const codeEnd = commentStart >= 0 ? commentStart : line.length;
+  claimMatches(/#!?\[[^\]]*\]/g, "token-attribute", codeEnd);
+  claimMatches(/r#*".*?"#*|b?"([^"\\]|\\.)*"|b?'([^'\\]|\\.)'/g, "token-string", codeEnd);
+  claimMatches(
+    /\b(as|async|await|break|const|continue|crate|dyn|else|enum|extern|false|fn|for|if|impl|in|let|loop|match|mod|move|mut|pub|ref|return|self|Self|static|struct|super|trait|true|type|union|unsafe|use|where|while|yield)\b/g,
+    "token-keyword",
+    codeEnd,
+  );
+  claimMatches(
+    /\b(bool|char|f32|f64|i8|i16|i32|i64|i128|isize|str|u8|u16|u32|u64|u128|usize|Option|Result|String|Vec|Box|Arc|Rc|Path|PathBuf|Mutex|RwLock)\b|\b[A-Z][A-Za-z0-9_]*\b/g,
+    "token-type",
+    codeEnd,
+  );
+  claimMatches(/\b[A-Z][A-Z0-9_]+\b/g, "token-constant", codeEnd);
+  claimMatches(
+    /\b0x[\dA-Fa-f_]+\b|\b0b[01_]+\b|\b\d[\d_]*(?:\.\d[\d_]*)?\b/g,
+    "token-number",
+    codeEnd,
+  );
+  claimMatches(/\b[A-Za-z_][A-Za-z0-9_]*!/g, "token-function", codeEnd);
+  claimMatches(/\b[A-Za-z_][A-Za-z0-9_]*(?=\s*(?:::<[^>]*>)?\s*\()/g, "token-function", codeEnd);
+  claimMatches(/'[A-Za-z_][A-Za-z0-9_]*/g, "token-type", codeEnd);
+
+  if (commentStart >= 0) {
+    pushToken(tokens, lineStart + commentStart, lineStart + line.length, "token-comment");
+  }
 }
 
 function tokenizeElmLine(tokens: LineBasedSyntaxToken[], line: string, lineStart: number): void {
@@ -309,14 +415,18 @@ export function tokenizeLineBasedSyntax(
     const line = lines[lineNumber] ?? "";
 
     if (lineNumber >= startLine && lineNumber <= endLine) {
-      if (languageId === "gitignore") {
+      if (languageId === "diff") {
+        tokenizeDiffLine(tokens, line, offset);
+      } else if (languageId === "gitignore") {
         tokenizeGitIgnoreLine(tokens, line, offset);
       } else if (languageId === "gitattributes") {
         tokenizeGitAttributesLine(tokens, line, offset);
       } else if (languageId === "lockfile") {
         tokenizeLockfileLine(tokens, line, offset);
-      } else if (languageId === "typescriptreact") {
+      } else if (languageId === "typescript" || languageId === "typescriptreact") {
         tokenizeTypeScriptReactLine(tokens, line, offset);
+      } else if (languageId === "rust") {
+        tokenizeRustLine(tokens, line, offset);
       } else if (languageId === "zig") {
         tokenizeZigLine(tokens, line, offset);
       } else if (languageId === "elm") {

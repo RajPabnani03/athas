@@ -1,30 +1,61 @@
-@theme {
-  --font-sans:
-    "IBM Plex Sans Variable", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --editor-font:
-    "JetBrains Mono Variable", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-    "Liberation Mono", monospace;
-}
-
 @theme inline {
-  --color-primary-bg: var(--primary-bg);
-  --color-secondary-bg: var(--secondary-bg);
-  --color-text: var(--text);
-  --color-text-light: var(--text-light);
-  --color-text-lighter: var(--text-lighter);
-  --color-border: var(--border);
-  --color-hover: var(--hover);
-  --color-selected: var(--selected);
-  --color-selection-bg: var(--selection-bg);
+  --font-sans: var(--app-font-family);
+  --font-heading: "Inter Display", var(--app-font-family);
+  --font-mono: var(--editor-font-family);
+  --leading-row: 1.35;
+  --leading-chrome: var(--athas-chrome-line-height);
 
+  --spacing-title-bar: var(--athas-title-bar-height);
+  --spacing-title-bar-leading: var(--athas-title-bar-leading-inset);
+  --spacing-pane-header: var(--athas-pane-header-height);
+  --spacing-tab-bar: var(--athas-tab-bar-height);
+  --spacing-tab: var(--athas-tab-height);
+  --spacing-tab-max: var(--athas-tab-max-width);
+  --spacing-sidebar-header: var(--athas-sidebar-header-height);
+  --spacing-workbench: var(--athas-workbench-gap);
+  --spacing-chrome-control: var(--athas-chrome-control-height);
+  --spacing-chrome-hit-target: var(--athas-chrome-hit-target);
+  --spacing-chrome-tight: var(--athas-chrome-gap-tight);
+  --spacing-chrome: var(--athas-chrome-gap);
+  --spacing-chrome-loose: var(--athas-chrome-gap-loose);
+  --spacing-chrome-inline: var(--athas-chrome-padding-inline);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-chrome: var(--athas-chrome-radius);
+
+  --ease-smooth: var(--app-ease-smooth);
+
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--app-muted-foreground);
+  --color-subtle-foreground: var(--app-subtle-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-accent: var(--accent);
+  --color-attachment: var(--attachment-background);
+  --color-attachment-hover: var(--attachment-hover);
+  --color-attachment-media: var(--attachment-media);
+  --color-selected: var(--selected);
+  --color-selection: var(--selection);
+  --color-scrollbar-thumb: var(--app-scrollbar-thumb);
+  --color-scrollbar-thumb-hover: var(--app-scrollbar-thumb-hover);
+
+  --color-tab-hover: var(--tab-hover-bg);
+
+  --color-primary: var(--app-primary);
 
   --color-cursor: var(--cursor);
   --color-cursor-vim-normal: var(--cursor-vim-normal);
   --color-cursor-vim-insert: var(--cursor-vim-insert);
 
-  --color-error: var(--error);
+  --color-destructive: var(--destructive);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-info: var(--info);
@@ -83,30 +114,59 @@
 
 @layer base {
   :root {
-    --app-font-family: var(--font-sans);
-    --editor-font-family: var(--editor-font);
-    --app-ui-font-size: 15px;
+    --app-font-family:
+      "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+      Arial, sans-serif;
+    --editor-font-family:
+      "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+      monospace;
+    --app-ui-font-size: 13px;
     --app-ui-scale: 1;
-    --ui-text-xs: calc(var(--app-ui-font-size) * 0.79);
-    --ui-text-sm: calc(var(--app-ui-font-size) * 0.86);
     --ui-text-base: var(--app-ui-font-size);
-    --app-ui-control-font-size: var(--ui-text-base);
-    --app-ui-control-icon-size: calc(var(--app-ui-font-size) * 0.86);
-    --app-ui-icon-size-xs: calc(10px * var(--app-ui-scale));
-    --app-ui-icon-size-sm: calc(12px * var(--app-ui-scale));
-    --app-ui-icon-size-md: calc(14px * var(--app-ui-scale));
-    --app-radius-sm: 6px;
-    --app-radius-md: 8px;
-    --app-radius-lg: 12px;
-    --app-radius-xl: 16px;
+    --ui-text-lg: calc(var(--app-ui-font-size) + 2px);
+    --ui-text-sm: max(10px, calc(var(--app-ui-font-size) - 1px));
+    --ui-text-caption: max(10px, calc(var(--app-ui-font-size) - 3px));
+    --ui-text-chrome: var(--ui-text-sm);
+    --athas-title-bar-height: 2rem;
+    --athas-title-bar-leading-inset: var(--athas-chrome-padding-inline);
+    --athas-tab-bar-height: 2rem;
+    --athas-pane-header-height: var(--athas-tab-bar-height);
+    --athas-tab-height: 1.75rem;
+    --athas-tab-max-width: 12.5rem;
+    --athas-sidebar-header-height: 2rem;
+    --athas-workbench-gap: 8px;
+    --athas-chrome-control-height: 1.5rem;
+    --athas-chrome-hit-target: 1.75rem;
+    --athas-chrome-line-height: 1rem;
+    --athas-chrome-gap-tight: 2px;
+    --athas-chrome-gap: 4px;
+    --athas-chrome-gap-loose: 6px;
+    --athas-chrome-padding-inline: 8px;
+    --athas-chrome-radius: 6px;
+    --radius: 10px;
     --app-duration-fast: 150ms;
     --app-duration-normal: 200ms;
-    --app-duration-slow: 280ms;
     --app-ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
-    --app-ease-out: cubic-bezier(0.17, 1, 0.32, 1);
-    --app-ease-spring: cubic-bezier(0.35, 1.55, 0.65, 1);
     --app-ease-in-out: cubic-bezier(0.66, 0, 0.34, 1);
-    --app-press-scale: 0.98;
+    --app-muted-foreground: var(--muted-foreground);
+    --app-subtle-foreground: var(--subtle-foreground);
+    --app-primary: var(--primary);
+    --athas-navigation-material: var(--surface);
+    --border-strong: color-mix(in srgb, var(--border) 72%, var(--foreground) 28%);
+    --composer-background: linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--background) 88%, var(--surface)),
+      color-mix(in srgb, var(--background) 64%, var(--surface))
+    );
+    --attachment-background: color-mix(in srgb, var(--foreground) 3%, var(--surface));
+    --attachment-hover: color-mix(in srgb, var(--foreground) 7%, var(--surface));
+    --attachment-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 50%, transparent);
+    --attachment-hover-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--border-strong) 65%, transparent);
+    --attachment-media: color-mix(in srgb, var(--foreground) 6%, var(--surface));
+    --success: var(--primary);
+    --warning: var(--muted-foreground);
+    --tab-hover-bg: color-mix(in srgb, var(--accent) 72%, transparent);
     --shadow-card:
       0 1px 2px rgb(0 0 0 / 0.05), 0 2px 4px rgb(0 0 0 / 0.02), 0 0 0 0.5px rgb(0 0 0 / 0.08);
     --shadow-popover:
@@ -117,61 +177,7 @@
       0 0 0 0.5px rgb(0 0 0 / 0.12);
     --shadow-drag:
       0 8px 18px rgb(0 0 0 / 0.12), 0 18px 44px rgb(0 0 0 / 0.12), 0 0 0 0.5px rgb(0 0 0 / 0.12);
-
-    --primary-bg: #ffffff;
-    --secondary-bg: #f8f8f8;
-    --text: #333333;
-    --text-light: #666666;
-    --text-lighter: #999999;
-    --border: #e0e0e0;
-    --hover: #f0f0f0;
-    --selected: #e8e8e8;
-    --selection-bg: rgba(173, 214, 255, 0.4);
-
-    --accent: #3b82f6;
-
-    --color-primary-bg: var(--primary-bg);
-    --color-secondary-bg: var(--secondary-bg);
-    --color-text: var(--text);
-    --color-text-light: var(--text-light);
-    --color-text-lighter: var(--text-lighter);
-    --color-border: var(--border);
-    --color-hover: var(--hover);
-    --color-selected: var(--selected);
-    --color-accent: var(--accent);
-    --color-syntax-comment: var(--syntax-comment);
-    --color-syntax-keyword: var(--syntax-keyword);
-    --color-syntax-string: var(--syntax-string);
-    --color-syntax-number: var(--syntax-number);
-    --color-syntax-function: var(--syntax-function);
-    --color-syntax-variable: var(--syntax-variable);
-    --color-syntax-operator: var(--syntax-operator);
-
-    --cursor: #1a1a1a;
-    --cursor-vim-normal: #3b82f6a6;
-    --cursor-vim-insert: #22c55e;
-
-    --error: #c53030;
-    --success: #10b981;
-    --warning: #d69e2e;
-    --info: #3182ce;
-
-    --git-modified: #d69e2e;
-    --git-modified-staged: #e67e22;
-    --git-added: #28a745;
-    --git-deleted: #dc3545;
-    --git-untracked: #17a2b8;
-    --git-renamed: #6f42c1;
-
-    --syntax-comment: #6a737d;
-    --syntax-keyword: #d73a49;
-    --syntax-string: #032f62;
-    --syntax-number: #005cc5;
-    --syntax-function: #6f42c1;
-    --syntax-variable: #e36209;
-    --syntax-tag: #22863a;
-    --syntax-attribute: #6f42c1;
-    --syntax-punctuation: #24292e;
+    --shadow-editor-sticky: 0 8px 16px -14px rgb(0 0 0 / 0.28);
 
     --symbol-function: var(--syntax-function);
     --symbol-type: var(--syntax-type, var(--syntax-tag));
@@ -180,110 +186,48 @@
     --symbol-variable: var(--syntax-property, var(--syntax-variable));
     --symbol-property: var(--syntax-string);
     --symbol-type-parameter: var(--syntax-operator, var(--syntax-attribute));
-
-    --terminal-black: #24292e;
-    --terminal-red: #d73a49;
-    --terminal-green: #22863a;
-    --terminal-yellow: #e36209;
-    --terminal-blue: #005cc5;
-    --terminal-magenta: #6f42c1;
-    --terminal-cyan: #032f62;
-    --terminal-white: #666666;
-    --terminal-bright-black: #6a737d;
-    --terminal-bright-red: #c53030;
-    --terminal-bright-green: #28a745;
-    --terminal-bright-yellow: #d69e2e;
-    --terminal-bright-blue: #3182ce;
-    --terminal-bright-magenta: #8b5cf6;
-    --terminal-bright-cyan: #0891b2;
-    --terminal-bright-white: #333333;
   }
 
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --primary-bg: #1a1a1a;
-      --secondary-bg: #2a2a2a;
-      --text: #e5e5e5;
-      --text-light: #b3b3b3;
-      --text-lighter: #808080;
-      --border: #404040;
-      --hover: #333333;
-      --selected: #404040;
-      --selection-bg: rgba(38, 79, 120, 0.6);
+  html.platform-macos {
+    --athas-title-bar-height: 2.125rem;
+    --athas-title-bar-leading-inset: 4.75rem;
+  }
 
-      --accent: #60a5fa;
+  :root[data-increase-contrast="true"] {
+    --app-muted-foreground: color-mix(in srgb, var(--muted-foreground) 70%, var(--foreground) 30%);
+    --app-subtle-foreground: color-mix(
+      in srgb,
+      var(--subtle-foreground) 60%,
+      var(--foreground) 40%
+    );
+    --border: color-mix(in srgb, var(--border) 55%, var(--foreground) 45%);
+    --border-strong: color-mix(in srgb, var(--border) 25%, var(--foreground) 75%);
+  }
 
-      --color-primary-bg: var(--primary-bg);
-      --color-secondary-bg: var(--secondary-bg);
-      --color-text: var(--text);
-      --color-text-light: var(--text-light);
-      --color-text-lighter: var(--text-lighter);
-      --color-border: var(--border);
-      --color-hover: var(--hover);
-      --color-selected: var(--selected);
-      --color-accent: var(--accent);
-      --color-syntax-comment: var(--syntax-comment);
-      --color-syntax-keyword: var(--syntax-keyword);
-      --color-syntax-string: var(--syntax-string);
-      --color-syntax-number: var(--syntax-number);
-      --color-syntax-function: var(--syntax-function);
-      --color-syntax-variable: var(--syntax-variable);
-      --color-syntax-operator: var(--syntax-operator);
+  :root[data-differentiate-without-color="true"]
+    :is([aria-current="page"], [aria-selected="true"], [data-active="true"]) {
+    outline: 1px solid var(--border-strong);
+    outline-offset: -1px;
+  }
 
-      --cursor: #e5e5e5;
-      --cursor-vim-normal: #3b82f6a6;
-      --cursor-vim-insert: #22c55e;
+  .athas-sidebar-rail {
+    --athas-sidebar-rail-foreground: var(--muted-foreground);
+    --subtle-foreground: var(--athas-sidebar-rail-foreground);
+  }
 
-      --error: #f87171;
-      --success: #10b981;
-      --warning: #fbbf24;
-      --info: #60a5fa;
-
-      --git-modified: #fbbf24;
-      --git-modified-staged: #f59e0b;
-      --git-added: #10b981;
-      --git-deleted: #ef4444;
-      --git-untracked: #06b6d4;
-      --git-renamed: #8b5cf6;
-
-      --syntax-comment: #8b949e;
-      --syntax-keyword: #ff7b72;
-      --syntax-string: #a5d6ff;
-      --syntax-number: #79c0ff;
-      --syntax-function: #d2a8ff;
-      --syntax-variable: #ffa657;
-      --syntax-tag: #7ee787;
-      --syntax-attribute: #d2a8ff;
-      --syntax-punctuation: #b3b3b3;
-
-      --terminal-black: #1a1a1a;
-      --terminal-red: #ff7b72;
-      --terminal-green: #7ee787;
-      --terminal-yellow: #ffa657;
-      --terminal-blue: #79c0ff;
-      --terminal-magenta: #d2a8ff;
-      --terminal-cyan: #a5d6ff;
-      --terminal-white: #b3b3b3;
-      --terminal-bright-black: #8b949e;
-      --terminal-bright-red: #f87171;
-      --terminal-bright-green: #86efac;
-      --terminal-bright-yellow: #fbbf24;
-      --terminal-bright-blue: #60a5fa;
-      --terminal-bright-magenta: #c084fc;
-      --terminal-bright-cyan: #67e8f9;
-      --terminal-bright-white: #e5e5e5;
-      --shadow-card:
-        0 1px 2px rgb(0 0 0 / 0.24), 0 2px 4px rgb(0 0 0 / 0.18), 0 0 0 0.5px rgb(255 255 255 / 0.1);
-      --shadow-popover:
-        0 8px 16px rgb(0 0 0 / 0.26), 0 16px 32px rgb(0 0 0 / 0.22), 0 2px 4px rgb(0 0 0 / 0.22),
-        0 0 0 0.5px rgb(255 255 255 / 0.1);
-      --shadow-dialog:
-        0 8px 16px rgb(0 0 0 / 0.3), 0 24px 56px rgb(0 0 0 / 0.36), 0 2px 6px rgb(0 0 0 / 0.24),
-        0 0 0 0.5px rgb(255 255 255 / 0.12);
-      --shadow-drag:
-        0 8px 18px rgb(0 0 0 / 0.36), 0 18px 44px rgb(0 0 0 / 0.34),
-        0 0 0 0.5px rgb(255 255 255 / 0.12);
-    }
+  :root[data-theme-type="dark"] {
+    --shadow-card:
+      0 1px 2px rgb(0 0 0 / 0.24), 0 2px 4px rgb(0 0 0 / 0.18), 0 0 0 0.5px rgb(255 255 255 / 0.1);
+    --shadow-popover:
+      0 8px 16px rgb(0 0 0 / 0.26), 0 16px 32px rgb(0 0 0 / 0.22), 0 2px 4px rgb(0 0 0 / 0.22),
+      0 0 0 0.5px rgb(255 255 255 / 0.1);
+    --shadow-dialog:
+      0 8px 16px rgb(0 0 0 / 0.3), 0 24px 56px rgb(0 0 0 / 0.36), 0 2px 6px rgb(0 0 0 / 0.24),
+      0 0 0 0.5px rgb(255 255 255 / 0.12);
+    --shadow-drag:
+      0 8px 18px rgb(0 0 0 / 0.36), 0 18px 44px rgb(0 0 0 / 0.34),
+      0 0 0 0.5px rgb(255 255 255 / 0.12);
+    --shadow-editor-sticky: 0 10px 20px -16px rgb(0 0 0 / 0.72);
   }
 
   html {

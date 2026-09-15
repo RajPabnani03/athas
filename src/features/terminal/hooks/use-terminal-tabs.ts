@@ -1,250 +1,28 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect } from "react";
 import { useProjectStore } from "@/features/window/stores/project.store";
-import type {
-  PersistedTerminal,
-  Terminal,
-  TerminalAction,
-  TerminalState,
-} from "@/features/terminal/types/terminal.types";
+import type { SplitPlacement } from "@/features/panes/types/pane.types";
+import type { Terminal, TerminalSplitDirection } from "@/features/terminal/types/terminal.types";
 import { parseRemotePath } from "@/features/remote/utils/remote-path";
 import {
-  dedupePersistedTerminals,
-  loadWorkspaceTerminalsFromStorage,
-  saveWorkspaceTerminalsToStorage,
-} from "@/features/terminal/lib/terminal-session-storage";
-
-const generateTerminalId = (name: string): string => {
-  return `terminal_${name.replace(/[^a-zA-Z0-9]/g, "_")}_${Date.now()}`;
-};
-
-const terminalReducer = (state: TerminalState, action: TerminalAction): TerminalState => {
-  switch (action.type) {
-    case "CREATE_TERMINAL": {
-      const {
-        name,
-        currentDirectory,
-        shell,
-        id,
-        remoteConnectionId,
-        profileId,
-        initialCommand,
-        customName,
-      } = action.payload;
-      if (id && state.terminals.some((terminal) => terminal.id === id)) {
-        return {
-          terminals: state.terminals.map((terminal) => ({
-            ...terminal,
-            isActive: terminal.id === id,
-          })),
-          activeTerminalId: id,
-        };
-      }
-
-      // Generate a unique name if needed
-      const existingNames = state.terminals.map((t) => t.name);
-      let terminalName = name;
-      let counter = 0;
-      while (existingNames.includes(terminalName)) {
-        counter++;
-        terminalName = `${name} (${counter})`;
-      }
-
-      const newTerminal: Terminal = {
-        id: id || generateTerminalId(terminalName),
-        name: terminalName,
-        currentDirectory,
-        isActive: true,
-        isPinned: false,
-        shell,
-        profileId,
-        initialCommand,
-        remoteConnectionId,
-        customName: customName ?? false,
-        createdAt: new Date(),
-        lastActivity: new Date(),
-      };
-
-      return {
-        terminals: state.terminals
-          .map((terminal) => ({ ...terminal, isActive: false }))
-          .concat(newTerminal),
-        activeTerminalId: newTerminal.id,
-      };
-    }
-
-    case "CLOSE_TERMINAL": {
-      const { id } = action.payload;
-      const terminalIndex = state.terminals.findIndex((terminal) => terminal.id === id);
-
-      if (terminalIndex === -1) return state;
-
-      const newTerminals = state.terminals.filter((terminal) => terminal.id !== id);
-
-      // If we're closing the active terminal, switch to another one
-      let newActiveTerminalId = state.activeTerminalId;
-      if (state.activeTerminalId === id) {
-        if (newTerminals.length > 0) {
-          // Switch to the next terminal, or previous if we were at the end
-          const nextIndex = terminalIndex < newTerminals.length ? terminalIndex : terminalIndex - 1;
-          newActiveTerminalId = newTerminals[nextIndex]?.id || null;
-        } else {
-          newActiveTerminalId = null;
-        }
-      }
-
-      // Also clean up any terminals that were split with the closed terminal
-      const cleanedTerminals = newTerminals.map((terminal) => {
-        if (terminal.splitWithId === id) {
-          // Remove split mode if the paired terminal is being closed
-          return {
-            ...terminal,
-            splitMode: false,
-            splitWithId: undefined,
-            isActive: terminal.id === newActiveTerminalId,
-          };
-        }
-        return {
-          ...terminal,
-          isActive: terminal.id === newActiveTerminalId,
-        };
-      });
-
-      return {
-        terminals: cleanedTerminals,
-        activeTerminalId: newActiveTerminalId,
-      };
-    }
-
-    case "SET_ACTIVE_TERMINAL": {
-      const { id } = action.payload;
-      return {
-        ...state,
-        activeTerminalId: id,
-        terminals: state.terminals.map((terminal) => ({
-          ...terminal,
-          isActive: terminal.id === id,
-        })),
-      };
-    }
-
-    case "UPDATE_TERMINAL_NAME": {
-      const { id, name } = action.payload;
-      return {
-        ...state,
-        terminals: state.terminals.map((terminal) =>
-          terminal.id === id ? { ...terminal, name, customName: true } : terminal,
-        ),
-      };
-    }
-
-    case "UPDATE_TERMINAL_DIRECTORY": {
-      const { id, currentDirectory } = action.payload;
-      return {
-        ...state,
-        terminals: state.terminals.map((terminal) =>
-          terminal.id === id
-            ? { ...terminal, currentDirectory, lastActivity: new Date() }
-            : terminal,
-        ),
-      };
-    }
-
-    case "UPDATE_TERMINAL_ACTIVITY": {
-      const { id } = action.payload;
-      return {
-        ...state,
-        terminals: state.terminals.map((terminal) =>
-          terminal.id === id ? { ...terminal, lastActivity: new Date() } : terminal,
-        ),
-      };
-    }
-
-    case "PIN_TERMINAL": {
-      const { id, isPinned } = action.payload;
-      return {
-        ...state,
-        terminals: state.terminals.map((terminal) =>
-          terminal.id === id ? { ...terminal, isPinned } : terminal,
-        ),
-      };
-    }
-
-    case "REORDER_TERMINALS": {
-      const { fromIndex, toIndex } = action.payload;
-      const newTerminals = [...state.terminals];
-      const [movedTerminal] = newTerminals.splice(fromIndex, 1);
-      newTerminals.splice(toIndex, 0, movedTerminal);
-
-      return {
-        ...state,
-        terminals: newTerminals,
-      };
-    }
-
-    case "SET_TERMINAL_SPLIT_MODE": {
-      const { id, splitMode, splitWithId } = action.payload;
-      return {
-        ...state,
-        terminals: state.terminals.map((terminal) =>
-          terminal.id === id ? { ...terminal, splitMode, splitWithId } : terminal,
-        ),
-      };
-    }
-
-    case "RESET_TERMINALS": {
-      return {
-        terminals: [],
-        activeTerminalId: null,
-      };
-    }
-
-    case "RESTORE_TERMINALS": {
-      const { terminals } = action.payload;
-      const newTerminals: Terminal[] = dedupePersistedTerminals(terminals).map((pt) => ({
-        id: pt.id,
-        name: pt.name,
-        currentDirectory: pt.currentDirectory,
-        isActive: false,
-        isPinned: pt.isPinned,
-        shell: pt.shell,
-        profileId: pt.profileId,
-        customName: pt.customName ?? false,
-        remoteConnectionId: pt.remoteConnectionId,
-        createdAt: new Date(),
-        lastActivity: new Date(),
-      }));
-
-      if (newTerminals.length > 0) {
-        newTerminals[0].isActive = true;
-      }
-
-      return {
-        terminals: newTerminals,
-        activeTerminalId: newTerminals.length > 0 ? newTerminals[0].id : null,
-      };
-    }
-
-    default:
-      return state;
-  }
-};
+  generateTerminalId,
+  useTerminalTabsStore,
+} from "@/features/terminal/stores/terminal-tabs.store";
+import { workspaceSessionRepository } from "@/features/workspace/persistence/workspace-session-repository";
 
 export const useTerminalTabs = () => {
   const rootFolderPath = useProjectStore((state) => state.rootFolderPath);
-  const rootFolderPathRef = useRef(rootFolderPath);
-  const [state, dispatch] = useReducer(terminalReducer, {
-    terminals: [],
-    activeTerminalId: null,
-  });
-
-  useEffect(() => {
-    rootFolderPathRef.current = rootFolderPath;
-  }, [rootFolderPath]);
+  const terminals = useTerminalTabsStore((state) => state.terminals);
+  const activeTerminalId = useTerminalTabsStore((state) => state.activeTerminalId);
+  const layouts = useTerminalTabsStore((state) => state.layouts);
+  const hasHydrated = useTerminalTabsStore((state) => state.hasHydrated);
+  const dispatch = useTerminalTabsStore((state) => state.actions.dispatch);
 
   // Save terminals to storage whenever state changes
   useEffect(() => {
-    saveWorkspaceTerminalsToStorage(rootFolderPathRef.current, state.terminals);
-  }, [state.terminals]);
+    if (rootFolderPath && hasHydrated) {
+      workspaceSessionRepository.saveTerminals(rootFolderPath, terminals, layouts);
+    }
+  }, [rootFolderPath, hasHydrated, terminals, layouts]);
 
   // Listen for global workspace reset event
   useEffect(() => {
@@ -254,18 +32,10 @@ export const useTerminalTabs = () => {
 
     window.addEventListener("reset-workspace", handleResetWorkspace);
 
-    const handleRestoreTerminals = (event: Event) => {
-      const customEvent = event as CustomEvent<{ terminals: PersistedTerminal[] }>;
-      dispatch({ type: "RESTORE_TERMINALS", payload: { terminals: customEvent.detail.terminals } });
-    };
-
-    window.addEventListener("restore-terminals", handleRestoreTerminals);
-
     return () => {
       window.removeEventListener("reset-workspace", handleResetWorkspace);
-      window.removeEventListener("restore-terminals", handleRestoreTerminals);
     };
-  }, []);
+  }, [dispatch]);
 
   const createTerminal = useCallback(
     ({
@@ -275,6 +45,7 @@ export const useTerminalTabs = () => {
       remoteConnectionId,
       profileId,
       initialCommand,
+      environment,
     }: {
       name: string;
       currentDirectory: string;
@@ -282,6 +53,7 @@ export const useTerminalTabs = () => {
       remoteConnectionId?: string;
       profileId?: string;
       initialCommand?: string;
+      environment?: Record<string, string>;
     }): string => {
       // Generate the terminal ID here so we can return it
       const terminalId = generateTerminalId(name);
@@ -297,107 +69,131 @@ export const useTerminalTabs = () => {
           remoteConnectionId: resolvedRemoteConnectionId,
           profileId,
           initialCommand,
+          environment,
         },
       });
       return terminalId;
     },
-    [],
+    [dispatch],
   );
 
-  const closeTerminal = useCallback((id: string) => {
-    dispatch({ type: "CLOSE_TERMINAL", payload: { id } });
-  }, []);
+  const closeTerminal = useCallback(
+    (id: string) => {
+      dispatch({ type: "CLOSE_TERMINAL", payload: { id } });
+    },
+    [dispatch],
+  );
 
-  const setActiveTerminal = useCallback((id: string) => {
-    dispatch({ type: "SET_ACTIVE_TERMINAL", payload: { id } });
-  }, []);
+  const setActiveTerminal = useCallback(
+    (id: string) => {
+      dispatch({ type: "SET_ACTIVE_TERMINAL", payload: { id } });
+    },
+    [dispatch],
+  );
 
-  const updateTerminalName = useCallback((id: string, name: string) => {
-    dispatch({ type: "UPDATE_TERMINAL_NAME", payload: { id, name } });
-  }, []);
+  const updateTerminalName = useCallback(
+    (id: string, name: string) => {
+      dispatch({ type: "UPDATE_TERMINAL_NAME", payload: { id, name } });
+    },
+    [dispatch],
+  );
 
-  const updateTerminalDirectory = useCallback((id: string, currentDirectory: string) => {
-    dispatch({ type: "UPDATE_TERMINAL_DIRECTORY", payload: { id, currentDirectory } });
-  }, []);
+  const updateTerminalDirectory = useCallback(
+    (id: string, currentDirectory: string) => {
+      dispatch({ type: "UPDATE_TERMINAL_DIRECTORY", payload: { id, currentDirectory } });
+    },
+    [dispatch],
+  );
 
-  const updateTerminalActivity = useCallback((id: string) => {
-    dispatch({ type: "UPDATE_TERMINAL_ACTIVITY", payload: { id } });
-  }, []);
+  const updateTerminalActivity = useCallback(
+    (id: string) => {
+      dispatch({ type: "UPDATE_TERMINAL_ACTIVITY", payload: { id } });
+    },
+    [dispatch],
+  );
 
-  const pinTerminal = useCallback((id: string, isPinned: boolean) => {
-    dispatch({ type: "PIN_TERMINAL", payload: { id, isPinned } });
-  }, []);
+  const pinTerminal = useCallback(
+    (id: string, isPinned: boolean) => {
+      dispatch({ type: "PIN_TERMINAL", payload: { id, isPinned } });
+    },
+    [dispatch],
+  );
 
-  const reorderTerminals = useCallback((fromIndex: number, toIndex: number) => {
-    dispatch({ type: "REORDER_TERMINALS", payload: { fromIndex, toIndex } });
-  }, []);
+  const reorderTerminals = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      dispatch({ type: "REORDER_TERMINALS", payload: { fromIndex, toIndex } });
+    },
+    [dispatch],
+  );
 
   const getActiveTerminal = useCallback((): Terminal | null => {
-    return state.terminals.find((terminal) => terminal.id === state.activeTerminalId) || null;
-  }, [state.terminals, state.activeTerminalId]);
+    return terminals.find((terminal) => terminal.id === activeTerminalId) || null;
+  }, [terminals, activeTerminalId]);
 
   const switchToNextTerminal = useCallback(() => {
-    if (state.terminals.length <= 1) return;
+    if (terminals.length <= 1) return;
 
-    const currentIndex = state.terminals.findIndex(
-      (terminal) => terminal.id === state.activeTerminalId,
-    );
-    const nextIndex = (currentIndex + 1) % state.terminals.length;
-    const nextTerminal = state.terminals[nextIndex];
+    const currentIndex = terminals.findIndex((terminal) => terminal.id === activeTerminalId);
+    const nextIndex = (currentIndex + 1) % terminals.length;
+    const nextTerminal = terminals[nextIndex];
 
     if (nextTerminal) {
       setActiveTerminal(nextTerminal.id);
     }
-  }, [state.terminals, state.activeTerminalId, setActiveTerminal]);
+  }, [terminals, activeTerminalId, setActiveTerminal]);
 
   const switchToPrevTerminal = useCallback(() => {
-    if (state.terminals.length <= 1) return;
+    if (terminals.length <= 1) return;
 
-    const currentIndex = state.terminals.findIndex(
-      (terminal) => terminal.id === state.activeTerminalId,
-    );
-    const prevIndex = currentIndex === 0 ? state.terminals.length - 1 : currentIndex - 1;
-    const prevTerminal = state.terminals[prevIndex];
+    const currentIndex = terminals.findIndex((terminal) => terminal.id === activeTerminalId);
+    const prevIndex = currentIndex === 0 ? terminals.length - 1 : currentIndex - 1;
+    const prevTerminal = terminals[prevIndex];
 
     if (prevTerminal) {
       setActiveTerminal(prevTerminal.id);
     }
-  }, [state.terminals, state.activeTerminalId, setActiveTerminal]);
+  }, [terminals, activeTerminalId, setActiveTerminal]);
 
-  const setTerminalSplitMode = useCallback(
-    (id: string, splitMode: boolean, splitWithId?: string) => {
-      dispatch({ type: "SET_TERMINAL_SPLIT_MODE", payload: { id, splitMode, splitWithId } });
+  const splitTerminal = useCallback(
+    (
+      terminalId: string,
+      newTerminalId: string,
+      direction: TerminalSplitDirection,
+      placement?: SplitPlacement,
+    ) => {
+      dispatch({
+        type: "SPLIT_TERMINAL",
+        payload: { terminalId, newTerminalId, direction, placement },
+      });
     },
-    [],
+    [dispatch],
   );
 
-  const getPersistedTerminals = useCallback((): PersistedTerminal[] => {
-    return loadWorkspaceTerminalsFromStorage(rootFolderPath);
-  }, [rootFolderPath]);
+  const unsplitTerminal = useCallback(
+    (terminalId: string) => {
+      dispatch({ type: "UNSPLIT_TERMINAL", payload: { terminalId } });
+    },
+    [dispatch],
+  );
 
-  const restoreTerminalsFromPersisted = useCallback((persistedTerminals: PersistedTerminal[]) => {
-    dedupePersistedTerminals(persistedTerminals).forEach((pt) => {
-      dispatch({
-        type: "CREATE_TERMINAL",
-        payload: {
-          name: pt.name,
-          currentDirectory: pt.currentDirectory,
-          shell: pt.shell,
-          id: pt.id,
-          remoteConnectionId: pt.remoteConnectionId,
-          profileId: pt.profileId,
-          customName: pt.customName,
-        },
-      });
-      if (pt.isPinned) {
-        dispatch({ type: "PIN_TERMINAL", payload: { id: pt.id, isPinned: true } });
-      }
-    });
-  }, []);
+  const resizeTerminalSplit = useCallback(
+    (splitId: string, index: number, sizes: [number, number]) => {
+      dispatch({ type: "RESIZE_TERMINAL_SPLIT", payload: { splitId, index, sizes } });
+    },
+    [dispatch],
+  );
+
+  const distributeTerminalSplit = useCallback(
+    (splitId: string) => {
+      dispatch({ type: "DISTRIBUTE_TERMINAL_SPLIT", payload: { splitId } });
+    },
+    [dispatch],
+  );
 
   return {
-    terminals: state.terminals,
-    activeTerminalId: state.activeTerminalId,
+    terminals,
+    activeTerminalId,
+    layouts,
     createTerminal,
     closeTerminal,
     setActiveTerminal,
@@ -409,8 +205,9 @@ export const useTerminalTabs = () => {
     getActiveTerminal,
     switchToNextTerminal,
     switchToPrevTerminal,
-    setTerminalSplitMode,
-    getPersistedTerminals,
-    restoreTerminalsFromPersisted,
+    splitTerminal,
+    unsplitTerminal,
+    resizeTerminalSplit,
+    distributeTerminalSplit,
   };
 };

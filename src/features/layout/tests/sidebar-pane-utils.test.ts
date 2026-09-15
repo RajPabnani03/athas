@@ -1,10 +1,28 @@
 import { describe, expect, test } from "vite-plus/test";
 import {
   getActiveSidebarView,
-  getSidebarPositionForTrigger,
+  getSidebarPaneLevel,
+  isSidebarViewAvailable,
   resolveSidebarPaneClick,
-  resolveSidebarPaneTrigger,
+  shouldOpenSidebarSubview,
 } from "../utils/sidebar-pane-utils";
+
+describe("getSidebarPaneLevel", () => {
+  test("keeps ordinary workbench views in the primary sidebar", () => {
+    expect(getSidebarPaneLevel("files")).toBe("primary");
+  });
+});
+
+describe("isSidebarViewAvailable", () => {
+  test("shows Outline only for an active editor tab", () => {
+    expect(isSidebarViewAvailable("outline", true)).toBe(true);
+    expect(isSidebarViewAvailable("outline", false)).toBe(false);
+  });
+
+  test("keeps other sidebar views available without an active editor", () => {
+    expect(isSidebarViewAvailable("databases", false)).toBe(true);
+  });
+});
 
 describe("getActiveSidebarView", () => {
   test("defaults to files when no alternate pane is active", () => {
@@ -52,6 +70,26 @@ describe("getActiveSidebarView", () => {
         activeSidebarView: "collaboration",
       }),
     ).toBe("collaboration");
+  });
+
+  test("returns custom views when the module sidebar is active", () => {
+    expect(
+      getActiveSidebarView({
+        isGitViewActive: false,
+        isGitHubPRsViewActive: false,
+        activeSidebarView: "views",
+      }),
+    ).toBe("views");
+  });
+
+  test("falls back to files for the removed settings sidebar", () => {
+    expect(
+      getActiveSidebarView({
+        isGitViewActive: false,
+        isGitHubPRsViewActive: false,
+        activeSidebarView: "settings",
+      }),
+    ).toBe("files");
   });
 });
 
@@ -153,82 +191,32 @@ describe("resolveSidebarPaneClick", () => {
       nextView: "collaboration",
     });
   });
-});
 
-describe("getSidebarPositionForTrigger", () => {
-  test("keeps the current sidebar position by default", () => {
-    expect(getSidebarPositionForTrigger("right")).toBe("right");
-  });
-
-  test("uses an explicit trigger side when provided", () => {
-    expect(getSidebarPositionForTrigger("right", "left")).toBe("left");
-  });
-});
-
-describe("resolveSidebarPaneTrigger", () => {
-  test("moves a visible sidebar to the trigger side without closing the active pane", () => {
+  test("opens custom views as a primary secondary-sidebar view", () => {
     expect(
-      resolveSidebarPaneTrigger(
+      resolveSidebarPaneClick(
         {
           isSidebarVisible: true,
           isGitViewActive: false,
           isGitHubPRsViewActive: false,
           activeSidebarView: "files",
         },
-        "files",
-        {
-          currentPosition: "right",
-          triggerSide: "left",
-        },
+        "views",
       ),
     ).toEqual({
       nextIsSidebarVisible: true,
-      nextView: "files",
-      nextPosition: "left",
+      nextView: "views",
     });
   });
+});
 
-  test("still toggles the active pane closed when the trigger is on the current side", () => {
-    expect(
-      resolveSidebarPaneTrigger(
-        {
-          isSidebarVisible: true,
-          isGitViewActive: false,
-          isGitHubPRsViewActive: false,
-          activeSidebarView: "files",
-        },
-        "files",
-        {
-          currentPosition: "left",
-          triggerSide: "left",
-        },
-      ),
-    ).toEqual({
-      nextIsSidebarVisible: false,
-      nextView: "files",
-      nextPosition: "left",
-    });
+describe("shouldOpenSidebarSubview", () => {
+  test("does not toggle an already open parent pane when selecting a child section", () => {
+    expect(shouldOpenSidebarSubview(true, true)).toBe(false);
   });
 
-  test("opens the clicked pane on a right-side utility trigger", () => {
-    expect(
-      resolveSidebarPaneTrigger(
-        {
-          isSidebarVisible: true,
-          isGitViewActive: false,
-          isGitHubPRsViewActive: false,
-          activeSidebarView: "files",
-        },
-        "databases",
-        {
-          currentPosition: "left",
-          triggerSide: "right",
-        },
-      ),
-    ).toEqual({
-      nextIsSidebarVisible: true,
-      nextView: "databases",
-      nextPosition: "right",
-    });
+  test("opens the parent pane when it is hidden or another pane is active", () => {
+    expect(shouldOpenSidebarSubview(false, true)).toBe(true);
+    expect(shouldOpenSidebarSubview(true, false)).toBe(true);
   });
 });

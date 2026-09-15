@@ -1,22 +1,27 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { FolderOpenIcon as FolderOpen, PlugsConnectedIcon as PlugZap } from "@phosphor-icons/react";
+import { FolderOpenIcon, PlugsConnectedIcon } from "@/ui/icons";
 import { useEffect, useRef, useState } from "react";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { useExtensionStore } from "@/extensions/registry/extension-store";
 import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
 import { Button } from "@/ui/button";
-import Checkbox from "@/ui/checkbox";
+import { Checkbox } from "@/ui/checkbox";
 import Dialog from "@/ui/dialog";
+import { Field, FieldLabel } from "@/ui/field";
 import Input from "@/ui/input";
-import { LoadingIndicator } from "@/ui/loading";
+import { Marker, MarkerContent } from "@/ui/marker";
+import { Spinner } from "@/ui/spinner";
 import Select from "@/ui/select";
-import { Tab, TabsList } from "@/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/ui/tabs";
 import { normalizeDatabaseError } from "../../lib/database-errors";
 import type { DatabaseType } from "../../types/provider.types";
 import { PROVIDER_REGISTRY } from "../../providers/provider-registry";
 import { useConnectionStore } from "../../stores/connection.store";
-import { buildSavedConnectionConfig } from "./connection-config";
-import { getInstalledDatabaseTypes, validateConnectionInput } from "./connection-validation";
+import { buildSavedConnectionConfig } from "../../utils/connection-config";
+import {
+  getInstalledDatabaseTypes,
+  validateConnectionInput,
+} from "../../utils/connection-validation";
 
 interface ConnectionDialogProps {
   isOpen: boolean;
@@ -24,7 +29,7 @@ interface ConnectionDialogProps {
 }
 
 export function ConnectionDialog({ isOpen, onClose }: ConnectionDialogProps) {
-  const { actions } = useConnectionStore();
+  const actions = useConnectionStore.use.actions();
   const rootFolderPath = useFileSystemStore((state) => state.rootFolderPath);
   const availableExtensions = useExtensionStore.use.availableExtensions();
   const [mode, setMode] = useState<"form" | "string">("form");
@@ -43,16 +48,6 @@ export function ConnectionDialog({ isOpen, onClose }: ConnectionDialogProps) {
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<boolean | null>(null);
   const connectionFeedbackVersionRef = useRef(0);
-
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen) onClose();
-    };
-    if (isOpen) {
-      document.addEventListener("keydown", handleEscape);
-      return () => document.removeEventListener("keydown", handleEscape);
-    }
-  }, [isOpen, onClose]);
 
   const installedDbTypes = getInstalledDatabaseTypes(availableExtensions);
 
@@ -213,13 +208,7 @@ export function ConnectionDialog({ isOpen, onClose }: ConnectionDialogProps) {
     <Dialog
       onClose={onClose}
       title="Connect to Database"
-      headerBorder={false}
-      footerBorder={false}
-      classNames={{
-        backdrop: "bg-black/40 backdrop-blur-[2px]",
-        modal: "max-w-md",
-        content: "space-y-4",
-      }}
+      contentLayout="form"
       footer={
         <>
           {installedDbTypes.length > 0 && !isFileBased && (
@@ -228,11 +217,9 @@ export function ConnectionDialog({ isOpen, onClose }: ConnectionDialogProps) {
               variant="ghost"
               onClick={handleTest}
               disabled={isTesting || isConnecting}
-              className="gap-1.5"
               aria-label="Test connection"
-              compact
             >
-              {isTesting ? <LoadingIndicator label="Testing" compact /> : <PlugZap />}
+              {isTesting ? <Spinner label="Testing" compact /> : <PlugsConnectedIcon />}
               Test
             </Button>
           )}
@@ -240,19 +227,17 @@ export function ConnectionDialog({ isOpen, onClose }: ConnectionDialogProps) {
             type="button"
             onClick={handleConnect}
             disabled={installedDbTypes.length === 0 || isConnecting || validationError !== null}
-            className="gap-1.5"
             aria-label={isFileBased ? "Open database" : "Connect"}
-            compact
           >
-            {isConnecting && <LoadingIndicator label="Connecting" compact />}
+            {isConnecting && <Spinner label="Connecting" compact />}
             {isFileBased ? "Open Database" : "Connect"}
           </Button>
         </>
       }
     >
       {installedDbTypes.length === 0 ? (
-        <div className="rounded-lg border border-border bg-secondary-bg/35 px-3 py-2 text-text-lighter ui-text-sm">
-          Install a database provider from Settings &gt; Extensions to connect to databases.
+        <div className="rounded-lg border border-border bg-surface/35 px-3 py-2 text-subtle-foreground ui-text-sm">
+          Install a database provider from Settings &gt; Integrations to connect to databases.
         </div>
       ) : null}
 
@@ -264,178 +249,134 @@ export function ConnectionDialog({ isOpen, onClose }: ConnectionDialogProps) {
           label: PROVIDER_REGISTRY[type].label,
         }))}
         variant="default"
-        className="w-full"
-        menuClassName="z-[10040]"
+        width="full"
       />
 
-      <TabsList variant="default" className="grid grid-cols-2">
-        <Tab
-          role="tab"
-          aria-selected={mode === "form"}
-          aria-label="Form mode"
-          isActive={mode === "form"}
-          size="sm"
-          variant="default"
-          onClick={() => handleModeChange("form")}
-        >
-          Form
-        </Tab>
-        <Tab
-          role="tab"
-          aria-selected={mode === "string"}
-          aria-label="Connection string mode"
-          isActive={mode === "string"}
-          size="sm"
-          variant="default"
-          onClick={() => !isFileBased && handleModeChange("string")}
-          className={isFileBased ? "pointer-events-none opacity-50" : undefined}
-        >
-          Connection String
-        </Tab>
-      </TabsList>
+      <Tabs value={mode} onValueChange={(value) => handleModeChange(value as "form" | "string")}>
+        <TabsList variant="default" className="grid w-full grid-cols-2">
+          <TabsTrigger value="form" aria-label="Form mode">
+            Form
+          </TabsTrigger>
+          <TabsTrigger value="string" aria-label="Connection string mode" disabled={isFileBased}>
+            Connection String
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {mode === "form" ? (
         <div className="space-y-3">
-          <div className="space-y-1">
-            <label htmlFor="db-conn-name" className="ui-font block ui-text-sm text-text">
-              Connection Name
-            </label>
+          <Field>
+            <FieldLabel htmlFor="db-conn-name">Connection Name</FieldLabel>
             <Input
               id="db-conn-name"
-              className="w-full"
               placeholder={`My ${PROVIDER_REGISTRY[dbType].label}`}
               value={name}
               onChange={(e) => updateConnectionField(setName, e.target.value)}
             />
-          </div>
+          </Field>
 
           {isFileBased ? (
-            <div className="space-y-1">
-              <label htmlFor="db-conn-file" className="ui-font block ui-text-sm text-text">
-                Database File
-              </label>
+            <Field>
+              <FieldLabel htmlFor="db-conn-file">Database File</FieldLabel>
               <div className="flex gap-2">
                 <Input
                   id="db-conn-file"
-                  className="w-full"
                   value={filePath}
                   onChange={(e) => updateConnectionField(setFilePath, e.target.value)}
                   placeholder="Select a SQLite database file"
                 />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="gap-1.5"
-                  onClick={handleBrowseDatabaseFile}
-                  compact
-                >
-                  <FolderOpen />
+                <Button type="button" variant="ghost" onClick={handleBrowseDatabaseFile}>
+                  <FolderOpenIcon />
                   Browse
                 </Button>
               </div>
-            </div>
+            </Field>
           ) : (
             <>
               <div className="flex gap-3">
-                <div className="flex-1 space-y-1">
-                  <label htmlFor="db-conn-host" className="ui-font block ui-text-sm text-text">
-                    Host
-                  </label>
+                <Field className="flex-1">
+                  <FieldLabel htmlFor="db-conn-host">Host</FieldLabel>
                   <Input
                     id="db-conn-host"
-                    className="w-full"
                     value={host}
                     onChange={(e) => updateConnectionField(setHost, e.target.value)}
                   />
-                </div>
-                <div className="w-24 space-y-1">
-                  <label htmlFor="db-conn-port" className="ui-font block ui-text-sm text-text">
-                    Port
-                  </label>
+                </Field>
+                <Field className="w-24">
+                  <FieldLabel htmlFor="db-conn-port">Port</FieldLabel>
                   <Input
                     id="db-conn-port"
                     type="number"
-                    className="w-full"
                     value={port}
                     onChange={(e) => updateConnectionField(setPort, Number(e.target.value))}
                   />
-                </div>
+                </Field>
               </div>
               {dbType !== "redis" && (
-                <div className="space-y-1">
-                  <label htmlFor="db-conn-database" className="ui-font block ui-text-sm text-text">
-                    Database
-                  </label>
+                <Field>
+                  <FieldLabel htmlFor="db-conn-database">Database</FieldLabel>
                   <Input
                     id="db-conn-database"
-                    className="w-full"
                     value={database}
                     onChange={(e) => updateConnectionField(setDatabase, e.target.value)}
                   />
-                </div>
+                </Field>
               )}
               <div className="flex gap-3">
-                <div className="flex-1 space-y-1">
-                  <label htmlFor="db-conn-username" className="ui-font block ui-text-sm text-text">
-                    Username
-                  </label>
+                <Field className="flex-1">
+                  <FieldLabel htmlFor="db-conn-username">Username</FieldLabel>
                   <Input
                     id="db-conn-username"
-                    className="w-full"
                     value={username}
                     onChange={(e) => updateConnectionField(setUsername, e.target.value)}
                   />
-                </div>
-                <div className="flex-1 space-y-1">
-                  <label htmlFor="db-conn-password" className="ui-font block ui-text-sm text-text">
-                    Password
-                  </label>
+                </Field>
+                <Field className="flex-1">
+                  <FieldLabel htmlFor="db-conn-password">Password</FieldLabel>
                   <Input
                     id="db-conn-password"
                     type="password"
-                    className="w-full"
                     value={password}
                     onChange={(e) => updateConnectionField(setPassword, e.target.value)}
                   />
-                </div>
+                </Field>
               </div>
-              <label htmlFor="db-conn-save-password" className="flex items-center gap-2">
+              <Field orientation="horizontal">
                 <Checkbox
                   id="db-conn-save-password"
                   checked={saveCredential}
-                  onChange={(checked) => updateConnectionField(setSaveCredential, checked)}
-                  ariaLabel="Save password securely"
+                  onCheckedChange={(checked) => updateConnectionField(setSaveCredential, checked)}
+                  aria-label="Save password securely"
                 />
-                <span className="ui-font text-text-lighter ui-text-xs">Save password securely</span>
-              </label>
+                <FieldLabel htmlFor="db-conn-save-password" className="text-subtle-foreground">
+                  Save password securely
+                </FieldLabel>
+              </Field>
             </>
           )}
         </div>
       ) : (
-        <div className="space-y-1">
-          <label htmlFor="db-conn-string" className="ui-font block ui-text-sm text-text">
-            Connection String
-          </label>
+        <Field>
+          <FieldLabel htmlFor="db-conn-string">Connection String</FieldLabel>
           <Input
             id="db-conn-string"
-            className="w-full"
             placeholder={`${dbType}://user:pass@host:port/database`}
             value={connectionString}
             onChange={(e) => updateConnectionField(setConnectionString, e.target.value)}
           />
-        </div>
+        </Field>
       )}
 
       {error && (
-        <div className="rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-error ui-text-xs">
-          {error}
-        </div>
+        <Marker tone="error">
+          <MarkerContent>{error}</MarkerContent>
+        </Marker>
       )}
 
       {testResult === true && (
-        <div className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-success ui-text-xs">
-          Connection test successful
-        </div>
+        <Marker tone="success">
+          <MarkerContent>Connection test successful</MarkerContent>
+        </Marker>
       )}
     </Dialog>
   );

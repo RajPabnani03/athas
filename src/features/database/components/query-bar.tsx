@@ -1,10 +1,11 @@
-import { MagnifyingGlassIcon as Search, XIcon as X } from "@phosphor-icons/react";
+import { SearchIcon, XIcon } from "@/ui/icons";
 import { type KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { useTokenizer } from "@/features/editor/hooks/use-tokenizer";
 import { Button } from "@/ui/button";
-import Input from "@/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/ui/input-group";
 import Textarea from "@/ui/textarea";
 import { cn } from "@/utils/cn";
+import { databaseCardClassName } from "../utils/database-surface";
 import type { ColumnInfo, TableInfo } from "../types/common.types";
 import {
   applySqlCompletion,
@@ -88,12 +89,12 @@ function SqlEditor({
 
   return (
     <div className="mb-1">
-      <div className="relative h-20 overflow-hidden rounded-lg border border-border/70 bg-secondary-bg/60">
+      <div className={databaseCardClassName("relative h-20 overflow-hidden bg-surface/60")}>
         <pre
           ref={highlightRef}
           aria-hidden="true"
           className={cn(
-            "pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3 py-2 font-mono ui-text-sm leading-5",
+            "pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap wrap-break-word px-3 py-2 font-mono ui-text-sm leading-5",
             disabled && "opacity-60",
           )}
         >
@@ -108,7 +109,7 @@ function SqlEditor({
               ),
             )
           ) : (
-            <span className="text-text-lighter">SELECT * FROM table_name</span>
+            <span className="text-subtle-foreground">SELECT * FROM table_name</span>
           )}
         </pre>
         <Textarea
@@ -145,7 +146,9 @@ function SqlEditor({
             highlightRef.current.scrollTop = event.currentTarget.scrollTop;
             highlightRef.current.scrollLeft = event.currentTarget.scrollLeft;
           }}
-          className="relative h-full resize-none border-0 bg-transparent font-mono ui-text-sm leading-5 text-transparent caret-text placeholder:text-transparent selection:bg-accent/30 focus:ring-0"
+          font="mono"
+          resize="none"
+          className="relative h-full border-0 bg-transparent ui-text-sm leading-5 text-transparent caret-foreground placeholder:text-transparent selection:bg-primary/30 focus:ring-0"
           placeholder="SELECT * FROM table_name"
           spellCheck={false}
           disabled={disabled}
@@ -158,14 +161,13 @@ function SqlEditor({
               key={`${item.detail}-${item.value}`}
               type="button"
               variant="ghost"
-              compact
-              className="h-6 rounded-md border border-border/60 px-2 text-text-lighter"
+              size="chrome"
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => applyCompletion(index)}
               aria-label={`Insert SQL ${item.detail} ${item.label}`}
               tooltip={item.detail}
             >
-              <span className="ui-font ui-text-xs">{item.label}</span>
+              <span className="font-sans ui-text-sm">{item.label}</span>
             </Button>
           ))}
         </div>
@@ -271,7 +273,7 @@ export default function QueryBar({
           tableMeta={tableMeta}
         />
         <div className="flex items-center justify-between gap-2">
-          <div className="ui-font ui-text-xs text-text-lighter">
+          <div className="font-sans ui-text-sm text-subtle-foreground">
             {selectedQuery
               ? "Selection will run"
               : lastQueryExecutionMs !== null && lastQueryExecutionMs !== undefined
@@ -279,11 +281,11 @@ export default function QueryBar({
                 : "Cmd/Ctrl+Enter to run"}
           </div>
           <div className="flex justify-end gap-2">
-            <Button onClick={() => setIsCustomQuery(false)} variant="ghost" compact>
+            <Button onClick={() => setIsCustomQuery(false)} variant="ghost">
               Cancel
             </Button>
             {isCustomQueryLoading && (
-              <Button onClick={cancelCustomQuery} variant="ghost" compact>
+              <Button onClick={cancelCustomQuery} variant="ghost">
                 Stop
               </Button>
             )}
@@ -291,7 +293,6 @@ export default function QueryBar({
               onClick={runQuery}
               variant="default"
               disabled={isLoading || !(selectedQuery || customQuery).trim()}
-              compact
             >
               {selectedQuery ? "Run Selection" : "Execute"}
             </Button>
@@ -304,29 +305,33 @@ export default function QueryBar({
   return (
     <div className="px-3 py-2">
       <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Input
+        <InputGroup className="flex-1">
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput
             value={draftSearchTerm}
             onChange={(e) => setDraftSearchTerm(e.target.value)}
             placeholder="Search..."
-            leftIcon={Search}
           />
           {draftSearchTerm && (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                setDraftSearchTerm("");
-                setSearchTerm("");
-              }}
-              className="-translate-y-1/2 absolute top-1/2 right-1.5 text-text-lighter hover:text-text"
-              aria-label="Clear search"
-              tooltip="Clear search"
-            >
-              <X />
-            </Button>
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setDraftSearchTerm("");
+                  setSearchTerm("");
+                }}
+                aria-label="Clear search"
+                tooltip="Clear search"
+                iconOnly
+              >
+                <XIcon />
+              </InputGroupButton>
+            </InputGroupAddon>
           )}
-        </div>
+        </InputGroup>
       </div>
     </div>
   );

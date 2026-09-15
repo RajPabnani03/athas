@@ -1,13 +1,17 @@
-import {
-  ArrowsClockwiseIcon as ArrowsClockwise,
-  PlusIcon as Plus,
-  TrashIcon as Trash,
-} from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, PlusIcon, TrashIcon } from "@/ui/icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { sendDebugAdapterRequest } from "../services/debug-adapter-service";
 import { useDebuggerStore } from "../stores/debugger.store";
 import type { DebugRequestContext } from "../types/debugger.types";
 import { Button } from "@/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/ui/context-menu";
+import { EmptyState } from "@/ui/empty";
 import Input from "@/ui/input";
 
 interface DebugWatchPanelProps {
@@ -95,32 +99,29 @@ export function DebugWatchPanel({
             }
           }}
           placeholder="Add expression"
-          size="xs"
         />
         <Button
           variant="default"
           tooltip="Add watch"
           disabled={!newExpression.trim()}
           onClick={addExpression}
-          compact
+          iconOnly
         >
-          <Plus />
+          <PlusIcon />
         </Button>
         <Button
           variant="ghost"
           tooltip="Refresh watches"
           disabled={!activeSessionId || !isPaused || watchExpressions.length === 0}
           onClick={evaluateAll}
-          compact
+          iconOnly
         >
-          <ArrowsClockwise />
+          <ArrowsClockwiseIcon />
         </Button>
       </div>
 
       {watchExpressions.length === 0 ? (
-        <div className="px-1 py-3 text-center text-text-lighter ui-text-xs">
-          Add expressions to inspect while paused.
-        </div>
+        <EmptyState layout="sidebar" message="Add expressions to inspect while paused." />
       ) : (
         <div className="space-y-1">
           {watchExpressions.map((watchExpression) => {
@@ -128,40 +129,63 @@ export function DebugWatchPanel({
             const isPending = pendingExpressionIds.has(watchExpression.id);
 
             return (
-              <div
-                key={watchExpression.id}
-                className="group rounded-md border border-border/60 bg-secondary-bg/40 px-2 py-1.5"
-              >
-                <div className="flex items-start gap-2">
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 truncate text-left font-mono ui-text-xs text-text"
+              <ContextMenu key={watchExpression.id}>
+                <ContextMenuTrigger
+                  className="group rounded-lg border border-border/60 bg-surface/40 px-2 py-1.5"
+                  onContextMenu={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-start gap-2">
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 truncate text-left font-mono ui-text-sm text-foreground"
+                      onClick={() =>
+                        void evaluateExpression(watchExpression.id, watchExpression.expression)
+                      }
+                    >
+                      {watchExpression.expression}
+                    </button>
+                    <span className="inline-flex min-w-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+                      <Button
+                        variant="ghost"
+                        tooltip="Remove watch"
+                        onClick={() => debuggerActions.removeWatchExpression(watchExpression.id)}
+                        iconOnly
+                      >
+                        <TrashIcon />
+                      </Button>
+                    </span>
+                  </div>
+                  <div className="mt-1 truncate font-mono ui-text-sm text-subtle-foreground">
+                    {isPending
+                      ? "Evaluating..."
+                      : result?.error
+                        ? result.error
+                        : result?.value || "Not evaluated"}
+                    {result?.type && !result.error ? (
+                      <span className="ml-1 text-subtle-foreground/70">({result.type})</span>
+                    ) : null}
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem
+                    disabled={!activeSessionId || !isPaused}
                     onClick={() =>
                       void evaluateExpression(watchExpression.id, watchExpression.expression)
                     }
                   >
-                    {watchExpression.expression}
-                  </button>
-                  <Button
-                    variant="ghost"
-                    className="opacity-0 group-hover:opacity-100"
-                    tooltip="Remove watch"
+                    <ArrowsClockwiseIcon />
+                    Refresh Watch
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    variant="destructive"
                     onClick={() => debuggerActions.removeWatchExpression(watchExpression.id)}
                   >
-                    <Trash />
-                  </Button>
-                </div>
-                <div className="mt-1 truncate font-mono ui-text-xs text-text-lighter">
-                  {isPending
-                    ? "Evaluating..."
-                    : result?.error
-                      ? result.error
-                      : result?.value || "Not evaluated"}
-                  {result?.type && !result.error ? (
-                    <span className="ml-1 text-text-lighter/70">({result.type})</span>
-                  ) : null}
-                </div>
-              </div>
+                    <TrashIcon />
+                    Remove Watch
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             );
           })}
         </div>

@@ -1,13 +1,25 @@
+import { getProviderAccessFromMap } from "@/features/ai/stores/ai-chat/provider-actions";
+import { isTerminalAgent } from "@/features/ai/lib/terminal-agents";
+import { openTerminalAgent } from "@/features/ai/lib/terminal-agent-terminal";
 import { listen } from "@tauri-apps/api/event";
-import { KeyIcon as KeyRound } from "@phosphor-icons/react";
-import type React from "react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { ProviderApiKeyCommand } from "@/features/ai/components/provider-api-key-command";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { appendChatAcpEvent, type ChatAcpEventInput } from "@/features/ai/lib/acp-event-timeline";
+import {
+  isAcpAuthenticationError,
+  isAcpConfigurationError,
+} from "@/features/ai/lib/acp-authentication";
 import { getChatTitleFromSessionInfo } from "@/features/ai/lib/acp-session-info";
 import { parseDirectAcpUiAction } from "@/features/ai/lib/acp-ui-intents";
-import { parseMentionsAndLoadFiles } from "@/features/ai/lib/file-mentions";
+import {
+  appendReferencedFiles,
+  loadFilesByPaths,
+  parseMentionsAndLoadFiles,
+} from "@/features/ai/lib/file-mentions";
 import { extractFollowUpActions } from "@/features/ai/lib/follow-up-actions";
+import { buildConversationHistory } from "@/features/ai/lib/conversation-history";
+import { openAgentHistoryChat } from "@/features/ai/lib/open-agent-history";
+import { getAgentMessageAccess } from "@/features/ai/lib/agent-message-access";
+import { startAssistantResponseContinuation } from "@/features/ai/lib/assistant-response";
 import {
   createToolCall,
   markToolCallComplete,
@@ -15,111 +27,63 @@ import {
 } from "@/features/ai/lib/tool-call-state";
 import { requestInlineEdit } from "@/features/editor/services/editor-inline-edit-service";
 import { AcpStreamHandler } from "@/features/ai/services/acp-stream-handler";
+import { CodexIntegrationService } from "@/features/ai/integrations/codex/codex-integration-service";
+import { CODEX_INTEGRATION_ID } from "@/features/ai/integrations/integration-registry";
 import { getChatCompletionStream, isAcpAgent } from "@/features/ai/services/ai-chat-service";
+import type { ImageContent } from "@/features/ai/types/ai-chat.types";
+import {
+  sendAgentNativeNotification,
+  type AgentNativeNotificationKind,
+} from "@/features/ai/services/agent-native-notifications";
 import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
-import type { AcpEvent, AcpPermissionOption } from "@/features/ai/types/acp.types";
+import { agentIsDetached } from "@/features/ai/detached/agent-window.store";
+import { peekAgentDraft } from "@/features/ai/detached/agent-window-drafts";
+import { useComposerContextSelection } from "@/features/ai/hooks/use-composer-context-selection";
+import type { AcpEvent } from "@/features/ai/types/acp.types";
 import type { ContextInfo } from "@/features/ai/types/ai-context.types";
-import type { AIChatProps, Message } from "@/features/ai/types/ai-chat.types";
+import type {
+  AgentMessageSubmitResult,
+  AIChatProps,
+  Message,
+} from "@/features/ai/types/ai-chat.types";
 import type { ChatAcpEvent } from "@/features/ai/types/chat-ui.types";
+import {
+  getFallbackAgentSessionTitle,
+  normalizeAgentSessionTitle,
+} from "@/features/ai/utils/chat-session-title";
+import { getMessageSearchMatches } from "@/features/ai/utils/message-search";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { useGitHubStore } from "@/features/github/stores/github.store";
 import { useToast } from "@/features/layout/contexts/toast-context";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { recordFrictionSignal } from "@/features/telemetry/services/telemetry";
+import { claimContextualTip } from "@/features/onboarding/lib/contextual-teaching";
 import { useAuthStore } from "@/features/window/stores/auth.store";
+import { getAccountIdentity } from "@/features/window/lib/account-identity";
+import { useAgentWindowStore } from "@/features/ai/detached/agent-window.store";
+import { hasProductCapability } from "@/features/window/lib/product-capabilities";
 import { useProjectStore } from "@/features/window/stores/project.store";
-import { Button } from "@/ui/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/ui/empty";
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/ui/message-scroller";
 import { cn } from "@/utils/cn";
+import { AgentStartView } from "../agent-start-view";
 import { useChatActions, useChatState } from "../../hooks/use-chat-store";
 import AIChatInputBar from "../input/chat-input-bar";
+import { AcpPermissionPrompt, type AcpPermissionRequest } from "./acp-permission-prompt";
 import { ChatHeader } from "./chat-header";
 import { ChatMessages } from "./chat-messages";
 
-function normalizeAgentSessionTitle(value: string): string | null {
-  const normalized = value
-    .replace(/[`"'“”‘’]/g, "")
-    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (!normalized) return null;
-
-  const words = normalized.split(" ").slice(0, 2);
-  const title = words.join(" ").trim();
-  return title || null;
-}
-
-function fallbackAgentSessionTitle(message: string): string {
-  return message.length > 50 ? `${message.substring(0, 50)}...` : message;
-}
-
-function getPermissionSummary(permission: {
-  description: string;
-  permissionType: string;
-  resource: string;
-}) {
-  return (
-    permission.description ||
-    [permission.permissionType, permission.resource].filter(Boolean).join(" ")
-  ).trim();
-}
-
-function getFallbackPermissionOptions(): AcpPermissionOption[] {
-  return [
-    { id: "reject", name: "Deny", kind: "reject_once" },
-    { id: "allow", name: "Allow", kind: "allow_once" },
-  ];
-}
-
-function isPermissionApproval(option: AcpPermissionOption) {
-  return option.kind === "allow_once" || option.kind === "allow_always";
-}
-
-function getPermissionOptionLabel(option: AcpPermissionOption) {
-  switch (option.kind) {
-    case "allow_once":
-      return "Allow";
-    case "allow_always":
-      return "Always";
-    case "reject_once":
-      return "Deny";
-    case "reject_always":
-      return "Never";
-    default:
-      return option.name;
-  }
-}
-
-function getPermissionOptionTooltip(option: AcpPermissionOption) {
-  switch (option.kind) {
-    case "allow_once":
-      return "Allow once";
-    case "allow_always":
-      return "Always allow this request type";
-    case "reject_once":
-      return "Deny once";
-    case "reject_always":
-      return "Always deny this request type";
-    default:
-      return option.name;
-  }
-}
-
-function getPermissionOptionClassName(option: AcpPermissionOption) {
-  switch (option.kind) {
-    case "allow_always":
-      return "border-success/30 bg-success/10 text-success hover:border-success/40 hover:bg-success/15 hover:text-success";
-    case "allow_once":
-      return "border-border/70 bg-hover/50 text-text hover:bg-hover";
-    case "reject_always":
-      return "border-error/35 bg-error/10 text-error hover:border-error/45 hover:bg-error/15 hover:text-error";
-    case "reject_once":
-      return "";
-    default:
-      return "";
-  }
-}
+const createMessageId = () =>
+  globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 const AIChat = memo(function AIChat({
   className,
+  surfaceId,
   chatId,
   isActiveSurface = true,
   activeBuffer,
@@ -128,9 +92,12 @@ const AIChat = memo(function AIChat({
   allProjectFiles = [],
   onApplyCode,
 }: AIChatProps) {
-  const { rootFolderPath } = useProjectStore();
-  const { settings } = useSettingsStore();
+  const rootFolderPath = useProjectStore((state) => state.rootFolderPath);
+  const aiProviderId = useSettingsStore((state) => state.settings.aiProviderId);
   const subscription = useAuthStore((state) => state.subscription);
+  const user = useAuthStore((state) => state.user);
+  const githubAccountStatus = useGitHubStore((state) => state.githubAccountStatus);
+  const githubCurrentUser = useGitHubStore((state) => state.currentUser);
   const enterprisePolicy = subscription?.enterprise?.policy;
   const isAiChatBlockedByPolicy = Boolean(
     enterprisePolicy?.managedMode && !enterprisePolicy.aiChatEnabled,
@@ -140,53 +107,108 @@ const AIChat = memo(function AIChat({
   const chatActions = useChatActions();
   const { showToast } = useToast();
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const shouldAutoScrollRef = useRef(true);
-  const [permissionQueue, setPermissionQueue] = useState<
-    Array<{
-      requestId: string;
-      description: string;
-      permissionType: string;
-      resource: string;
-      options: Extract<AcpEvent, { type: "permission_request" }>["options"];
-    }>
-  >([]);
+  const [permissionQueue, setPermissionQueue] = useState<AcpPermissionRequest[]>([]);
   const [acpEvents, setAcpEvents] = useState<ChatAcpEvent[]>([]);
-  const effectiveChatId =
-    chatId ?? (activeBuffer?.type === "agent" ? activeBuffer.sessionId : chatState.currentChatId);
+  const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState("");
+  const [activeMessageSearchIndex, setActiveMessageSearchIndex] = useState(0);
+  const composerContext = useComposerContextSelection(peekAgentDraft(surfaceId));
+  const { selectedBufferIds, selectedEditorContexts, selectedFilesPaths } =
+    composerContext.inputProps;
+  const effectiveChatId = chatId ?? chatState.currentChatId;
+  const previousChatId = useRef(effectiveChatId);
+  const currentChat = useMemo(
+    () => chatState.chats.find((chat) => chat.id === effectiveChatId),
+    [chatState.chats, effectiveChatId],
+  );
+  const currentAgentId = currentChat?.agentId ?? chatState.selectedAgentId;
+  const sessionProviderId = currentChat?.providerId ?? aiProviderId;
+  const hasSessionApiKey = useAIChatStore((state) =>
+    getProviderAccessFromMap(sessionProviderId, state.providerApiKeys),
+  );
+  const assistantIconId =
+    currentAgentId === "custom" ? (currentChat?.providerId ?? aiProviderId) : currentAgentId;
+  const assistantLabel =
+    currentAgentId === "custom"
+      ? (currentChat?.modelId ?? currentChat?.providerId ?? aiProviderId)
+      : currentAgentId;
+  const connectedGitHubLogin =
+    githubAccountStatus === "connected" ? githubCurrentUser || user?.github_username : null;
+  const detachedIdentity = useAgentWindowStore((state) => state.accountIdentity);
+  const accountIdentity = detachedIdentity ?? getAccountIdentity(user, connectedGitHubLogin);
+  const activeRun = effectiveChatId ? chatState.agentRuns[effectiveChatId] : undefined;
+  const isSurfaceTyping = Boolean(activeRun);
+  const surfaceStreamingMessageId = activeRun?.assistantMessageId ?? null;
+  const queuedMessages = effectiveChatId
+    ? (chatState.agentMessageQueues[effectiveChatId] ?? [])
+    : [];
+  const chatMessageLoadState = effectiveChatId
+    ? chatState.chatMessageLoadStates[effectiveChatId]
+    : "loaded";
+  const isChatMessagesLoaded = !effectiveChatId || chatMessageLoadState === "loaded";
+  const messageSearchMatches = useMemo(
+    () => getMessageSearchMatches(currentChat?.messages ?? [], messageSearchQuery),
+    [currentChat?.messages, messageSearchQuery],
+  );
+  const activeMessageSearchMatch = messageSearchMatches[activeMessageSearchIndex] ?? null;
+
+  const closeMessageSearch = useCallback(() => {
+    setIsMessageSearchOpen(false);
+    setMessageSearchQuery("");
+    setActiveMessageSearchIndex(0);
+  }, []);
+
+  const goToPreviousMessageSearchMatch = useCallback(() => {
+    if (messageSearchMatches.length === 0) return;
+    setActiveMessageSearchIndex((index) =>
+      index === 0 ? messageSearchMatches.length - 1 : index - 1,
+    );
+  }, [messageSearchMatches.length]);
+
+  const goToNextMessageSearchMatch = useCallback(() => {
+    if (messageSearchMatches.length === 0) return;
+    setActiveMessageSearchIndex((index) => (index + 1) % messageSearchMatches.length);
+  }, [messageSearchMatches.length]);
 
   useEffect(() => {
-    if (isActiveSurface && activeBuffer) {
-      chatActions.autoSelectBuffer(activeBuffer.id);
-    }
-  }, [activeBuffer, chatActions.autoSelectBuffer, isActiveSurface]);
-
-  useEffect(() => {
-    if (chatId) return;
-    if (!isActiveSurface || !effectiveChatId || effectiveChatId === chatState.currentChatId) return;
-    if (!chatState.chats.some((chat) => chat.id === effectiveChatId)) return;
-
-    chatActions.switchToChat(effectiveChatId);
-  }, [
-    chatActions,
-    chatId,
-    chatState.chats,
-    chatState.currentChatId,
-    effectiveChatId,
-    isActiveSurface,
-  ]);
-
-  useEffect(() => {
-    chatActions.checkApiKey(settings.aiProviderId);
-    chatActions.checkAllProviderApiKeys();
-  }, [settings.aiProviderId, chatActions.checkApiKey, chatActions.checkAllProviderApiKeys]);
+    if (currentAgentId === "custom") void chatActions.checkApiKey(sessionProviderId);
+  }, [currentAgentId, sessionProviderId, subscription, chatActions.checkApiKey]);
 
   // Clear ACP events when switching chats
   useEffect(() => {
     setAcpEvents([]);
-  }, [effectiveChatId]);
+    closeMessageSearch();
+    if (previousChatId.current !== effectiveChatId) composerContext.clear();
+    previousChatId.current = effectiveChatId;
+  }, [closeMessageSearch, composerContext.clear, effectiveChatId]);
+
+  useEffect(() => {
+    setActiveMessageSearchIndex(0);
+  }, [messageSearchQuery]);
+
+  useEffect(() => {
+    if (messageSearchMatches.length === 0) {
+      setActiveMessageSearchIndex(0);
+      return;
+    }
+
+    setActiveMessageSearchIndex((index) => Math.min(index, messageSearchMatches.length - 1));
+  }, [messageSearchMatches.length]);
+
+  useEffect(() => {
+    if (!isActiveSurface || isAiChatBlockedByPolicy) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setIsMessageSearchOpen(true);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isActiveSurface, isAiChatBlockedByPolicy]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -195,39 +217,40 @@ const AIChat = memo(function AIChat({
     const setupAcpStateSync = async () => {
       unlisten = await listen<AcpEvent>("acp-event", ({ payload }) => {
         const store = useAIChatStore.getState();
+        const { actions } = store;
 
         switch (payload.type) {
           case "slash_commands_update":
-            store.setAvailableSlashCommands(payload.commands);
+            actions.setAvailableSlashCommands(payload.commands);
             break;
           case "session_mode_update":
-            store.setSessionModeState(
+            actions.setSessionModeState(
               payload.modeState.currentModeId,
               payload.modeState.availableModes,
             );
             break;
           case "current_mode_update":
-            store.setCurrentModeId(payload.currentModeId);
+            actions.setCurrentModeId(payload.currentModeId);
             break;
           case "config_options_update":
-            store.setSessionConfigOptions(payload.configOptions);
+            actions.setSessionConfigOptions(payload.configOptions);
             break;
           case "session_info_update": {
             const chat =
               store.chats.find((item) => item.acpSessionId === payload.sessionId) ??
-              (store.acpStatus?.sessionId === payload.sessionId ? store.getCurrentChat() : null);
+              (store.acpStatus?.sessionId === payload.sessionId ? actions.getCurrentChat() : null);
             const nextTitle = chat ? getChatTitleFromSessionInfo(chat.title, payload.title) : null;
             if (chat && nextTitle) {
-              store.updateChatTitle(chat.id, nextTitle);
+              actions.updateChatTitle(chat.id, nextTitle);
             }
             break;
           }
           case "status_changed":
-            store.setAcpStatus(payload.status);
+            actions.setAcpStatus(payload.status);
             if (!payload.status.running) {
-              store.setAvailableSlashCommands([]);
-              store.setSessionModeState(null, []);
-              store.setSessionConfigOptions([]);
+              actions.setAvailableSlashCommands([]);
+              actions.setSessionModeState(null, []);
+              actions.setSessionConfigOptions([]);
             }
             break;
           default:
@@ -256,23 +279,21 @@ const AIChat = memo(function AIChat({
 
   // Agent availability is handled dynamically by the agent selector.
 
-  const handleDeleteChat = (chatId: string, event: React.MouseEvent) => {
-    event.stopPropagation();
+  const handleDeleteChat = (chatId: string) => {
     chatActions.deleteChat(chatId);
   };
 
   const updateInitialAgentSessionTitle = useCallback(
     async (chatId: string, userMessage: string) => {
-      const fallbackTitle = fallbackAgentSessionTitle(userMessage);
+      const fallbackTitle = getFallbackAgentSessionTitle(userMessage);
       chatActions.updateChatTitle(chatId, fallbackTitle);
 
       const authState = useAuthStore.getState();
-      const subscriptionStatus = authState.subscription?.status ?? "free";
       const enterprisePolicy = authState.subscription?.enterprise?.policy;
       const managedPolicy = enterprisePolicy?.managedMode ? enterprisePolicy : null;
-      const isPro = subscriptionStatus === "pro";
+      const hasIntelligence = hasProductCapability(authState.subscription, "intelligence");
 
-      if (!isPro || (managedPolicy && !managedPolicy.aiCompletionEnabled)) {
+      if (!hasIntelligence || (managedPolicy && !managedPolicy.aiCompletionEnabled)) {
         return;
       }
 
@@ -283,6 +304,7 @@ const AIChat = memo(function AIChat({
         const { editedText } = await requestInlineEdit(
           {
             model,
+            feature: "chat-title",
             beforeSelection: "",
             selectedText: userMessage,
             afterSelection: "",
@@ -297,10 +319,10 @@ const AIChat = memo(function AIChat({
         const generatedTitle = normalizeAgentSessionTitle(editedText);
         if (!generatedTitle) return;
 
-        const currentChat = useAIChatStore.getState().getChatById(chatId);
+        const currentChat = useAIChatStore.getState().actions.getChatById(chatId);
         if (!currentChat) return;
 
-        if (currentChat.title === fallbackTitle || currentChat.title === "New Chat") {
+        if (currentChat.title === fallbackTitle || currentChat.title === "New Session") {
           chatActions.updateChatTitle(chatId, generatedTitle);
         }
       } catch (error) {
@@ -310,53 +332,28 @@ const AIChat = memo(function AIChat({
     [chatActions],
   );
 
-  const scrollToBottom = useCallback((force = false) => {
-    if (!force && !shouldAutoScrollRef.current) {
-      return;
-    }
-
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
-
-  const handleMessagesScroll = useCallback(() => {
-    const container = messagesContainerRef.current;
-    if (!container) return;
-
-    const distanceFromBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
-    shouldAutoScrollRef.current = distanceFromBottom < 48;
-  }, []);
-
   const buildContext = async (agentId: string, providerId: string): Promise<ContextInfo> => {
     const selectedBuffers = buffers.filter(
-      (buffer) => buffer.type !== "agent" && chatState.selectedBufferIds.has(buffer.id),
+      (buffer) => buffer.type !== "agent" && selectedBufferIds.has(buffer.id),
     );
-
-    // Build active buffer context, including web viewer content if applicable
-    let activeBufferContext: (typeof activeBuffer & { webViewerContent?: string }) | undefined =
-      activeBuffer && activeBuffer.type !== "agent" ? activeBuffer : undefined;
-    if (activeBuffer?.type === "webViewer" && activeBuffer.url) {
-      // Fetch web page content for context
-      const { fetchWebPageContent } = await import("@/features/ai/services/web-content-service");
-      const webContent = await fetchWebPageContent(activeBuffer.url);
-      activeBufferContext = {
-        ...activeBuffer,
-        webViewerContent: webContent,
-      };
-    }
+    const selectedActiveBuffer =
+      activeBuffer && activeBuffer.type !== "agent" && selectedBufferIds.has(activeBuffer.id)
+        ? activeBuffer
+        : undefined;
 
     const context: ContextInfo = {
-      activeBuffer: activeBufferContext,
+      activeBuffer: selectedActiveBuffer,
       openBuffers: selectedBuffers,
       selectedFiles,
-      selectedProjectFiles: Array.from(chatState.selectedFilesPaths),
+      selectedProjectFiles: Array.from(selectedFilesPaths),
+      editorSelections: selectedEditorContexts,
       projectRoot: rootFolderPath,
       providerId,
       agentId,
     };
 
-    if (activeBuffer && activeBuffer.type !== "webViewer") {
-      const extension = activeBuffer.path.split(".").pop()?.toLowerCase() || "";
+    if (selectedActiveBuffer) {
+      const extension = selectedActiveBuffer.path.split(".").pop()?.toLowerCase() || "";
       const languageMap: Record<string, string> = {
         js: "JavaScript",
         jsx: "JavaScript (React)",
@@ -385,30 +382,42 @@ const AIChat = memo(function AIChat({
   };
 
   const stopStreaming = async () => {
-    // For ACP agents, send cancel notification
-    const currentAgentId = chatActions.getCurrentAgentId();
-    if (isAcpAgent(currentAgentId)) {
-      try {
-        await AcpStreamHandler.cancelPrompt();
-        if (permissionQueue.length > 0) {
-          await Promise.all(
-            permissionQueue.map((item) =>
-              AcpStreamHandler.respondToPermission(item.requestId, false, true),
-            ),
-          );
-          setPermissionQueue([]);
-        }
-      } catch (error) {
-        console.error("Failed to cancel ACP prompt:", error);
-      }
-    }
+    void recordFrictionSignal({ area: "agent", signal: "cancel" });
+    const pendingPermissions = permissionQueue;
+    setPermissionQueue([]);
 
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    chatActions.setIsTyping(false);
-    chatActions.setStreamingMessageId(null);
+    const run = effectiveChatId ? useAIChatStore.getState().agentRuns[effectiveChatId] : undefined;
+
+    if (currentAgentId === CODEX_INTEGRATION_ID) {
+      try {
+        await CodexIntegrationService.cancel();
+        await Promise.all(
+          pendingPermissions.map((item) => CodexIntegrationService.respond(item.requestId, false)),
+        );
+      } catch (error) {
+        console.error("Failed to cancel Codex turn:", error);
+      }
+    } else if (isAcpAgent(currentAgentId)) {
+      try {
+        await AcpStreamHandler.cancelPrompt();
+        if (pendingPermissions.length > 0) {
+          await Promise.all(
+            pendingPermissions.map((item) =>
+              AcpStreamHandler.respondToPermission(item.requestId, false, true),
+            ),
+          );
+        }
+      } catch (error) {
+        console.error("Failed to cancel ACP prompt:", error);
+      }
+    }
+    if (effectiveChatId && run) {
+      finishRunAndProcessQueue(effectiveChatId, run.runId);
+    }
   };
 
   const updateStreamingAssistantMessage = useCallback(
@@ -417,99 +426,172 @@ const AIChat = memo(function AIChat({
       messageId: string,
       mutate: (currentMessage: Message | undefined) => Partial<Message>,
     ) => {
-      const currentMessages = useAIChatStore.getState().getMessagesForChat(chatId);
+      const currentMessages = useAIChatStore.getState().actions.getMessagesForChat(chatId);
       const currentMessage = currentMessages.find((message) => message.id === messageId);
       chatActions.updateMessage(chatId, messageId, mutate(currentMessage));
     },
     [chatActions.updateMessage],
   );
 
-  const processMessage = async (messageContent: string) => {
-    const store = useAIChatStore.getState();
-    const targetChat = effectiveChatId
-      ? store.chats.find((chat) => chat.id === effectiveChatId)
-      : null;
-    const currentAgentId = targetChat?.agentId ?? store.getCurrentAgentId();
-    const isAcp = isAcpAgent(currentAgentId);
-    // For ACP agents, we don't need an API key.
-    // For Custom API, we need an API key to be set
-    if (!messageContent.trim() || (!isAcp && !store.hasApiKey)) return;
+  function finishRunAndProcessQueue(targetChatId: string, runId: string) {
+    if (useAIChatStore.getState().agentRuns[targetChatId]?.runId !== runId) return;
+    const actions = useAIChatStore.getState().actions;
+    actions.finishAgentRun(targetChatId, runId);
+    const nextMessage = actions.dequeueAgentMessage(targetChatId);
+    if (nextMessage) {
+      queueMicrotask(
+        () =>
+          void processMessage(nextMessage.content, { targetChatId, images: nextMessage.images }),
+      );
+    }
+  }
 
+  async function processMessage(
+    messageContent: string,
+    options: { editedUserMessageId?: string; targetChatId?: string; images?: ImageContent[] } = {},
+  ) {
+    const store = useAIChatStore.getState();
+    const requestedChatId = options.targetChatId ?? effectiveChatId;
+    if (agentIsDetached(requestedChatId)) return;
+    const targetChat = requestedChatId
+      ? store.chats.find((chat) => chat.id === requestedChatId)
+      : null;
+    const currentAgentId = targetChat?.agentId ?? store.actions.getCurrentAgentId();
+    const trimmedMessageContent = messageContent.trim();
+    const access = getAgentMessageAccess(
+      currentAgentId,
+      getProviderAccessFromMap(targetChat?.providerId ?? aiProviderId, store.providerApiKeys),
+    );
+    if (!trimmedMessageContent && !options.images?.length && !options.editedUserMessageId) return;
+    if (!access.accepted) {
+      showToast({
+        message:
+          currentAgentId === "custom" && (targetChat?.providerId ?? aiProviderId) === "athas"
+            ? "Sign in and add Athas Agent balance to use hosted models."
+            : (access.error ?? "This agent is not ready."),
+        type: "error",
+      });
+      return;
+    }
+    const isAcp = isAcpAgent(currentAgentId);
     // Agents are started automatically by AcpStreamHandler when needed
 
-    let targetChatId = effectiveChatId ?? store.currentChatId;
+    let targetChatId = requestedChatId ?? store.currentChatId;
     if (!targetChatId) {
       targetChatId = chatActions.createNewChat(currentAgentId);
     } else {
-      targetChatId = chatActions.ensureChatSession(targetChatId, currentAgentId);
+      targetChatId = chatActions.ensureChatSession(targetChatId, currentAgentId, {
+        activate: !chatId,
+      });
     }
 
-    const { processedMessage, mentionedFiles } = await parseMentionsAndLoadFiles(
-      messageContent.trim(),
-      allProjectFiles,
+    const existingMessages = useAIChatStore.getState().actions.getMessagesForChat(targetChatId);
+    const editedUserMessageIndex = options.editedUserMessageId
+      ? existingMessages.findIndex(
+          (message) => message.id === options.editedUserMessageId && message.role === "user",
+        )
+      : -1;
+    if (options.editedUserMessageId && editedUserMessageIndex === -1) return;
+
+    const conversationContext = buildConversationHistory(
+      editedUserMessageIndex >= 0
+        ? existingMessages.slice(0, editedUserMessageIndex)
+        : existingMessages,
     );
+    const userMessage: Message =
+      editedUserMessageIndex >= 0
+        ? {
+            ...existingMessages[editedUserMessageIndex],
+            content: trimmedMessageContent,
+            timestamp: new Date(),
+          }
+        : {
+            id: createMessageId(),
+            content: trimmedMessageContent,
+            role: "user",
+            timestamp: new Date(),
+            images: options.images,
+          };
 
-    const latestSettings = useSettingsStore.getState().settings;
-    const context = await buildContext(currentAgentId, latestSettings.aiProviderId);
-    context.mentionedFiles = mentionedFiles;
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      content: messageContent.trim(),
-      role: "user",
-      timestamp: new Date(),
+    const assistantMessageId = createMessageId();
+    const runId = createMessageId();
+    const supportsAgentNotifications = isAcp || currentAgentId === CODEX_INTEGRATION_ID;
+    const notifyAgent = (
+      kind: AgentNativeNotificationKind,
+      dedupeId: string = assistantMessageId,
+    ) => {
+      if (!supportsAgentNotifications) return;
+      void sendAgentNativeNotification({
+        kind,
+        dedupeId: `${targetChatId}:${dedupeId}`,
+        chatId: targetChatId,
+      });
     };
-
-    const assistantMessageId = (Date.now() + 1).toString();
     const assistantMessage: Message = {
       id: assistantMessageId,
       content: "",
       role: "assistant",
       timestamp: new Date(),
       isStreaming: true,
+      responsePhase: "starting",
     };
 
-    chatActions.addMessage(targetChatId, userMessage);
+    if (options.editedUserMessageId) {
+      const didReplace = chatActions.replaceUserMessage(
+        targetChatId,
+        options.editedUserMessageId,
+        trimmedMessageContent,
+      );
+      if (!didReplace) return;
+    } else {
+      chatActions.addMessage(targetChatId, userMessage);
+    }
     chatActions.addMessage(targetChatId, assistantMessage);
+    chatActions.startAgentRun(targetChatId, {
+      runId,
+      assistantMessageId,
+      agentId: currentAgentId,
+      phase: "starting",
+    });
 
-    const currentMessages = useAIChatStore.getState().getMessagesForChat(targetChatId);
+    const currentMessages = useAIChatStore.getState().actions.getMessagesForChat(targetChatId);
     if (currentMessages.length === 2) {
       void updateInitialAgentSessionTitle(targetChatId, userMessage.content);
     }
 
-    chatActions.setIsTyping(true);
-    chatActions.setStreamingMessageId(assistantMessageId);
-
-    requestAnimationFrame(() => scrollToBottom(true));
-
     abortControllerRef.current = new AbortController();
-    let currentAssistantMessageId = assistantMessageId;
+    const currentAssistantMessageId = assistantMessageId;
     let currentAssistantRawContent = "";
     let acpProducedStateOnlyUpdate = false;
     let acpCommandResultLabel: string | null = null;
 
     try {
+      const { mentionedFiles } = await parseMentionsAndLoadFiles(
+        trimmedMessageContent,
+        allProjectFiles,
+      );
+      const mentionedPaths = new Set(mentionedFiles.map((file) => file.path));
+      const attachedFiles = isAcp
+        ? []
+        : await loadFilesByPaths(
+            Array.from(selectedFilesPaths).filter((path) => !mentionedPaths.has(path)),
+          );
+      const settings = useSettingsStore.getState().settings;
+      const latestSettings = {
+        ...settings,
+        aiProviderId: targetChat?.providerId ?? settings.aiProviderId,
+        aiModelId: targetChat?.modelId ?? settings.aiModelId,
+      };
+      const context = await buildContext(currentAgentId, latestSettings.aiProviderId);
+      context.images = userMessage.images;
+      context.mentionedFiles = [...mentionedFiles, ...attachedFiles];
+
       // Handle direct ACP UI intents locally so they are always reliable.
-      if (isAcp) {
-        const directAction = parseDirectAcpUiAction(messageContent);
+      if (isAcp && !userMessage.images?.length) {
+        const directAction = parseDirectAcpUiAction(trimmedMessageContent);
         if (directAction) {
           const bufferActions = useBufferStore.getState().actions;
-          if (directAction.kind === "open_web_viewer" && directAction.url) {
-            if (!useSettingsStore.getState().settings.coreFeatures.webViewer) {
-              chatActions.updateMessage(targetChatId, currentAssistantMessageId, {
-                content: "Web Viewer is disabled. Enable it in Settings > Features to open URLs.",
-                isStreaming: false,
-              });
-              chatActions.setIsTyping(false);
-              chatActions.setStreamingMessageId(null);
-              return;
-            }
-
-            bufferActions.openWebViewerBuffer(directAction.url);
-            chatActions.updateMessage(targetChatId, currentAssistantMessageId, {
-              content: `Opened ${directAction.url} in Athas web viewer.`,
-              isStreaming: false,
-            });
-          } else if (directAction.kind === "open_terminal" && directAction.command) {
+          if (directAction.kind === "open_terminal" && directAction.command) {
             bufferActions.openTerminalBuffer({
               command: directAction.command,
               name: directAction.command,
@@ -520,24 +602,15 @@ const AIChat = memo(function AIChat({
             });
           }
 
-          chatActions.setIsTyping(false);
-          chatActions.setStreamingMessageId(null);
+          finishRunAndProcessQueue(targetChatId, runId);
           abortControllerRef.current = null;
-          processQueuedMessages();
           return;
         }
       }
 
-      const conversationContext = useAIChatStore
-        .getState()
-        .getMessagesForChat(targetChatId)
-        .filter((msg) => msg.role !== "system")
-        .map((msg) => ({
-          role: msg.role as "user" | "assistant",
-          content: msg.content,
-        }));
-
-      const enhancedMessage = isAcp ? messageContent.trim() : processedMessage;
+      const enhancedMessage = isAcp
+        ? trimmedMessageContent
+        : appendReferencedFiles(trimmedMessageContent, [...mentionedFiles, ...attachedFiles]);
       if (isAcp) {
         setAcpEvents([]);
       }
@@ -554,10 +627,11 @@ const AIChat = memo(function AIChat({
           updateStreamingAssistantMessage(targetChatId, currentAssistantMessageId, () => ({
             content: extracted.content,
             followUpActions: extracted.actions,
+            responsePhase: undefined,
           }));
-          requestAnimationFrame(() => scrollToBottom());
         },
-        () => {
+        (completion) => {
+          const wasCancelled = completion?.outcome === "cancelled";
           const currentMessage = chatActions
             .getMessagesForChat(targetChatId)
             .find((message) => message.id === currentAssistantMessageId);
@@ -568,9 +642,9 @@ const AIChat = memo(function AIChat({
             currentMessage?.resources?.length,
           );
 
-          if (!hasVisibleResponse && isAcpAgent(currentAgentId)) {
-            if (acpProducedStateOnlyUpdate) {
-              const slashCommand = messageContent.trim().match(/^\/([^\s]+)/)?.[1];
+          if (!hasVisibleResponse) {
+            if (isAcpAgent(currentAgentId) && acpProducedStateOnlyUpdate) {
+              const slashCommand = trimmedMessageContent.match(/^\/([^\s]+)/)?.[1];
               const fallbackContent =
                 acpCommandResultLabel ||
                 (slashCommand ? `Applied \`/${slashCommand}\`.` : "Session updated.");
@@ -579,39 +653,38 @@ const AIChat = memo(function AIChat({
                 content: fallbackContent,
                 isStreaming: false,
               }));
-              chatActions.setIsTyping(false);
-              chatActions.setStreamingMessageId(null);
+              finishRunAndProcessQueue(targetChatId, runId);
               abortControllerRef.current = null;
-              processQueuedMessages();
+              if (!wasCancelled) notifyAgent("complete");
               return;
             }
 
-            const fallbackMessage =
-              "The selected agent did not return a visible response. Try sending the message again.";
+            const isAcp = isAcpAgent(currentAgentId);
+            const fallbackMessage = isAcp
+              ? "The selected agent did not return a visible response. Try sending the message again."
+              : "The selected provider did not return a visible response. Try another model or send the message again.";
+            const emptyResponseSource = isAcp ? "agent session" : "provider request";
             updateStreamingAssistantMessage(targetChatId, currentAssistantMessageId, () => ({
               content: `[ERROR_BLOCK]
 title: No Response
 code: EMPTY_RESPONSE
 message: ${fallbackMessage}
-details: The agent session started, but no content, tool output, or resource was returned.
+details: The ${emptyResponseSource} completed, but no content, tool output, or resource was returned.
 [/ERROR_BLOCK]`,
               isStreaming: false,
             }));
-            chatActions.setIsTyping(false);
-            chatActions.setStreamingMessageId(null);
+            finishRunAndProcessQueue(targetChatId, runId);
             abortControllerRef.current = null;
-            processQueuedMessages();
+            if (!wasCancelled) notifyAgent("error");
             return;
           }
 
           chatActions.updateMessage(targetChatId, currentAssistantMessageId, {
             isStreaming: false,
           });
-          chatActions.setIsTyping(false);
-          chatActions.setStreamingMessageId(null);
-          setAcpEvents((prev) => prev.filter((event) => event.kind !== "thinking"));
+          finishRunAndProcessQueue(targetChatId, runId);
           abortControllerRef.current = null;
-          processQueuedMessages();
+          if (!wasCancelled) notifyAgent("complete");
         },
         (error: string, canReconnect?: boolean) => {
           console.error("Streaming error:", error);
@@ -658,12 +731,19 @@ details: The agent session started, but no content, tool output, or resource was
             }
           }
 
+          const isAcpConfigError =
+            isAcpAgent(currentAgentId) && isAcpConfigurationError(mainError, errorDetails);
           const isAcpAuthError =
+            !isAcpConfigError &&
             isAcpAgent(currentAgentId) &&
-            (mainError.includes("Authentication required") ||
-              errorDetails.includes("Authentication required"));
+            isAcpAuthenticationError(mainError, errorDetails);
 
-          if (isAcpAuthError) {
+          if (isAcpConfigError) {
+            errorTitle = "Agent Configuration Required";
+            errorCode = "CONFIG_REQUIRED";
+            errorMessage =
+              "The selected agent is authenticated, but its account configuration is incomplete.";
+          } else if (isAcpAuthError) {
             errorTitle = "Authentication Required";
             errorCode = "AUTH_REQUIRED";
             errorMessage =
@@ -711,29 +791,26 @@ details: ${errorDetails || mainError}
               type: "error",
             });
           }
-          chatActions.setIsTyping(false);
-          chatActions.setStreamingMessageId(null);
+          notifyAgent("error");
+          finishRunAndProcessQueue(targetChatId, runId);
           abortControllerRef.current = null;
-          processQueuedMessages();
         },
         conversationContext,
         () => {
-          const newMessageId = Date.now().toString();
-          currentAssistantRawContent = "";
-          const newAssistantMessage: Message = {
-            id: newMessageId,
-            content: "",
-            role: "assistant",
-            timestamp: new Date(),
+          currentAssistantRawContent = startAssistantResponseContinuation(
+            currentAssistantRawContent,
+          );
+          chatActions.updateMessage(targetChatId, currentAssistantMessageId, {
             isStreaming: true,
-          };
-
-          chatActions.addMessage(targetChatId, newAssistantMessage);
-          currentAssistantMessageId = newMessageId;
-          chatActions.setStreamingMessageId(newMessageId);
-          requestAnimationFrame(() => scrollToBottom(true));
+            responsePhase: "waiting",
+          });
+          chatActions.updateAgentRun(targetChatId, runId, {
+            assistantMessageId: currentAssistantMessageId,
+            phase: "waiting",
+          });
         },
         (event) => {
+          chatActions.updateAgentRun(targetChatId, runId, { phase: "tool" });
           updateStreamingAssistantMessage(
             targetChatId,
             currentAssistantMessageId,
@@ -788,8 +865,11 @@ details: ${errorDetails || mainError}
           );
         },
         (event) => {
+          chatActions.updateAgentRun(targetChatId, runId, { phase: "approval" });
+          notifyAgent("permission", event.requestId);
           appendAcpEvent({
-            kind: "permission",
+            id: `permission-request-${event.requestId}`,
+            category: "permission",
             label: "Permission requested",
             detail: event.description || `${event.permissionType} ${event.resource}`.trim(),
             state: "info",
@@ -806,7 +886,7 @@ details: ${errorDetails || mainError}
           ]);
         },
         (event) => {
-          if (!isAcpAgent(currentAgentId)) return;
+          if (!isAcpAgent(currentAgentId) && currentAgentId !== CODEX_INTEGRATION_ID) return;
           // Only show meaningful events, skip noisy ones
           if (
             event.type === "content_chunk" ||
@@ -817,6 +897,10 @@ details: ${errorDetails || mainError}
           }
           switch (event.type) {
             case "thought_chunk":
+              chatActions.updateAgentRun(targetChatId, runId, { phase: "thinking" });
+              updateStreamingAssistantMessage(targetChatId, currentAssistantMessageId, () => ({
+                responsePhase: "thinking",
+              }));
               break;
             case "tool_start":
             case "tool_update":
@@ -847,7 +931,7 @@ details: ${errorDetails || mainError}
                 : "Session metadata updated.";
               if (event.title) {
                 appendAcpEvent({
-                  kind: "status",
+                  category: "status",
                   label: "Session title updated",
                   detail: event.title,
                   state: "info",
@@ -868,7 +952,7 @@ details: ${errorDetails || mainError}
                   ? event.entries.map((entry) => entry.content).join(" | ")
                   : "No plan steps";
               appendAcpEvent({
-                kind: "plan",
+                category: "plan",
                 label: `Plan updated (${event.entries.length} steps)`,
                 detail: summary,
                 state: "info",
@@ -876,27 +960,14 @@ details: ${errorDetails || mainError}
               break;
             }
             case "usage_update": {
-              const usagePercent =
-                event.usage.size > 0
-                  ? Math.round((event.usage.used / event.usage.size) * 100)
-                  : null;
-              appendAcpEvent({
-                kind: "status",
-                label: "Session usage updated",
-                detail:
-                  usagePercent === null
-                    ? `${event.usage.used} used`
-                    : `${event.usage.used}/${event.usage.size} (${usagePercent}%)`,
-                state: "info",
-              });
               break;
             }
             case "status_changed":
-              useAIChatStore.getState().setAcpStatus(event.status);
+              useAIChatStore.getState().actions.setAcpStatus(event.status);
               break; // internal state sync
             case "error":
               appendAcpEvent({
-                kind: "error",
+                category: "error",
                 label: "Agent error",
                 detail: event.error,
                 state: "error",
@@ -916,7 +987,6 @@ details: ${errorDetails || mainError}
               images: [...(currentMessage?.images || []), { data, mediaType }],
             }),
           );
-          requestAnimationFrame(() => scrollToBottom());
         },
         (uri: string, name: string | null) => {
           updateStreamingAssistantMessage(
@@ -926,66 +996,132 @@ details: ${errorDetails || mainError}
               resources: [...(currentMessage?.resources || []), { uri, name }],
             }),
           );
-          requestAnimationFrame(() => scrollToBottom());
         },
         targetChatId,
       );
     } catch (error) {
       console.error("Failed to start streaming:", error);
       chatActions.updateMessage(targetChatId, assistantMessageId, {
-        content: "Error: Failed to connect to AI service. Please check your API key and try again.",
+        content:
+          "Error: Failed to connect to Agent service. Please check your API key and try again.",
         isStreaming: false,
       });
-      chatActions.setIsTyping(false);
-      chatActions.setStreamingMessageId(null);
+      finishRunAndProcessQueue(targetChatId, runId);
       abortControllerRef.current = null;
     }
-  };
-
-  const processQueuedMessages = useCallback(async () => {
-    if (chatState.isTyping || chatState.streamingMessageId) {
-      return;
-    }
-
-    const nextMessage = chatActions.processNextMessage();
-    if (nextMessage) {
-      console.log("Processing next queued message:", nextMessage.content);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      await processMessage(nextMessage.content);
-    }
-  }, [chatState.isTyping, chatState.streamingMessageId, chatActions.processNextMessage]);
+  }
 
   const sendMessage = useCallback(
-    async (messageContent: string) => {
-      const currentAgentId = chatActions.getCurrentAgentId();
-      const isAcp = isAcpAgent(currentAgentId);
-      // For ACP agents, we don't need an API key.
-      if (!messageContent.trim() || (!isAcp && !chatState.hasApiKey)) return;
-
-      chatActions.setInput("");
-
-      if (chatState.isTyping || chatState.streamingMessageId) {
-        chatActions.addMessageToQueue(messageContent);
-        return;
+    (messageContent: string, images?: ImageContent[]): AgentMessageSubmitResult => {
+      if (agentIsDetached(effectiveChatId))
+        return { accepted: false, error: "This agent is open in another window." };
+      if (!messageContent.trim() && !images?.length) return { accepted: false };
+      const access = getAgentMessageAccess(currentAgentId, hasSessionApiKey);
+      if (!access.accepted) {
+        showToast({
+          message:
+            currentAgentId === "custom" && (currentChat?.providerId ?? aiProviderId) === "athas"
+              ? "Sign in and add Athas Agent balance to use hosted models."
+              : (access.error ?? "This agent is not ready."),
+          type: "error",
+        });
+        return access;
+      }
+      if (!isChatMessagesLoaded) {
+        const result = { accepted: false, error: "Wait for this session to finish loading." };
+        showToast({ message: result.error, type: "error" });
+        return result;
       }
 
-      await processMessage(messageContent);
+      const targetChatId = effectiveChatId ?? useAIChatStore.getState().currentChatId;
+      if (targetChatId && useAIChatStore.getState().agentRuns[targetChatId]) {
+        chatActions.enqueueAgentMessage(targetChatId, messageContent, images);
+        if (claimContextualTip("agent-queue-controls")) {
+          showToast({
+            message: "Message queued",
+            description:
+              "Open the queue to edit, reorder, or remove guidance while the agent runs.",
+            type: "info",
+          });
+        }
+        return { accepted: true };
+      }
+
+      void processMessage(messageContent, { images });
+      return { accepted: true };
     },
     [
-      chatState.hasApiKey,
-      chatState.isTyping,
-      chatState.streamingMessageId,
-      chatActions.setInput,
-      chatActions.addMessageToQueue,
-      chatActions.getCurrentAgentId,
+      chatActions.enqueueAgentMessage,
+      hasSessionApiKey,
+      aiProviderId,
+      currentChat?.providerId,
+      currentAgentId,
+      effectiveChatId,
+      isChatMessagesLoaded,
+      showToast,
     ],
   );
 
   const handleSendMessage = useCallback(
-    async (messageContent: string) => {
-      await sendMessage(messageContent);
+    (messageContent: string, images?: ImageContent[]) => sendMessage(messageContent, images),
+    [sendMessage],
+  );
+
+  const handleSendFollowUp = useCallback(
+    (messageContent: string) => {
+      sendMessage(messageContent);
     },
     [sendMessage],
+  );
+
+  const handleInterruptAndSend = useCallback(
+    (messageContent: string, images?: ImageContent[]): AgentMessageSubmitResult => {
+      if (agentIsDetached(effectiveChatId)) return { accepted: false };
+      if (!messageContent.trim() && !images?.length) return { accepted: false };
+      const access = getAgentMessageAccess(currentAgentId, hasSessionApiKey);
+      if (!access.accepted) {
+        showToast({
+          message:
+            currentAgentId === "custom" && (currentChat?.providerId ?? aiProviderId) === "athas"
+              ? "Sign in and add Athas Agent balance to use hosted models."
+              : (access.error ?? "This agent is not ready."),
+          type: "error",
+        });
+        return access;
+      }
+
+      const targetChatId = effectiveChatId ?? useAIChatStore.getState().currentChatId;
+      if (!targetChatId || !useAIChatStore.getState().agentRuns[targetChatId]) {
+        return sendMessage(messageContent, images);
+      }
+
+      chatActions.prependAgentMessage(targetChatId, messageContent, images);
+      void stopStreaming();
+      return { accepted: true };
+    },
+    [
+      chatActions.prependAgentMessage,
+      hasSessionApiKey,
+      aiProviderId,
+      currentChat?.providerId,
+      currentAgentId,
+      effectiveChatId,
+      sendMessage,
+      showToast,
+    ],
+  );
+
+  const processMessageRef = useRef(processMessage);
+  useLayoutEffect(() => {
+    processMessageRef.current = processMessage;
+  });
+
+  const handleEditUserMessage = useCallback(
+    (messageId: string, content: string) => {
+      if (isSurfaceTyping || surfaceStreamingMessageId) return;
+      void processMessageRef.current(content, { editedUserMessageId: messageId });
+    },
+    [isSurfaceTyping, surfaceStreamingMessageId],
   );
 
   useEffect(() => {
@@ -994,142 +1130,212 @@ details: ${errorDetails || mainError}
     if (pendingLaunch.chatId !== effectiveChatId) return;
     if (activeBuffer?.type !== "agent") return;
     if (activeBuffer.sessionId !== pendingLaunch.chatId) return;
-    if (chatState.isTyping || chatState.streamingMessageId) return;
-
-    chatActions.setSelectedBufferIds(new Set(pendingLaunch.selectedBufferIds));
-    chatActions.setSelectedFilesPaths(new Set(pendingLaunch.selectedFilesPaths));
+    if (isSurfaceTyping || surfaceStreamingMessageId) return;
+    composerContext.replace(
+      pendingLaunch.selectedBufferIds,
+      pendingLaunch.selectedFilesPaths,
+      pendingLaunch.editorSelections,
+    );
     chatActions.setPendingAgentLaunchRequest(null);
-    void sendMessage(pendingLaunch.prompt);
+    if (!pendingLaunch.prompt && !pendingLaunch.images?.length) return;
+
+    const access = getAgentMessageAccess(pendingLaunch.agentId, hasSessionApiKey);
+    if (!access.accepted) {
+      showToast({
+        message:
+          currentAgentId === "custom" && (currentChat?.providerId ?? aiProviderId) === "athas"
+            ? "Sign in and add Athas Agent balance to use hosted models."
+            : (access.error ?? "This agent is not ready."),
+        type: "error",
+      });
+      return;
+    }
+
+    void sendMessage(pendingLaunch.prompt ?? "", pendingLaunch.images);
   }, [
     chatActions,
     effectiveChatId,
-    chatState.isTyping,
+    hasSessionApiKey,
+    aiProviderId,
+    currentChat?.providerId,
+    currentAgentId,
+    isSurfaceTyping,
     chatState.pendingAgentLaunchRequest,
-    chatState.streamingMessageId,
+    surfaceStreamingMessageId,
     activeBuffer,
+    composerContext.replace,
     sendMessage,
+    showToast,
   ]);
 
   const currentPermission = permissionQueue[0];
-  const currentPermissionSummary = currentPermission ? getPermissionSummary(currentPermission) : "";
-  const currentPermissionOptions = currentPermission
-    ? currentPermission.options.length > 0
-      ? currentPermission.options
-      : getFallbackPermissionOptions()
-    : [];
+  const isNewSession =
+    isChatMessagesLoaded && (currentChat?.messages.length ?? 0) === 0 && acpEvents.length === 0;
+  const useInitialComposer = isNewSession && !currentPermission;
   const handlePermission = async (approved: boolean, optionId?: string) => {
     if (!currentPermission) return;
     try {
       const option = currentPermission.options.find((item) => item.id === optionId);
       appendAcpEvent({
-        kind: "permission",
+        id: `permission-response-${currentPermission.requestId}`,
+        category: "permission",
         label: "Permission response",
         detail: option?.name || (approved ? "allow" : "deny"),
         state: approved ? "success" : "info",
       });
-      await AcpStreamHandler.respondToPermission(
-        currentPermission.requestId,
-        approved,
-        false,
-        optionId,
-      );
+      if (currentAgentId === CODEX_INTEGRATION_ID) {
+        await CodexIntegrationService.respond(currentPermission.requestId, approved);
+      } else {
+        await AcpStreamHandler.respondToPermission(
+          currentPermission.requestId,
+          approved,
+          false,
+          optionId,
+        );
+      }
     } finally {
       setPermissionQueue((prev) => prev.slice(1));
     }
   };
 
+  const composer = (
+    <AIChatInputBar
+      key={effectiveChatId ?? "new-session"}
+      surfaceId={surfaceId}
+      chatId={effectiveChatId}
+      buffers={buffers}
+      allProjectFiles={allProjectFiles}
+      currentAgentId={currentAgentId}
+      onAgentChange={(agentId, model) => {
+        if (isTerminalAgent(agentId)) {
+          openTerminalAgent(agentId);
+          return;
+        }
+        const nextChatId = chatActions.selectChatAgent(effectiveChatId, agentId, {
+          activate: !chatId,
+          model,
+        });
+        if (chatId && nextChatId && nextChatId !== effectiveChatId)
+          openAgentHistoryChat(nextChatId);
+      }}
+      isTyping={isSurfaceTyping}
+      streamingMessageId={surfaceStreamingMessageId}
+      queuedMessages={queuedMessages}
+      {...composerContext.inputProps}
+      isActiveSurface={isActiveSurface}
+      presentation={useInitialComposer ? "initial" : "default"}
+      onSendMessage={handleSendMessage}
+      onInterruptAndSend={handleInterruptAndSend}
+      onMoveQueuedMessage={(fromIndex, toIndex) => {
+        if (effectiveChatId)
+          chatActions.moveQueuedAgentMessage(effectiveChatId, fromIndex, toIndex);
+      }}
+      onRemoveQueuedMessage={(index, reason) => {
+        if (effectiveChatId) {
+          chatActions.removeQueuedAgentMessage(effectiveChatId, index);
+          if (reason === "discard") {
+            void recordFrictionSignal({ area: "agent", signal: "queue_discard" });
+          }
+        }
+      }}
+      onStopStreaming={stopStreaming}
+    />
+  );
+
   return (
     <div
-      className={`ai-chat-surface ui-font flex h-full flex-col bg-transparent text-text ui-text-xs ${className || ""}`}
+      className={cn(
+        "font-sans flex h-full select-none flex-col bg-transparent text-foreground selection:bg-selection selection:text-foreground ui-text-sm",
+        className,
+      )}
     >
-      <ChatHeader chatId={effectiveChatId} onDeleteChat={handleDeleteChat} />
+      <ChatHeader
+        chatId={effectiveChatId}
+        onDeleteChat={handleDeleteChat}
+        onSwitchChat={chatId ? openAgentHistoryChat : chatActions.switchToChat}
+        isMessageSearchOpen={isMessageSearchOpen}
+        messageSearchQuery={messageSearchQuery}
+        onToggleMessageSearch={() => {
+          if (isMessageSearchOpen) {
+            closeMessageSearch();
+            return;
+          }
+
+          setIsMessageSearchOpen(true);
+        }}
+        onCloseMessageSearch={closeMessageSearch}
+        onMessageSearchQueryChange={setMessageSearchQuery}
+        messageSearchMatchCount={messageSearchMatches.length}
+        activeMessageSearchIndex={activeMessageSearchIndex}
+        onPreviousMessageSearchMatch={goToPreviousMessageSearchMatch}
+        onNextMessageSearchMatch={goToNextMessageSearchMatch}
+      />
       {isAiChatBlockedByPolicy ? (
-        <div className="flex h-full items-center justify-center p-6">
-          <div className="max-w-md rounded-lg border border-border bg-secondary-bg/40 p-4 text-center">
-            <p className="font-medium ui-text-sm text-text">AI chat is disabled</p>
-            <p className="mt-2 text-text-lighter ui-text-xs">
-              Your organization policy has disabled AI chat for this workspace.
-            </p>
-          </div>
-        </div>
+        <Empty className="h-full p-6">
+          <EmptyHeader>
+            <EmptyTitle>Agent is disabled</EmptyTitle>
+            <EmptyDescription>
+              Your organization policy has disabled Agent for this workspace.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : !isChatMessagesLoaded ? (
+        <Empty className="h-full p-6">
+          <EmptyHeader>
+            <EmptyTitle>
+              {chatMessageLoadState === "error"
+                ? "Session could not be loaded"
+                : "Loading session…"}
+            </EmptyTitle>
+            {chatMessageLoadState === "error" ? (
+              <EmptyDescription>Close and reopen this session to try again.</EmptyDescription>
+            ) : null}
+          </EmptyHeader>
+        </Empty>
       ) : (
         <>
-          <div
-            ref={messagesContainerRef}
-            onScroll={handleMessagesScroll}
-            className="scrollbar-hidden relative z-0 flex-1 overflow-y-auto"
-          >
-            <ChatMessages
-              ref={messagesEndRef}
-              chatId={effectiveChatId}
-              onApplyCode={onApplyCode}
-              onSendFollowUp={handleSendMessage}
-              acpEvents={acpEvents}
-            />
-          </div>
-
-          {currentPermission && (
-            <div className="bg-transparent px-3 pt-2 ui-text-xs">
-              <div className="flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-primary-bg/92 px-2 shadow-[var(--shadow-card)]">
-                <KeyRound className="size-3.5 shrink-0 text-text-lighter" weight="duotone" />
-                <div
-                  className="min-w-0 flex-1 truncate text-text"
-                  title={`${currentPermission.permissionType} - ${currentPermission.resource}`}
-                >
-                  <span className="font-medium text-text-light">Permission</span>
-                  <span className="px-1.5 text-text-lighter">/</span>
-                  <span className="editor-font">{currentPermissionSummary}</span>
-                </div>
-                {permissionQueue.length > 1 ? (
-                  <span className="shrink-0 rounded-full bg-secondary-bg px-1.5 py-0.5 ui-text-xs text-text-lighter">
-                    +{permissionQueue.length - 1}
-                  </span>
-                ) : null}
-                <div className="flex shrink-0 items-center gap-1">
-                  {currentPermissionOptions.map((option) => {
-                    const approved = isPermissionApproval(option);
-                    return (
-                      <Button
-                        key={option.id}
-                        type="button"
-                        variant={approved ? "default" : "danger"}
-                        onClick={() =>
-                          handlePermission(
-                            approved,
-                            currentPermission.options.length > 0 ? option.id : undefined,
-                          )
-                        }
-                        className={cn("h-6 rounded-md px-2", getPermissionOptionClassName(option))}
-                        tooltip={getPermissionOptionTooltip(option)}
-                        tooltipSide="top"
-                      >
-                        {getPermissionOptionLabel(option)}
-                      </Button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
+          {useInitialComposer ? (
+            <AgentStartView>{composer}</AgentStartView>
+          ) : (
+            <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor">
+              <MessageScroller>
+                <MessageScrollerViewport fadeEdges>
+                  <ChatMessages
+                    surfaceId={surfaceId}
+                    chatId={effectiveChatId}
+                    onApplyCode={onApplyCode}
+                    onSendFollowUp={handleSendFollowUp}
+                    onEditUserMessage={handleEditUserMessage}
+                    canEditUserMessages={
+                      getAgentMessageAccess(currentAgentId, hasSessionApiKey).accepted &&
+                      !isSurfaceTyping &&
+                      !surfaceStreamingMessageId &&
+                      !isAiChatBlockedByPolicy
+                    }
+                    acpEvents={acpEvents}
+                    searchQuery={messageSearchQuery}
+                    activeSearchMessageId={activeMessageSearchMatch?.messageId ?? null}
+                    activeSearchIndex={activeMessageSearchIndex}
+                    userName={accountIdentity.name}
+                    userAvatarUrl={accountIdentity.avatarUrl}
+                    assistantIconId={assistantIconId}
+                    assistantLabel={assistantLabel}
+                  />
+                </MessageScrollerViewport>
+                <MessageScrollerButton />
+              </MessageScroller>
+            </MessageScrollerProvider>
           )}
 
-          <AIChatInputBar
-            buffers={buffers}
-            allProjectFiles={allProjectFiles}
-            isActiveSurface={isActiveSurface}
-            onSendMessage={handleSendMessage}
-            onStopStreaming={stopStreaming}
-          />
+          {currentPermission ? (
+            <AcpPermissionPrompt
+              permission={currentPermission}
+              queuedCount={permissionQueue.length - 1}
+              onRespond={handlePermission}
+            />
+          ) : null}
 
-          <ProviderApiKeyCommand
-            isOpen={chatState.apiKeyModalState.isOpen}
-            onClose={() =>
-              chatActions.setApiKeyModalState({
-                isOpen: false,
-                providerId: null,
-              })
-            }
-            initialProviderId={chatState.apiKeyModalState.providerId}
-          />
+          {!useInitialComposer ? composer : null}
         </>
       )}
     </div>

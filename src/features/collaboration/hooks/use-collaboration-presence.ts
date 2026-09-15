@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useCollaborationRuntimeStore } from "@/features/collaboration/stores/collaboration-runtime.store";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { useEditorStateStore } from "@/features/editor/stores/state.store";
@@ -39,7 +39,7 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 export function useCollaborationPresence() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const collaboration = useAuthStore((state) => state.subscription?.collaboration);
-  const setCollaborationSnapshot = useAuthStore((state) => state.setCollaborationSnapshot);
+  const setCollaborationSnapshot = useAuthStore((state) => state.actions.setCollaborationSnapshot);
   const collaborationEnabled = Boolean(collaboration?.enabled);
   const presenceEnabled = collaboration?.settings?.sharedSettings.presenceEnabled !== false;
   const realtimeDocumentsEnabled = Boolean(collaboration?.capabilities.realtimeDocuments);
@@ -47,22 +47,16 @@ export function useCollaborationPresence() {
   const activeDocumentStream = useCollaborationRuntimeStore((state) => state.activeDocumentStream);
   const mediaState = useCollaborationRuntimeStore((state) => state.mediaState);
   const collaborationRuntimeActions = useCollaborationRuntimeStore((state) => state.actions);
-  const activeBufferId = useBufferStore.use.activeBufferId();
-  const buffers = useBufferStore.use.buffers();
-  const cursorPosition = useEditorStateStore.use.cursorPosition();
-  const selection = useEditorStateStore.use.selection?.();
-  const scrollTop = useEditorStateStore.use.scrollTop();
-  const scrollLeft = useEditorStateStore.use.scrollLeft();
-  const viewportHeight = useEditorStateStore.use.viewportHeight();
-  const lastPublishedCursorKey = useRef<string | null>(null);
-  const lastPublishedViewportKey = useRef<string | null>(null);
-
-  const activeFilePath = useMemo(() => {
-    const buffer = buffers.find((entry) => entry.id === activeBufferId);
+  const activeFilePath = useBufferStore((state) => {
+    const buffer = state.activeBufferId
+      ? state.buffers.find((entry) => entry.id === state.activeBufferId)
+      : null;
     if (!buffer || !("path" in buffer)) return null;
     if (buffer.path.startsWith("untitled:") || buffer.path.includes("://")) return null;
     return buffer.path;
-  }, [activeBufferId, buffers]);
+  });
+  const lastPublishedCursorKey = useRef<string | null>(null);
+  const lastPublishedViewportKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated || !collaborationEnabled || !presenceEnabled) return;
@@ -228,56 +222,78 @@ export function useCollaborationPresence() {
       return;
     }
 
-    const cursorKey = JSON.stringify({
-      path: activeFilePath,
-      documentId,
-      cursorPosition,
-      selection,
-    });
-    if (lastPublishedCursorKey.current === cursorKey) return;
+    let timer: number | null = null;
+    let pendingCursorKey: string | null = null;
 
-    const timer = window.setTimeout(() => {
-      if (lastPublishedCursorKey.current === cursorKey) return;
-      lastPublishedCursorKey.current = cursorKey;
-
-      void appendCollaborationDocumentUpdate({
+    const scheduleCursorUpdate = () => {
+      const { cursorPosition, selection } = useEditorStateStore.getState();
+      const cursorKey = JSON.stringify({
+        path: activeFilePath,
         documentId,
-        clientId: getCollaborationClientId(),
-        clientSeq: getNextCollaborationClientSeq(),
-        updateType: "cursor",
-        operation: {
-          source: "desktop-cursor",
-          path: activeFilePath,
-          cursor: cursorPosition,
-          selection: selection ?? null,
-          activeChannelId: presenceTarget.channelId,
-          followingUserId: presenceTarget.followingUserId,
-        },
-      })
-        .then((nextCollaboration) => {
-          if (nextCollaboration) setCollaborationSnapshot(nextCollaboration);
-          collaborationRuntimeActions.recordCursorUpdateSent(documentId);
-        })
-        .catch(() => {
-          if (import.meta.env.DEV) {
-            console.debug("Collaboration cursor update append failed");
-          }
-        });
-    }, CURSOR_UPDATE_THROTTLE_MS);
+        cursorPosition,
+        selection,
+      });
+      if (lastPublishedCursorKey.current === cursorKey || pendingCursorKey === cursorKey) return;
 
-    return () => window.clearTimeout(timer);
+      pendingCursorKey = cursorKey;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        pendingCursorKey = null;
+        if (lastPublishedCursorKey.current === cursorKey) return;
+        lastPublishedCursorKey.current = cursorKey;
+
+        void appendCollaborationDocumentUpdate({
+          documentId,
+          clientId: getCollaborationClientId(),
+          clientSeq: getNextCollaborationClientSeq(),
+          updateType: "cursor",
+          operation: {
+            source: "desktop-cursor",
+            path: activeFilePath,
+            cursor: cursorPosition,
+            selection: selection ?? null,
+            activeChannelId: presenceTarget.channelId,
+            followingUserId: presenceTarget.followingUserId,
+          },
+        })
+          .then((nextCollaboration) => {
+            if (nextCollaboration) setCollaborationSnapshot(nextCollaboration);
+            collaborationRuntimeActions.recordCursorUpdateSent(documentId);
+          })
+          .catch(() => {
+            if (import.meta.env.DEV) {
+              console.debug("Collaboration cursor update append failed");
+            }
+          });
+      }, CURSOR_UPDATE_THROTTLE_MS);
+    };
+
+    scheduleCursorUpdate();
+    const unsubscribe = useEditorStateStore.subscribe((state, previousState) => {
+      if (
+        state.cursorPosition === previousState.cursorPosition &&
+        state.selection === previousState.selection
+      ) {
+        return;
+      }
+      scheduleCursorUpdate();
+    });
+
+    return () => {
+      unsubscribe();
+      if (timer !== null) window.clearTimeout(timer);
+    };
   }, [
     activeDocumentStream.documentId,
     activeDocumentStream.status,
     activeFilePath,
     collaborationEnabled,
     collaborationRuntimeActions,
-    cursorPosition,
     isAuthenticated,
     presenceTarget.channelId,
     presenceTarget.followingUserId,
     realtimeDocumentsEnabled,
-    selection,
     setCollaborationSnapshot,
   ]);
 
@@ -294,48 +310,75 @@ export function useCollaborationPresence() {
       return;
     }
 
-    const viewportKey = JSON.stringify({
-      path: activeFilePath,
-      documentId,
-      scrollTop,
-      scrollLeft,
-      viewportHeight,
-    });
-    if (lastPublishedViewportKey.current === viewportKey) return;
+    let timer: number | null = null;
+    let pendingViewportKey: string | null = null;
 
-    const timer = window.setTimeout(() => {
-      if (lastPublishedViewportKey.current === viewportKey) return;
-      lastPublishedViewportKey.current = viewportKey;
-
-      void appendCollaborationDocumentUpdate({
+    const scheduleViewportUpdate = () => {
+      const { scrollTop, scrollLeft, viewportHeight } = useEditorStateStore.getState();
+      const viewportKey = JSON.stringify({
+        path: activeFilePath,
         documentId,
-        clientId: getCollaborationClientId(),
-        clientSeq: getNextCollaborationClientSeq(),
-        updateType: "metadata",
-        operation: {
-          source: "desktop-viewport",
-          path: activeFilePath,
-          viewport: {
-            scrollTop,
-            scrollLeft,
-            viewportHeight,
-          },
-          activeChannelId: presenceTarget.channelId,
-          followingUserId: presenceTarget.followingUserId,
-        },
-      })
-        .then((nextCollaboration) => {
-          if (nextCollaboration) setCollaborationSnapshot(nextCollaboration);
-          collaborationRuntimeActions.recordViewportUpdateSent(documentId);
-        })
-        .catch(() => {
-          if (import.meta.env.DEV) {
-            console.debug("Collaboration viewport update append failed");
-          }
-        });
-    }, VIEWPORT_UPDATE_THROTTLE_MS);
+        scrollTop,
+        scrollLeft,
+        viewportHeight,
+      });
+      if (lastPublishedViewportKey.current === viewportKey || pendingViewportKey === viewportKey) {
+        return;
+      }
 
-    return () => window.clearTimeout(timer);
+      pendingViewportKey = viewportKey;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        pendingViewportKey = null;
+        if (lastPublishedViewportKey.current === viewportKey) return;
+        lastPublishedViewportKey.current = viewportKey;
+
+        void appendCollaborationDocumentUpdate({
+          documentId,
+          clientId: getCollaborationClientId(),
+          clientSeq: getNextCollaborationClientSeq(),
+          updateType: "metadata",
+          operation: {
+            source: "desktop-viewport",
+            path: activeFilePath,
+            viewport: {
+              scrollTop,
+              scrollLeft,
+              viewportHeight,
+            },
+            activeChannelId: presenceTarget.channelId,
+            followingUserId: presenceTarget.followingUserId,
+          },
+        })
+          .then((nextCollaboration) => {
+            if (nextCollaboration) setCollaborationSnapshot(nextCollaboration);
+            collaborationRuntimeActions.recordViewportUpdateSent(documentId);
+          })
+          .catch(() => {
+            if (import.meta.env.DEV) {
+              console.debug("Collaboration viewport update append failed");
+            }
+          });
+      }, VIEWPORT_UPDATE_THROTTLE_MS);
+    };
+
+    scheduleViewportUpdate();
+    const unsubscribe = useEditorStateStore.subscribe((state, previousState) => {
+      if (
+        state.scrollTop === previousState.scrollTop &&
+        state.scrollLeft === previousState.scrollLeft &&
+        state.viewportHeight === previousState.viewportHeight
+      ) {
+        return;
+      }
+      scheduleViewportUpdate();
+    });
+
+    return () => {
+      unsubscribe();
+      if (timer !== null) window.clearTimeout(timer);
+    };
   }, [
     activeDocumentStream.documentId,
     activeDocumentStream.status,
@@ -346,9 +389,6 @@ export function useCollaborationPresence() {
     presenceTarget.channelId,
     presenceTarget.followingUserId,
     realtimeDocumentsEnabled,
-    scrollLeft,
-    scrollTop,
     setCollaborationSnapshot,
-    viewportHeight,
   ]);
 }

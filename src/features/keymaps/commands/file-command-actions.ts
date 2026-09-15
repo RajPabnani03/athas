@@ -1,8 +1,8 @@
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { useEditorAppStore } from "@/features/editor/stores/editor-app.store";
 import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
-import { openLocalHistoryForActiveFile } from "@/features/local-history/utils/open-local-history";
 import { useUIState } from "@/features/window/stores/ui-state.store";
+import { requestWindowClose } from "@/features/window/utils/request-window-close";
 import { useKeymapStore } from "../stores/keymaps.store";
 
 function isTerminalFocused(): boolean {
@@ -10,7 +10,10 @@ function isTerminalFocused(): boolean {
 }
 
 export function showNewTab(): void {
-  if (isTerminalFocused()) return;
+  if (isTerminalFocused()) {
+    window.dispatchEvent(new CustomEvent("terminal-new"));
+    return;
+  }
   useBufferStore.getState().actions.showNewTabView();
 }
 
@@ -19,12 +22,14 @@ export async function saveActiveFile(): Promise<void> {
 }
 
 export async function saveActiveFileAs(): Promise<void> {
-  const { save } = await import("@tauri-apps/plugin-dialog");
-  const { invoke } = await import("@tauri-apps/api/core");
+  const [{ save }, { invoke }] = await Promise.all([
+    import("@tauri-apps/plugin-dialog"),
+    import("@tauri-apps/api/core"),
+  ]);
   const bufferStore = useBufferStore.getState();
   const activeBuffer = bufferStore.buffers.find((b) => b.id === bufferStore.activeBufferId);
 
-  if (!activeBuffer) return;
+  if (!activeBuffer || (activeBuffer.type === "editor" && activeBuffer.readOnly)) return;
 
   const result = await save({
     title: "Save As",
@@ -72,7 +77,14 @@ export function closeActiveTab(): void {
   const activeBuffer = bufferStore.buffers.find((b) => b.id === bufferStore.activeBufferId);
   if (activeBuffer) {
     bufferStore.actions.closeBuffer(activeBuffer.id);
+    return;
   }
+
+  requestWindowClose();
+}
+
+export function closeCurrentWindow(): void {
+  requestWindowClose();
 }
 
 export function closeAllTabs(): void {
@@ -115,11 +127,9 @@ export function createNewFile(): void {
 }
 
 export function openProjectPicker(): void {
-  useUIState.getState().setIsProjectPickerVisible(true);
+  useUIState.getState().openProjectPicker();
 }
 
 export function openQuickOpen(): void {
   useUIState.getState().setIsQuickOpenVisible(true);
 }
-
-export { openLocalHistoryForActiveFile };

@@ -1,203 +1,233 @@
+import { getProviderAccessFromMap } from "@/features/ai/stores/ai-chat/provider-actions";
+import { ArrowUpIcon, BoltIcon, CommandIcon, MicrophoneIcon, StopIcon } from "@/ui/icons";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { registerAgentDraft, takeAgentDraft } from "@/features/ai/detached/agent-window-drafts";
+import { shouldIgnoreSearchFile } from "@/features/file-search/utils/file-search-filtering";
 import {
-  BookOpenIcon as BookOpen,
-  CommandIcon,
-  ArrowUpIcon as ArrowUp,
-  DatabaseIcon as Database,
-  FileTextIcon as FileText,
-  KeyIcon as Key,
-  MicrophoneIcon as Mic,
-  StopIcon as Stop,
-  XIcon as X,
-} from "@phosphor-icons/react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { shouldIgnoreFile } from "@/features/quick-open/utils/file-filtering";
-import { classifySessionConfigOption } from "@/features/ai/lib/session-config-option-classifier";
-import { AI_CHAT_INSERT_SKILL_EVENT } from "@/features/ai/lib/skill-events";
+  AI_CHAT_INSERT_SKILL_EVENT,
+  type AIChatSkillInsertDetail,
+} from "@/features/ai/lib/skill-events";
 import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
-import type { InlineDropdownPosition } from "@/features/ai/types/ai-chat-store.types";
+import { useVoiceInput } from "@/features/ai/hooks/use-voice-input";
+import { parsePastedImages, restorePastedImages } from "@/features/ai/lib/image-attachments";
+import { useToast } from "@/features/layout/contexts/toast-context";
+import {
+  getComposerDropdownPosition,
+  getComposerText,
+  getComposerTextBeforeCaret,
+  getComposerTextRange,
+  isComposerTokenElement,
+} from "@/features/ai/utils/chat-composer-dom";
+import type { InlineDropdownPosition, PastedImage } from "@/features/ai/types/chat-composer.types";
 import type { AIChatSkill } from "@/features/ai/types/skills.types";
 import type { SlashCommand } from "@/features/ai/types/acp.types";
 import type { AIChatInputBarProps } from "@/features/ai/types/ai-chat.types";
 import type { FileEntry } from "@/features/file-system/types/app.types";
-import { getProviderById } from "@/features/ai/types/providers.types";
-import { openSidebarResourceBuffer } from "@/features/sidebar-drag/utils/open-sidebar-resource";
+import { openSidebarResourceBuffer } from "@/features/sidebar/utils/open-sidebar-resource";
 import {
   hasSidebarResourceDragData,
   readSidebarResourceDragData,
   SIDEBAR_RESOURCE_DROP_ON_AI_EVENT,
   type SidebarDragResource,
-} from "@/features/sidebar-drag/utils/sidebar-resource-drag";
+} from "@/features/sidebar/utils/sidebar-resource-drag";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
-import Badge from "@/ui/badge";
+import { ComposerAttachments } from "./composer-attachments";
+import { badgeVariants } from "@/ui/badge";
 import { Button } from "@/ui/button";
-import { SidebarComposerBody, SidebarFooter } from "@/ui/sidebar";
-import { toast } from "@/ui/toast";
+import { ButtonGroup, ButtonGroupSeparator } from "@/ui/button-group";
 import { cn } from "@/utils/cn";
-import { IS_LINUX, isMac } from "@/utils/platform";
+import { Composer, ComposerEditable, ComposerToolbar } from "@/ui/composer";
+import { useProjectStore } from "@/features/window/stores/project.store";
+import { chatContentWidth } from "../chat/chat-content-width";
+import { ComposerEffortSelector } from "./composer-effort-selector";
+import { ComposerAgentSelector } from "./composer-agent-selector";
+import { ChatPreferencesMenu } from "./chat-preferences-menu";
+import { AgentMessageQueue } from "./agent-message-queue";
 import { FileMentionDropdown } from "../mentions/file-mention-dropdown";
 import { SlashCommandDropdown } from "../mentions/slash-command-dropdown";
-import { AcpConfigSelector } from "../selectors/acp-config-selector";
-import { ModelSelector } from "../selectors/model-selector";
-import { ProviderSelector } from "../selectors/provider-selector";
-import { ModeSelector } from "../selectors/mode-selector";
 import { ContextSelector } from "../selectors/context-selector";
-import { ProviderApiKeyCommand } from "../provider-api-key-command";
-import { SkillsCommand } from "../skills/skills-command";
-import { ChatLoadingIndicator } from "../chat/chat-loading-indicator";
-import { chatComposerIconButtonClassName } from "./chat-composer-control-styles";
-
-function isComposerTokenElement(node: Node | null): node is Element {
-  return (
-    node?.nodeType === Node.ELEMENT_NODE &&
-    ((node as Element).hasAttribute("data-mention") ||
-      (node as Element).hasAttribute("data-slash-command"))
-  );
-}
-
-function getMicrophoneAccessErrorMessage(error?: string): string {
-  if (IS_LINUX) {
-    if (error === "service-not-allowed") {
-      return "Voice input is unavailable in this Linux webview. Chromium speech recognition may be blocked even when the microphone works.";
-    }
-
-    return "Microphone access failed. Check your PipeWire/PulseAudio input device and unmute the default microphone.";
-  }
-
-  return "Microphone access failed. Check System Settings -> Privacy & Security -> Microphone.";
-}
 
 const AIChatInputBar = memo(function AIChatInputBar({
+  chatId,
   buffers,
   allProjectFiles,
+  surfaceId,
+  currentAgentId,
+  isTyping,
+  streamingMessageId,
+  queuedMessages,
+  selectedBufferIds,
+  selectedFilesPaths,
+  selectedEditorContexts,
+  onToggleBufferSelection,
+  onToggleFileSelection,
+  onSetSelectedBufferIds,
+  onSetSelectedFilesPaths,
+  onRemoveEditorContext,
   isActiveSurface = true,
+  presentation = "default",
+  autoFocus = false,
+  onAgentChange,
   onSendMessage,
+  onInterruptAndSend,
+  onMoveQueuedMessage,
+  onRemoveQueuedMessage,
   onStopStreaming,
 }: AIChatInputBarProps) {
   const inputRef = useRef<HTMLDivElement>(null);
-  const contextDropdownRef = useRef<HTMLDivElement>(null);
+  const contextTriggerRef = useRef<HTMLButtonElement>(null);
   const aiChatContainerRef = useRef<HTMLDivElement>(null);
   const isUpdatingContentRef = useRef(false);
   const visibleMentionFilesRef = useRef<FileEntry[]>([]);
   const performanceTimer = useRef<number | null>(null);
-  const speechRecognitionRef = useRef<SpeechRecognition | null>(null);
-  const shouldKeepListeningRef = useRef(false);
 
   // Local state for input emptiness check (to avoid subscribing to full input text)
   const [hasInputText, setHasInputText] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [interimTranscript, setInterimTranscript] = useState("");
   const [isContextDragOver, setIsContextDragOver] = useState(false);
-  const [activeInlineControl, setActiveInlineControl] = useState<string | null>(null);
-  const [isSkillsOpen, setIsSkillsOpen] = useState(false);
-  const [isApiKeyManagerOpen, setIsApiKeyManagerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const projectPath = useProjectStore((state) => state.rootFolderPath || ".");
+  const inputValueRef = useRef("");
+  const [pastedImages, setPastedImages] = useState<PastedImage[]>([]);
+  const { showToast } = useToast();
+  const draftReader = useRef(() => ({
+    text: inputValueRef.current,
+    images: pastedImages,
+    bufferIds: [...selectedBufferIds],
+    filePaths: [...selectedFilesPaths],
+    editorContexts: selectedEditorContexts,
+  }));
+  draftReader.current = () => ({
+    text: inputValueRef.current,
+    images: pastedImages,
+    bufferIds: [...selectedBufferIds],
+    filePaths: [...selectedFilesPaths],
+    editorContexts: selectedEditorContexts,
+  });
+  useLayoutEffect(() => {
+    const draft = takeAgentDraft(surfaceId);
+    if (draft) {
+      inputValueRef.current = draft.text;
+      if (inputRef.current) inputRef.current.textContent = draft.text;
+      setHasInputText(draft.text.trim().length > 0);
+      setPastedImages(draft.images);
+    }
+    return registerAgentDraft(surfaceId, () => draftReader.current());
+  }, [surfaceId]);
+  const [isContextDropdownOpen, setIsContextDropdownOpen] = useState(false);
+  const [mentionState, setMentionState] = useState({
+    active: false,
+    position: { top: 0, bottom: 0, left: 0, width: 0 },
+    search: "",
+    startIndex: 0,
+    selectedIndex: 0,
+  });
+  const [slashCommandState, setSlashCommandState] = useState({
+    active: false,
+    position: { top: 0, bottom: 0, left: 0, width: 0 },
+    search: "",
+    selectedIndex: 0,
+  });
   const slashCommandRangeRef = useRef({ startIndex: 0, endIndex: 0 });
 
-  // Get state from store - DO NOT subscribe to 'input' to avoid re-renders on every keystroke
-  const isTyping = useAIChatStore((state) => state.isTyping);
-  const streamingMessageId = useAIChatStore((state) => state.streamingMessageId);
-  const selectedBufferIds = useAIChatStore((state) => state.selectedBufferIds);
-  const selectedFilesPaths = useAIChatStore((state) => state.selectedFilesPaths);
-  const isContextDropdownOpen = useAIChatStore((state) => state.isContextDropdownOpen);
-  const queueCount = useAIChatStore((state) => state.messageQueue.length);
-  const hasApiKey = useAIChatStore((state) => state.hasApiKey);
-  const mentionState = useAIChatStore((state) => state.mentionState);
-  const getCurrentAgentId = useAIChatStore((state) => state.getCurrentAgentId);
   const sessionConfigOptions = useAIChatStore((state) => state.sessionConfigOptions);
-  const sessionModeState = useAIChatStore((state) => state.sessionModeState);
-  const acpStatus = useAIChatStore((state) => state.acpStatus);
-  const aiProviderId = useSettingsStore((state) => state.settings.aiProviderId);
-  const aiModelId = useSettingsStore((state) => state.settings.aiModelId);
-  const aiCustomModelId = useSettingsStore((state) => state.settings.aiCustomModelId);
-  const aiAutocompleteCustomModelId = useSettingsStore(
-    (state) => state.settings.aiAutocompleteCustomModelId,
+  const session = useAIChatStore((state) => state.chats.find((chat) => chat.id === chatId));
+  const defaultProviderId = useSettingsStore((state) => state.settings.aiProviderId);
+  const defaultModelId = useSettingsStore((state) => state.settings.aiModelId);
+  const aiProviderId = session?.providerId ?? defaultProviderId;
+  const aiModelId = session?.modelId ?? defaultModelId;
+  const hasApiKey = useAIChatStore((state) =>
+    getProviderAccessFromMap(aiProviderId, state.providerApiKeys),
   );
-  const updateSetting = useSettingsStore((state) => state.updateSetting);
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
 
   // Check if current agent is "custom" (only show model selector for custom agent)
-  const currentAgentId = getCurrentAgentId();
   const isCustomAgent = currentAgentId === "custom";
 
   // ACP agents don't need API key (they handle their own auth)
   const isInputEnabled = isCustomAgent ? hasApiKey : true;
   const isStreaming = isTyping && !!streamingMessageId;
-  const acpInlineConfigOptions = useMemo(
-    () =>
-      isCustomAgent
-        ? []
-        : sessionConfigOptions
-            .map((option) => ({
-              option,
-              category: classifySessionConfigOption(option),
-            }))
-            .filter(
-              ({ option, category }) =>
-                option.kind.type === "select" &&
-                option.kind.options.length > 0 &&
-                (category === "model" || category === "mode" || category === "thought_level"),
-            )
-            .slice(0, 3),
-    [isCustomAgent, sessionConfigOptions],
+  const changeSessionConfigOption = useAIChatStore(
+    (state) => state.actions.changeSessionConfigOption,
   );
-  const hasAcpLegacyModeOptions = !isCustomAgent && sessionModeState.availableModes.length > 0;
-  const hasAcpConfigModeOption = acpInlineConfigOptions.some(({ category }) => category === "mode");
-  const hasAcpConfigOptions = acpInlineConfigOptions.length > 0;
-  const isAcpMetadataLoading =
-    !isCustomAgent &&
-    isTyping &&
-    (!acpStatus?.initialized || (!hasAcpLegacyModeOptions && !hasAcpConfigOptions));
 
-  // Memoize action selectors
-  const setInput = useAIChatStore((state) => state.setInput);
-  const setIsContextDropdownOpen = useAIChatStore((state) => state.setIsContextDropdownOpen);
-  const toggleBufferSelection = useAIChatStore((state) => state.toggleBufferSelection);
-  const toggleFileSelection = useAIChatStore((state) => state.toggleFileSelection);
-  const setSelectedBufferIds = useAIChatStore((state) => state.setSelectedBufferIds);
-  const setSelectedFilesPaths = useAIChatStore((state) => state.setSelectedFilesPaths);
-  const showMention = useAIChatStore((state) => state.showMention);
-  const hideMention = useAIChatStore((state) => state.hideMention);
-  const updatePosition = useAIChatStore((state) => state.updatePosition);
-  const setSelectedIndex = useAIChatStore((state) => state.setSelectedIndex);
-
-  // Slash command state and actions
-  const slashCommandState = useAIChatStore((state) => state.slashCommandState);
-  const showSlashCommands = useAIChatStore((state) => state.showSlashCommands);
-  const hideSlashCommands = useAIChatStore((state) => state.hideSlashCommands);
-  const selectNextSlashCommand = useAIChatStore((state) => state.selectNextSlashCommand);
-  const selectPreviousSlashCommand = useAIChatStore((state) => state.selectPreviousSlashCommand);
-  const getFilteredSlashCommands = useAIChatStore((state) => state.getFilteredSlashCommands);
-  const changeSessionConfigOption = useAIChatStore((state) => state.changeSessionConfigOption);
-
-  const handleAthasProviderChange = useCallback(
-    (nextProviderId: string) => {
-      const provider = getProviderById(nextProviderId);
+  const handleApiModelChange = useCallback(
+    (nextModelId: string, nextProviderId: string) => {
       void updateSetting("aiProviderId", nextProviderId);
-      if (nextProviderId === "custom") {
-        void updateSetting("aiModelId", aiCustomModelId || aiAutocompleteCustomModelId);
-        return;
-      }
-      if (provider && provider.models.length > 0) {
-        void updateSetting("aiModelId", provider.models[0].id);
-      }
-    },
-    [aiAutocompleteCustomModelId, aiCustomModelId, updateSetting],
-  );
-
-  const handleAthasModelChange = useCallback(
-    (nextModelId: string) => {
-      if (aiProviderId === "custom") {
-        void updateSetting("aiCustomModelId", nextModelId);
-      }
       void updateSetting("aiModelId", nextModelId);
+      if (nextProviderId === "custom") void updateSetting("aiCustomModelId", nextModelId);
+      if (onAgentChange) {
+        onAgentChange("custom", { providerId: nextProviderId, modelId: nextModelId });
+      } else if (chatId && isCustomAgent) {
+        useAIChatStore.getState().actions.setChatModel(chatId, nextProviderId, nextModelId);
+      }
     },
-    [aiProviderId, updateSetting],
+    [chatId, isCustomAgent, onAgentChange, updateSetting],
   );
 
-  // Pasted images state and actions
-  const pastedImages = useAIChatStore((state) => state.pastedImages);
-  const addPastedImage = useAIChatStore((state) => state.addPastedImage);
-  const removePastedImage = useAIChatStore((state) => state.removePastedImage);
-  const clearPastedImages = useAIChatStore((state) => state.clearPastedImages);
+  const availableSlashCommands = useAIChatStore((state) => state.availableSlashCommands);
+  const filteredSlashCommands = useMemo(() => {
+    const search = slashCommandState.search.trim().toLowerCase();
+    if (!search) return availableSlashCommands;
+    return availableSlashCommands.filter(
+      (command) =>
+        command.name.toLowerCase().includes(search) ||
+        command.description?.toLowerCase().includes(search),
+    );
+  }, [availableSlashCommands, slashCommandState.search]);
+
+  const setInput = useCallback((input: string) => {
+    inputValueRef.current = input;
+  }, []);
+  const addPastedImage = useCallback((image: PastedImage) => {
+    setPastedImages((current) => [...current, image]);
+  }, []);
+  const removePastedImage = useCallback((imageId: string) => {
+    setPastedImages((current) => current.filter((image) => image.id !== imageId));
+  }, []);
+  const clearPastedImages = useCallback(() => setPastedImages([]), []);
+  const toggleBufferSelection = onToggleBufferSelection;
+  const toggleFileSelection = onToggleFileSelection;
+  const setSelectedBufferIds = onSetSelectedBufferIds;
+  const setSelectedFilesPaths = onSetSelectedFilesPaths;
+  const showMention = useCallback(
+    (position: InlineDropdownPosition, search: string, startIndex: number) => {
+      setMentionState({ active: true, position, search, startIndex, selectedIndex: 0 });
+    },
+    [],
+  );
+  const hideMention = useCallback(() => {
+    setMentionState((current) => ({ ...current, active: false }));
+  }, []);
+  const updatePosition = useCallback((position: InlineDropdownPosition) => {
+    setMentionState((current) => ({ ...current, position }));
+  }, []);
+  const setSelectedIndex = useCallback((selectedIndex: number) => {
+    setMentionState((current) => ({ ...current, selectedIndex }));
+  }, []);
+  const showSlashCommands = useCallback((position: InlineDropdownPosition, search: string) => {
+    setSlashCommandState({ active: true, position, search, selectedIndex: 0 });
+  }, []);
+  const hideSlashCommands = useCallback(() => {
+    setSlashCommandState((current) => ({ ...current, active: false }));
+  }, []);
+  const selectNextSlashCommand = useCallback(() => {
+    setSlashCommandState((current) => ({
+      ...current,
+      selectedIndex: Math.min(
+        current.selectedIndex + 1,
+        Math.max(filteredSlashCommands.length - 1, 0),
+      ),
+    }));
+  }, [filteredSlashCommands.length]);
+  const selectPreviousSlashCommand = useCallback(() => {
+    setSlashCommandState((current) => ({
+      ...current,
+      selectedIndex: Math.max(current.selectedIndex - 1, 0),
+    }));
+  }, []);
+  const setSlashCommandSelectedIndex = useCallback((selectedIndex: number) => {
+    setSlashCommandState((current) => ({ ...current, selectedIndex }));
+  }, []);
 
   const closeComposerPopovers = useCallback(() => {
     if (slashCommandState.active) {
@@ -219,30 +249,27 @@ const AIChatInputBar = memo(function AIChatInputBar({
   ]);
 
   const closeInlineMenus = useCallback(() => {
-    setActiveInlineControl(null);
     closeComposerPopovers();
   }, [closeComposerPopovers]);
 
   const addBufferToContext = useCallback(
     (bufferId: string) => {
-      const currentSelectedBufferIds = useAIChatStore.getState().selectedBufferIds;
-      if (currentSelectedBufferIds.has(bufferId)) return;
-      const nextSelectedBufferIds = new Set(currentSelectedBufferIds);
+      if (selectedBufferIds.has(bufferId)) return;
+      const nextSelectedBufferIds = new Set(selectedBufferIds);
       nextSelectedBufferIds.add(bufferId);
       setSelectedBufferIds(nextSelectedBufferIds);
     },
-    [setSelectedBufferIds],
+    [selectedBufferIds, setSelectedBufferIds],
   );
 
   const addPathToContext = useCallback(
     (filePath: string) => {
-      const currentSelectedFilesPaths = useAIChatStore.getState().selectedFilesPaths;
-      if (currentSelectedFilesPaths.has(filePath)) return;
-      const nextSelectedFilesPaths = new Set(currentSelectedFilesPaths);
+      if (selectedFilesPaths.has(filePath)) return;
+      const nextSelectedFilesPaths = new Set(selectedFilesPaths);
       nextSelectedFilesPaths.add(filePath);
       setSelectedFilesPaths(nextSelectedFilesPaths);
     },
-    [setSelectedFilesPaths],
+    [selectedFilesPaths, setSelectedFilesPaths],
   );
 
   const addSidebarResourceToContext = useCallback(
@@ -274,6 +301,7 @@ const AIChatInputBar = memo(function AIChatInputBar({
 
   useEffect(() => {
     const handleSidebarResourceDropOnAI = (event: Event) => {
+      if (!isActiveSurface || surfaceId !== "activity-sidebar") return;
       const resource = (event as CustomEvent<{ resource?: SidebarDragResource }>).detail?.resource;
       if (!resource) return;
       void addSidebarResourceToContext(resource);
@@ -282,7 +310,7 @@ const AIChatInputBar = memo(function AIChatInputBar({
     window.addEventListener(SIDEBAR_RESOURCE_DROP_ON_AI_EVENT, handleSidebarResourceDropOnAI);
     return () =>
       window.removeEventListener(SIDEBAR_RESOURCE_DROP_ON_AI_EVENT, handleSidebarResourceDropOnAI);
-  }, [addSidebarResourceToContext]);
+  }, [addSidebarResourceToContext, isActiveSurface, surfaceId]);
 
   const handleContextDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (!hasSidebarResourceDragData(event.dataTransfer)) return;
@@ -314,142 +342,13 @@ const AIChatInputBar = memo(function AIChatInputBar({
 
   // Computed state for send button
   const hasImages = pastedImages.length > 0;
-  const isSendDisabled = isStreaming ? false : (!hasInputText && !hasImages) || !isInputEnabled;
-  const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const isMacDevSpeechRecognitionBlocked = import.meta.env.DEV && isMac();
-  const isSpeechRecognitionSupported =
-    !isMacDevSpeechRecognitionBlocked && typeof SpeechRecognitionCtor !== "undefined";
-
-  // Highly optimized function to get plain text from contentEditable div
-  const getPlainTextFromDiv = useCallback(() => {
-    if (!inputRef.current) return "";
-
-    const element = inputRef.current;
-    const children = element.childNodes;
-
-    // Fast path: check if there are any composer tokens (without Array.from for performance)
-    let hasComposerTokens = false;
-    for (let i = 0; i < children.length; i++) {
-      if (isComposerTokenElement(children[i])) {
-        hasComposerTokens = true;
-        break;
-      }
-    }
-
-    // If no tokens, just return textContent (fastest path)
-    if (!hasComposerTokens) {
-      return element.textContent || "";
-    }
-
-    // Handle composer tokens
-    let text = "";
-    for (let i = 0; i < children.length; i++) {
-      const node = children[i];
-      if (node.nodeType === Node.TEXT_NODE) {
-        text += node.textContent || "";
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        const el = node as Element;
-        if (el.hasAttribute("data-mention")) {
-          const fileName = el.getAttribute("data-mention-name") || el.textContent?.trim();
-          if (fileName) text += `@[${fileName}]`;
-        } else if (el.hasAttribute("data-slash-command")) {
-          const commandName = el.getAttribute("data-slash-command-name") || el.textContent?.trim();
-          if (commandName) text += commandName.startsWith("/") ? commandName : `/${commandName}`;
-        } else {
-          text += node.textContent || "";
-        }
-      }
-    }
-
-    return text;
-  }, []);
-
-  const getTextBeforeCaret = useCallback(() => {
-    if (!inputRef.current) return getPlainTextFromDiv();
-
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) return getPlainTextFromDiv();
-
-    const range = selection.getRangeAt(0);
-    if (!inputRef.current.contains(range.startContainer)) return getPlainTextFromDiv();
-
-    const preCaretRange = range.cloneRange();
-    preCaretRange.selectNodeContents(inputRef.current);
-    preCaretRange.setEnd(range.startContainer, range.startOffset);
-    return preCaretRange.toString();
-  }, [getPlainTextFromDiv]);
-
-  const getCaretDropdownPosition = useCallback(() => {
-    if (!inputRef.current) {
-      return { top: 0, bottom: 0, left: 0, width: 0 };
-    }
-
-    const inputRect = inputRef.current.getBoundingClientRect();
-    if (inputRect.width <= 0 || inputRect.height <= 0 || inputRect.bottom <= 0) {
-      return { top: 0, bottom: 0, left: 0, width: 0 };
-    }
-
-    const fallbackPosition: InlineDropdownPosition = {
-      top: Math.max(inputRect.top, inputRect.bottom - 24),
-      bottom: inputRect.bottom,
-      left: inputRect.left + 12,
-      width: 320,
-    };
-
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) {
-      return fallbackPosition;
-    }
-
-    const range = selection.getRangeAt(0).cloneRange();
-    if (!inputRef.current.contains(range.startContainer)) {
-      return fallbackPosition;
-    }
-
-    range.collapse(true);
-    let rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
-
-    if ((rect.width === 0 && rect.height === 0) || !Number.isFinite(rect.left)) {
-      const marker = document.createElement("span");
-      marker.textContent = "\u200B";
-      range.insertNode(marker);
-      rect = marker.getBoundingClientRect();
-      const parent = marker.parentNode;
-      const nextSibling = marker.nextSibling;
-      marker.remove();
-      if (parent) {
-        const restoreRange = document.createRange();
-        if (nextSibling) {
-          restoreRange.setStartBefore(nextSibling);
-        } else {
-          restoreRange.selectNodeContents(parent);
-          restoreRange.collapse(false);
-        }
-        restoreRange.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(restoreRange);
-      }
-    }
-
-    if (!Number.isFinite(rect.left) || rect.height === 0) {
-      return fallbackPosition;
-    }
-
-    const horizontalPadding = 12;
-    const left = Math.min(
-      Math.max(rect.left, inputRect.left + horizontalPadding),
-      inputRect.right - horizontalPadding,
-    );
-
-    const position: InlineDropdownPosition = {
-      top: rect.top,
-      bottom: rect.bottom,
-      left,
-      width: 320,
-    };
-
-    return position;
-  }, []);
+  const isSendDisabled = (!hasInputText && !hasImages) || !isInputEnabled;
+  const getPlainTextFromDiv = useCallback(() => getComposerText(inputRef.current), []);
+  const getTextBeforeCaret = useCallback(() => getComposerTextBeforeCaret(inputRef.current), []);
+  const getCaretDropdownPosition = useCallback(
+    () => getComposerDropdownPosition(inputRef.current),
+    [],
+  );
 
   const getMentionDropdownPosition = useCallback(() => {
     const position = getCaretDropdownPosition();
@@ -519,30 +418,9 @@ const AIChatInputBar = memo(function AIChatInputBar({
   }, [mentionState.active, updatePosition, getMentionDropdownPosition]);
 
   const mentionableFiles = useMemo(
-    () => allProjectFiles.filter((file) => !file.isDir && !shouldIgnoreFile(file.path)),
+    () => allProjectFiles.filter((file) => !file.isDir && !shouldIgnoreSearchFile(file.path)),
     [allProjectFiles],
   );
-
-  const selectedContextItems = useMemo(() => {
-    const bufferSelections = buffers
-      .filter((buffer) => buffer.type !== "agent" && selectedBufferIds.has(buffer.id))
-      .map((buffer) => ({
-        type: "buffer" as const,
-        id: buffer.id,
-        name: buffer.name,
-        databaseType: buffer.type === "database" ? buffer.databaseType : undefined,
-        isDirty: buffer.type === "editor" && buffer.isDirty,
-      }));
-
-    const fileSelections = Array.from(selectedFilesPaths).map((filePath) => ({
-      type: "file" as const,
-      id: filePath,
-      name: filePath.split("/").pop() || "Unknown",
-      path: filePath,
-    }));
-
-    return [...bufferSelections, ...fileSelections];
-  }, [buffers, selectedBufferIds, selectedFilesPaths]);
 
   // ResizeObserver to track container size changes
   useEffect(() => {
@@ -583,71 +461,6 @@ const AIChatInputBar = memo(function AIChatInputBar({
     getSlashDropdownPosition,
   ]);
 
-  // Sync contentEditable div with input state when it changes externally (e.g., when switching chats)
-  // We use a ref to track the last synced input to avoid subscribing to every keystroke
-  const lastSyncedInputRef = useRef("");
-
-  useEffect(() => {
-    let syncTimer: ReturnType<typeof setTimeout> | null = null;
-
-    // Only sync when input changes externally (not from user typing)
-    const checkAndSync = () => {
-      if (!inputRef.current || isUpdatingContentRef.current) return;
-
-      const storeInput = useAIChatStore.getState().input;
-      const currentContent = getPlainTextFromDiv();
-
-      // Only sync if store input differs from what's in the DOM and it's an external change
-      if (storeInput !== currentContent && storeInput !== lastSyncedInputRef.current) {
-        isUpdatingContentRef.current = true;
-        lastSyncedInputRef.current = storeInput;
-
-        // Update contentEditable content
-        if (storeInput === "") {
-          inputRef.current.innerHTML = "";
-        } else {
-          inputRef.current.textContent = storeInput;
-        }
-
-        // Position cursor at the end
-        syncTimer = setTimeout(() => {
-          if (inputRef.current) {
-            const selection = window.getSelection();
-            if (selection) {
-              const range = document.createRange();
-              range.selectNodeContents(inputRef.current);
-              range.collapse(false);
-              selection.removeAllRanges();
-              selection.addRange(range);
-            }
-            inputRef.current.focus();
-          }
-          isUpdatingContentRef.current = false;
-        }, 0);
-      }
-    };
-
-    // Check on mount and when component updates
-    checkAndSync();
-
-    // Note: We don't subscribe to continuous changes to avoid re-renders
-    // The checkAndSync on mount handles initial sync and chat switching
-    return () => {
-      if (syncTimer) {
-        clearTimeout(syncTimer);
-        isUpdatingContentRef.current = false;
-      }
-    };
-  }, [getPlainTextFromDiv]);
-
-  useEffect(() => {
-    return () => {
-      shouldKeepListeningRef.current = false;
-      speechRecognitionRef.current?.abort();
-      speechRecognitionRef.current = null;
-    };
-  }, []);
-
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     // Handle slash command navigation
     if (slashCommandState.active) {
@@ -659,9 +472,8 @@ const AIChatInputBar = memo(function AIChatInputBar({
         selectPreviousSlashCommand();
       } else if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        const filteredCommands = getFilteredSlashCommands();
-        if (filteredCommands[slashCommandState.selectedIndex]) {
-          handleSlashCommandSelect(filteredCommands[slashCommandState.selectedIndex]);
+        if (filteredSlashCommands[slashCommandState.selectedIndex]) {
+          handleSlashCommandSelect(filteredSlashCommands[slashCommandState.selectedIndex]);
         }
       } else if (e.key === "Escape") {
         e.preventDefault();
@@ -780,8 +592,8 @@ const AIChatInputBar = memo(function AIChatInputBar({
 
     const plainTextFromDiv = getPlainTextFromDiv();
 
-    // Use store's getState to avoid dependency on input prop
-    const currentInput = useAIChatStore.getState().input;
+    // Keep keystrokes local to this composer so sibling surfaces cannot mirror them.
+    const currentInput = inputValueRef.current;
 
     // Only update if content actually changed
     if (plainTextFromDiv !== currentInput) {
@@ -799,13 +611,11 @@ const AIChatInputBar = memo(function AIChatInputBar({
           startIndex,
           endIndex: textBeforeCaret.length,
         };
-        setActiveInlineControl("commands");
         if (isContextDropdownOpen) {
           setIsContextDropdownOpen(false);
         }
         showSlashCommands(getSlashDropdownPosition(), search);
       } else if (slashCommandState.active) {
-        setActiveInlineControl(null);
         hideSlashCommands();
       }
 
@@ -889,15 +699,15 @@ const AIChatInputBar = memo(function AIChatInputBar({
     [getPlainTextFromDiv, handleInputChange],
   );
 
-  const insertSkillAtCursor = useCallback(
-    (skill: AIChatSkill) => {
-      if (!inputRef.current || !skill.content.trim()) return;
+  const insertSkillContentAtCursor = useCallback(
+    (content: string) => {
+      if (!inputRef.current || !content.trim()) return;
 
       const selection = window.getSelection();
       const range = document.createRange();
       const currentText = getPlainTextFromDiv();
       const prefix = currentText.trim().length > 0 && !/\s$/.test(currentText) ? "\n\n" : "";
-      const textNode = document.createTextNode(`${prefix}${skill.content.trim()} `);
+      const textNode = document.createTextNode(`${prefix}${content.trim()} `);
 
       inputRef.current.focus();
 
@@ -925,16 +735,26 @@ const AIChatInputBar = memo(function AIChatInputBar({
     [getPlainTextFromDiv, handleInputChange],
   );
 
+  const insertSkillAtCursor = useCallback(
+    (skill: AIChatSkill) => insertSkillContentAtCursor(skill.content),
+    [insertSkillContentAtCursor],
+  );
+
+  const insertCodexSkillAtCursor = useCallback(
+    (skillName: string) => insertSkillContentAtCursor(`$${skillName}`),
+    [insertSkillContentAtCursor],
+  );
+
   useEffect(() => {
     const handleInsertSkill = (event: Event) => {
-      const skill = (event as CustomEvent<AIChatSkill>).detail;
-      if (!skill) return;
-      insertSkillAtCursor(skill);
+      const detail = (event as CustomEvent<AIChatSkillInsertDetail>).detail;
+      if (!isActiveSurface || detail?.surfaceId !== surfaceId) return;
+      insertSkillAtCursor(detail.skill);
     };
 
     window.addEventListener(AI_CHAT_INSERT_SKILL_EVENT, handleInsertSkill);
     return () => window.removeEventListener(AI_CHAT_INSERT_SKILL_EVENT, handleInsertSkill);
-  }, [insertSkillAtCursor]);
+  }, [insertSkillAtCursor, isActiveSurface]);
 
   // Handle paste - strip HTML formatting, keep only plain text. Images are added to preview.
   const handlePaste = useCallback(
@@ -1008,79 +828,45 @@ const AIChatInputBar = memo(function AIChatInputBar({
       if (!inputRef.current) return;
 
       isUpdatingContentRef.current = true;
-
-      const currentInput = useAIChatStore.getState().input;
-      const beforeMention = currentInput.slice(0, mentionState.startIndex);
-      const afterMention = currentInput.slice(
+      hideMention();
+      const mentionRange = getComposerTextRange(
+        inputRef.current,
+        mentionState.startIndex,
         mentionState.startIndex + mentionState.search.length + 1,
       );
-      const newInput = `${beforeMention}@[${file.name}] ${afterMention}`;
+      mentionRange.deleteContents();
 
-      // Update input state and hide mention dropdown
-      setInput(newInput);
-      hideMention();
+      const mentionSpan = document.createElement("span");
+      mentionSpan.setAttribute("data-mention", "true");
+      mentionSpan.setAttribute("data-mention-name", file.name);
+      mentionSpan.setAttribute("data-mention-path", file.path);
+      mentionSpan.setAttribute("contenteditable", "false");
+      mentionSpan.title = file.path;
+      mentionSpan.className = cn(
+        badgeVariants({ variant: "accent" }),
+        "max-w-48 truncate align-baseline select-none",
+      );
+      mentionSpan.textContent = file.name;
 
-      // Completely rebuild the DOM content to ensure clean structure
-      setTimeout(() => {
-        if (!inputRef.current) return;
+      const trailingSpace = document.createTextNode(" ");
+      const fragment = document.createDocumentFragment();
+      fragment.append(mentionSpan, trailingSpace);
+      mentionRange.insertNode(fragment);
 
-        // Clear all content
-        inputRef.current.innerHTML = "";
+      const selection = window.getSelection();
+      if (selection) {
+        const caretRange = document.createRange();
+        caretRange.setStart(trailingSpace, trailingSpace.length);
+        caretRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(caretRange);
+      }
 
-        // Build new content piece by piece
-        // Add text before mention if any
-        if (beforeMention) {
-          const beforeTextNode = document.createTextNode(beforeMention);
-          inputRef.current.appendChild(beforeTextNode);
-        }
-
-        // Add the mention badge
-        const mentionSpan = document.createElement("span");
-        mentionSpan.setAttribute("data-mention", "true");
-        mentionSpan.setAttribute("data-mention-name", file.name);
-        mentionSpan.setAttribute("data-mention-path", file.path);
-        mentionSpan.setAttribute("contenteditable", "false");
-        mentionSpan.title = file.path;
-        mentionSpan.className =
-          "ui-font ui-text-xs inline-flex min-h-6 max-w-[180px] items-center gap-1 truncate rounded-md border border-accent/30 bg-accent/10 px-1.5 py-0.5 leading-[1.35] text-accent align-baseline select-none";
-        mentionSpan.textContent = file.name;
-        inputRef.current.appendChild(mentionSpan);
-
-        // Always add a space and remaining text as separate text node
-        // Ensure there's always substantial content to prevent cursor from jumping to span
-        const remainingText = ` ${afterMention}${afterMention ? "" : " "}`;
-        const afterTextNode = document.createTextNode(remainingText);
-        inputRef.current.appendChild(afterTextNode);
-
-        // Add an invisible zero-width space to ensure cursor stays in text node
-        const separatorNode = document.createTextNode("\u200B"); // Zero-width space
-        inputRef.current.appendChild(separatorNode);
-
-        // Position cursor in the separator node to ensure it doesn't jump to span
-        const selection = window.getSelection();
-        if (selection) {
-          const range = document.createRange();
-          try {
-            // Position at the end of the separator node
-            range.setStart(separatorNode, 1);
-            range.collapse(true);
-            selection.removeAllRanges();
-            selection.addRange(range);
-          } catch {
-            // Fallback - position at end of input
-            range.selectNodeContents(inputRef.current);
-            range.collapse(false);
-            selection.removeAllRanges();
-            selection.addRange(range);
-          }
-        }
-
-        inputRef.current.focus();
-        isUpdatingContentRef.current = false;
-        setHasInputText(true);
-      }, 0);
+      inputRef.current.focus();
+      syncInputFromEditable();
+      isUpdatingContentRef.current = false;
     },
-    [mentionState.startIndex, mentionState.search.length, setInput, hideMention],
+    [hideMention, mentionState.search.length, mentionState.startIndex, syncInputFromEditable],
   );
 
   // Handle slash command selection
@@ -1089,628 +875,369 @@ const AIChatInputBar = memo(function AIChatInputBar({
       if (!inputRef.current) return;
 
       isUpdatingContentRef.current = true;
-
-      const currentInput = getPlainTextFromDiv();
       const { startIndex, endIndex } = slashCommandRangeRef.current;
-      const beforeCommand = currentInput.slice(0, startIndex);
-      const afterCommand = currentInput.slice(endIndex);
-      const normalizedAfterCommand = afterCommand.startsWith(" ")
-        ? afterCommand.slice(1)
-        : afterCommand;
-      const newInput = `${beforeCommand}/${command.name} ${normalizedAfterCommand}`;
-      setInput(newInput);
       hideSlashCommands();
+      const commandRange = getComposerTextRange(inputRef.current, startIndex, endIndex);
+      commandRange.deleteContents();
 
-      // Rebuild the DOM so the command behaves like an atomic composer token.
-      setTimeout(() => {
-        if (!inputRef.current) return;
+      const commandSpan = document.createElement("span");
+      commandSpan.setAttribute("data-slash-command", "true");
+      commandSpan.setAttribute("data-slash-command-name", command.name);
+      commandSpan.setAttribute("contenteditable", "false");
+      commandSpan.title = command.description || `/${command.name}`;
+      commandSpan.className = cn(
+        badgeVariants({ variant: "muted" }),
+        "max-w-48 truncate align-baseline select-none",
+      );
+      commandSpan.textContent = `/${command.name}`;
 
-        inputRef.current.innerHTML = "";
+      const trailingSpace = document.createTextNode(" ");
+      const fragment = document.createDocumentFragment();
+      fragment.append(commandSpan, trailingSpace);
+      commandRange.insertNode(fragment);
 
-        if (beforeCommand) {
-          inputRef.current.appendChild(document.createTextNode(beforeCommand));
-        }
+      const selection = window.getSelection();
+      if (selection) {
+        const caretRange = document.createRange();
+        caretRange.setStart(trailingSpace, trailingSpace.length);
+        caretRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(caretRange);
+      }
 
-        const commandSpan = document.createElement("span");
-        commandSpan.setAttribute("data-slash-command", "true");
-        commandSpan.setAttribute("data-slash-command-name", command.name);
-        commandSpan.setAttribute("contenteditable", "false");
-        commandSpan.title = command.description || `/${command.name}`;
-        commandSpan.className =
-          "ui-font ui-text-xs inline-flex min-h-6 max-w-[180px] items-center gap-1 truncate rounded-md border border-border/70 bg-hover/70 px-1.5 py-0.5 leading-[1.35] text-text align-baseline select-none";
-        commandSpan.textContent = `/${command.name}`;
-        inputRef.current.appendChild(commandSpan);
-
-        const afterTextNode = document.createTextNode(
-          ` ${normalizedAfterCommand}${normalizedAfterCommand ? "" : " "}`,
-        );
-        inputRef.current.appendChild(afterTextNode);
-
-        const separatorNode = document.createTextNode("\u200B");
-        inputRef.current.appendChild(separatorNode);
-
-        const selection = window.getSelection();
-        if (selection) {
-          const range = document.createRange();
-          try {
-            range.setStart(separatorNode, 1);
-            range.collapse(true);
-            selection.removeAllRanges();
-            selection.addRange(range);
-          } catch {
-            range.selectNodeContents(inputRef.current);
-            range.collapse(false);
-            selection.removeAllRanges();
-            selection.addRange(range);
-          }
-        }
-
-        inputRef.current.focus();
-        isUpdatingContentRef.current = false;
-        setHasInputText(true);
-      }, 0);
+      inputRef.current.focus();
+      syncInputFromEditable();
+      isUpdatingContentRef.current = false;
     },
-    [getPlainTextFromDiv, setInput, hideSlashCommands],
+    [hideSlashCommands, syncInputFromEditable],
   );
 
-  const handleSendMessage = async () => {
-    const currentInput = useAIChatStore.getState().input;
-    const currentImages = useAIChatStore.getState().pastedImages;
+  const handleSendMessage = () => {
+    const currentInput = inputValueRef.current;
+    const currentImages = pastedImages;
     const hasContent = currentInput.trim() || currentImages.length > 0;
     if (!hasContent || !isInputEnabled) return;
 
-    // Clear input and images immediately after send is triggered
+    let images;
+    try {
+      images = parsePastedImages(currentImages);
+    } catch (error) {
+      showToast({ message: String(error), type: "error" });
+      return;
+    }
+    const result = onSendMessage(currentInput, images);
+    if (!result.accepted) return;
+
     setInput("");
     setHasInputText(false);
     clearPastedImages();
     if (inputRef.current) {
       inputRef.current.innerHTML = "";
     }
-
-    // Send the captured message (TODO: include images in message)
-    await onSendMessage(currentInput);
   };
 
-  const stopVoiceInput = useCallback(() => {
-    shouldKeepListeningRef.current = false;
-    speechRecognitionRef.current?.stop();
-    setIsListening(false);
-    setInterimTranscript("");
-  }, []);
+  const replaceInput = useCallback(
+    (value: string) => {
+      if (!inputRef.current) return;
+      inputRef.current.textContent = value;
+      setInput(value);
+      setHasInputText(value.trim().length > 0);
+      inputRef.current.focus();
 
-  const startVoiceInput = useCallback(async () => {
-    if (!isInputEnabled) return;
+      const selection = window.getSelection();
+      if (!selection) return;
+      const range = document.createRange();
+      range.selectNodeContents(inputRef.current);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    },
+    [setInput],
+  );
 
-    if (isMacDevSpeechRecognitionBlocked) {
-      toast.warning("Voice input is disabled in macOS dev mode. Test it in a packaged app build.");
-      return;
-    }
-
-    if (!SpeechRecognitionCtor) {
-      toast.warning("Voice input is not supported in this webview.");
-      return;
-    }
-
-    if (navigator.mediaDevices?.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((track) => track.stop());
-      } catch {
-        toast.error(getMicrophoneAccessErrorMessage());
-        return;
-      }
-    }
-
-    const recognition = new SpeechRecognitionCtor();
-    speechRecognitionRef.current = recognition;
-    shouldKeepListeningRef.current = true;
-
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = navigator.language || "en-US";
-
-    recognition.onresult = (event) => {
-      let committedTranscript = "";
-      let nextInterimTranscript = "";
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0]?.transcript?.trim();
-        if (!transcript) continue;
-
-        if (event.results[i].isFinal) {
-          committedTranscript += `${transcript} `;
-        } else {
-          nextInterimTranscript = transcript;
-        }
-      }
-
-      if (committedTranscript.trim()) {
-        insertTextAtCursor(committedTranscript);
-      }
-
-      setInterimTranscript(nextInterimTranscript);
-    };
-
-    recognition.onerror = (event) => {
-      const isExpectedAbort = event.error === "aborted" || event.error === "no-speech";
-      setIsListening(false);
-      setInterimTranscript("");
-
-      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        shouldKeepListeningRef.current = false;
-        toast.error(getMicrophoneAccessErrorMessage(event.error));
-        return;
-      }
-
-      if (!isExpectedAbort) {
-        shouldKeepListeningRef.current = false;
-        toast.error("Voice input stopped unexpectedly.");
-      }
-    };
-
-    recognition.onend = () => {
-      if (shouldKeepListeningRef.current) {
-        try {
-          recognition.start();
-          return;
-        } catch {
-          shouldKeepListeningRef.current = false;
-        }
-      }
-
-      setIsListening(false);
-      setInterimTranscript("");
-      speechRecognitionRef.current = null;
-    };
-
+  const handleInterruptAndSend = () => {
+    const currentInput = inputValueRef.current;
+    if ((!currentInput.trim() && !pastedImages.length) || !isInputEnabled) return;
+    let images;
     try {
-      recognition.start();
-      setIsListening(true);
-      setInterimTranscript("");
-      inputRef.current?.focus();
-    } catch {
-      shouldKeepListeningRef.current = false;
-      speechRecognitionRef.current = null;
-      toast.error("Voice input could not be started.");
-    }
-  }, [SpeechRecognitionCtor, insertTextAtCursor, isInputEnabled, isMacDevSpeechRecognitionBlocked]);
-
-  const toggleVoiceInput = useCallback(() => {
-    if (isListening) {
-      stopVoiceInput();
+      images = parsePastedImages(pastedImages);
+    } catch (error) {
+      showToast({ message: String(error), type: "error" });
       return;
     }
+    const result = onInterruptAndSend(currentInput, images);
+    if (!result.accepted) return;
 
-    void startVoiceInput();
-  }, [isListening, startVoiceInput, stopVoiceInput]);
+    replaceInput("");
+    clearPastedImages();
+  };
 
-  // Get available slash commands
-  const availableSlashCommands = useAIChatStore((state) => state.availableSlashCommands);
+  const focusInput = useCallback(() => inputRef.current?.focus(), []);
+  const {
+    interimTranscript,
+    isListening,
+    isMacDevBlocked: isMacDevSpeechRecognitionBlocked,
+    isSupported: isSpeechRecognitionSupported,
+    toggle: toggleVoiceInput,
+  } = useVoiceInput({
+    enabled: isInputEnabled,
+    insertText: insertTextAtCursor,
+    focusInput,
+  });
+
   const hasSlashCommands = availableSlashCommands.length > 0;
-  const hasAttachedComposerDropdown = mentionState.active || slashCommandState.active;
+  const isInitialPresentation = presentation === "initial";
+  const inputPlaceholder = isInputEnabled
+    ? isInitialPresentation
+      ? "What do you want to create?"
+      : hasSlashCommands
+        ? "Ask anything... (@ files, / commands)"
+        : "Ask anything... (@ to mention files)"
+    : "Configure API key to enable Agent...";
+
+  useEffect(() => {
+    if (!autoFocus || !isActiveSurface) return;
+
+    const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [autoFocus, isActiveSurface]);
 
   return (
-    <SidebarFooter
+    <div
       ref={aiChatContainerRef}
-      surface
-      attached={hasAttachedComposerDropdown}
-      data-ai-context-drop-target
-      onDragOver={handleContextDragOver}
-      onDragLeave={handleContextDragLeave}
-      onDrop={handleContextDrop}
       className={cn(
-        "ai-chat-container relative z-20",
-        isContextDragOver && "border-accent bg-accent/5 shadow-[0_0_0_1px_var(--color-accent)]",
+        "ai-chat-container relative z-20 flex min-w-0 shrink-0 flex-col gap-1",
+        isInitialPresentation ? "w-full" : [chatContentWidth(), "mb-3"],
       )}
     >
-      <SidebarComposerBody>
-        {pastedImages.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-3 pt-3">
-            {pastedImages.map((image) => (
-              <div
-                key={image.id}
-                className="group relative overflow-hidden rounded border border-border bg-secondary-bg"
-              >
-                <img
-                  src={image.dataUrl}
-                  alt={image.name}
-                  className="h-16 w-auto max-w-[120px] object-cover"
-                />
-                <Button
-                  onClick={() => removePastedImage(image.id)}
-                  variant="ghost"
-                  compact
-                  className="absolute top-0.5 right-0.5 rounded-full bg-black/60 text-white opacity-0 hover:bg-black/80 group-hover:opacity-100"
-                  aria-label="Remove image"
-                >
-                  <X />
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div
-          ref={inputRef}
-          contentEditable={isInputEnabled}
-          onInput={handleInputChange}
-          onKeyDown={handleKeyDown}
-          onMouseDown={handleEditableMouseDown}
-          onFocus={() => setIsComposerFocused(true)}
-          onBlur={() => setIsComposerFocused(false)}
-          onPaste={handlePaste}
-          data-placeholder={
-            isInputEnabled
-              ? hasSlashCommands
-                ? "Ask anything... (@ files, / commands)"
-                : "Ask anything... (@ to mention files)"
-              : "Configure API key to enable AI chat..."
-          }
-          className={cn(
-            "max-h-[140px] min-h-[64px] w-full resize-none overflow-x-hidden overflow-y-auto bg-transparent",
-            "ui-font ui-text-sm px-3 pt-3 pb-2 text-text placeholder:text-text-lighter",
-            "whitespace-pre-wrap focus:outline-none",
-            hasAttachedComposerDropdown && "border-none",
-            !isInputEnabled ? "cursor-not-allowed opacity-50" : "cursor-text",
-            "empty:before:pointer-events-none empty:before:text-text-lighter empty:before:content-[attr(data-placeholder)]",
-          )}
-          style={
-            {
-              lineHeight: "1.4",
-              wordWrap: "break-word",
-              overflowWrap: "break-word",
-            } as React.CSSProperties
-          }
-          role="textbox"
-          aria-multiline="true"
-          aria-label="Message input"
-          tabIndex={isInputEnabled ? 0 : -1}
+      <Composer
+        data-ai-element="prompt-input"
+        data-ai-context-drop-target
+        onDragOver={handleContextDragOver}
+        onDragLeave={handleContextDragLeave}
+        onDrop={handleContextDrop}
+        dragActive={isContextDragOver}
+      >
+        <ComposerAttachments
+          buffers={buffers}
+          selectedBufferIds={selectedBufferIds}
+          selectedFilesPaths={selectedFilesPaths}
+          selectedEditorContexts={selectedEditorContexts}
+          pastedImages={pastedImages}
+          contextTriggerRef={contextTriggerRef}
+          onRemove={(source) => {
+            if (source.type === "buffer") toggleBufferSelection(source.id);
+            else if (source.type === "file") toggleFileSelection(source.id);
+            else if (source.type === "selection") onRemoveEditorContext(source.id);
+            else removePastedImage(source.id);
+          }}
         />
 
-        <div className="flex items-end gap-2 px-2 pb-2 pt-1">
-          <div ref={contextDropdownRef} className="min-w-0 flex-1">
-            <ContextSelector
-              buffers={buffers}
-              selectedBufferIds={selectedBufferIds}
-              onToggleBuffer={toggleBufferSelection}
-              onToggleFile={toggleFileSelection}
-              isOpen={isContextDropdownOpen}
-              anchorRef={contextDropdownRef}
-              onToggleOpen={() => {
-                if (!isContextDropdownOpen) {
-                  closeInlineMenus();
-                }
-                setIsContextDropdownOpen(!isContextDropdownOpen);
-              }}
-            />
-          </div>
-
-          {queueCount > 0 && (
-            <Badge
-              size="sm"
-              className="shrink-0 gap-1 border border-accent/30 bg-accent/10 px-2.5 text-accent"
-            >
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-              <span>{queueCount}</span>
-            </Badge>
-          )}
-
-          <div className="flex shrink-0 items-center gap-1">
-            <Button
-              type="button"
-              disabled={!isInputEnabled || !isSpeechRecognitionSupported}
-              onClick={toggleVoiceInput}
-              variant="ghost"
-              className={cn(
-                chatComposerIconButtonClassName(),
-                isListening && "bg-accent/10 text-accent hover:bg-accent/14 hover:text-accent",
-              )}
-              tooltip={
-                isMacDevSpeechRecognitionBlocked
-                  ? "Voice input is disabled in macOS dev mode"
-                  : !isSpeechRecognitionSupported
-                    ? "Voice input is not supported"
-                    : isListening
-                      ? interimTranscript || "Stop voice input"
-                      : "Start voice input"
-              }
-              aria-label={isListening ? "Stop voice input" : "Start voice input"}
-              aria-pressed={isListening}
-              compact
-            >
-              <Mic size={12} className={cn(isListening && "animate-pulse")} />
-            </Button>
-
-            <Button
-              type="button"
-              disabled={isSendDisabled}
-              onClick={isStreaming ? onStopStreaming : handleSendMessage}
-              variant="ghost"
-              className={cn(
-                chatComposerIconButtonClassName(),
-                isSendDisabled
-                  ? "cursor-not-allowed bg-hover/40 text-text-lighter opacity-50"
-                  : isStreaming
-                    ? "bg-error/10 text-error hover:bg-error/15 hover:text-error"
-                    : (hasInputText || hasImages) && isInputEnabled
-                      ? "bg-accent text-white hover:bg-accent/85 hover:text-white"
-                      : "bg-hover/70 text-text-lighter hover:bg-hover hover:text-text",
-              )}
-              tooltip={
-                isStreaming ? "Stop generation" : queueCount > 0 ? "Add to queue" : "Send message"
-              }
-              shortcut={isStreaming ? "escape" : "enter"}
-              aria-label={isStreaming ? "Stop generation" : "Send message"}
-            >
-              {isStreaming ? <Stop /> : <ArrowUp />}
-            </Button>
+        <div className="flex min-w-0 items-end gap-1">
+          <ComposerEditable
+            ref={inputRef}
+            data-ai-element="prompt-input-editable"
+            enabled={isInputEnabled}
+            contentEditable={isInputEnabled}
+            onInput={handleInputChange}
+            onKeyDown={handleKeyDown}
+            onMouseDown={handleEditableMouseDown}
+            onFocus={() => setIsComposerFocused(true)}
+            onBlur={() => setIsComposerFocused(false)}
+            onPaste={handlePaste}
+            data-placeholder={inputPlaceholder}
+            role="textbox"
+            aria-multiline
+            aria-label="Message input"
+            tabIndex={isInputEnabled ? 0 : -1}
+            className="min-w-0 flex-1 pr-0"
+          />
+          <div className="flex shrink-0 items-center gap-1 pr-2 pb-2">
+            {isStreaming ? (
+              <ButtonGroup variant="ghost">
+                <Button
+                  type="button"
+                  disabled={isSendDisabled}
+                  onClick={handleSendMessage}
+                  variant="accent"
+                  tooltip="Send after current response"
+                  shortcut="enter"
+                  iconOnly
+                >
+                  <ArrowUpIcon />
+                </Button>
+                <ButtonGroupSeparator />
+                <Button
+                  type="button"
+                  disabled={isSendDisabled}
+                  onClick={handleInterruptAndSend}
+                  variant="accent-ghost"
+                  tooltip="Interrupt and send now"
+                  iconOnly
+                >
+                  <BoltIcon />
+                </Button>
+                <ButtonGroupSeparator />
+                <Button
+                  type="button"
+                  onClick={onStopStreaming}
+                  variant="danger"
+                  tooltip="Stop generation"
+                  shortcut="escape"
+                  iconOnly
+                >
+                  <StopIcon />
+                </Button>
+              </ButtonGroup>
+            ) : (
+              <Button
+                type="button"
+                disabled={isSendDisabled}
+                onClick={handleSendMessage}
+                variant="accent"
+                tooltip="Send message"
+                shortcut="enter"
+                iconOnly
+              >
+                <ArrowUpIcon />
+              </Button>
+            )}
           </div>
         </div>
+      </Composer>
 
-        {selectedContextItems.length > 0 ? (
-          <div
-            className="custom-scrollbar-thin flex max-h-12 min-w-0 flex-wrap items-center gap-1 overflow-y-auto overflow-x-hidden px-2 pb-2"
-            role="list"
-            aria-label="Selected context"
-          >
-            {selectedContextItems.map((item) => (
-              <div
-                key={`selected-${item.type}-${item.id}`}
-                className="group relative ui-font ui-text-xs flex h-6 min-w-0 max-w-[150px] shrink-0 select-none items-center gap-1.5 overflow-hidden rounded-md bg-hover/45 px-1.5 leading-[1.35] text-text-lighter transition-colors hover:bg-hover/70 focus:bg-hover/70 focus:outline-none focus:ring-1 focus:ring-border-strong/35"
-                data-context-chip
-                role="listitem"
-                tabIndex={0}
-                aria-label={`${item.name}. Press Delete to remove from context.`}
-                title={item.type === "file" ? item.path : item.name}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-                    event.preventDefault();
-                    const chips = Array.from(
-                      event.currentTarget.parentElement?.querySelectorAll<HTMLElement>(
-                        "[data-context-chip]",
-                      ) || [],
-                    );
-                    const currentIndex = chips.indexOf(event.currentTarget);
-                    const nextIndex =
-                      event.key === "ArrowLeft"
-                        ? Math.max(currentIndex - 1, 0)
-                        : Math.min(currentIndex + 1, chips.length - 1);
-                    chips[nextIndex]?.focus();
-                    return;
-                  }
+      <ComposerToolbar>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+          <ContextSelector
+            buffers={buffers}
+            selectedBufferIds={selectedBufferIds}
+            selectedFilesPaths={selectedFilesPaths}
+            onToggleBuffer={toggleBufferSelection}
+            onToggleFile={toggleFileSelection}
+            isOpen={isContextDropdownOpen}
+            triggerRef={contextTriggerRef}
+            onOpenChange={(open) => {
+              if (open) {
+                closeInlineMenus();
+              }
+              setIsContextDropdownOpen(open);
+            }}
+          />
+        </div>
 
-                  if (event.key === "Backspace" || event.key === "Delete") {
-                    event.preventDefault();
-                    const chipContainer = event.currentTarget.parentElement;
-                    const chips = Array.from(
-                      chipContainer?.querySelectorAll<HTMLElement>("[data-context-chip]") || [],
-                    );
-                    const currentIndex = chips.indexOf(event.currentTarget);
-                    const nextFocusIndex = Math.max(0, Math.min(currentIndex, chips.length - 2));
-                    if (item.type === "buffer") {
-                      toggleBufferSelection(item.id);
-                    } else {
-                      toggleFileSelection(item.id);
-                    }
-                    requestAnimationFrame(() => {
-                      const nextChips = Array.from(
-                        chipContainer?.querySelectorAll<HTMLElement>("[data-context-chip]") || [],
-                      );
-                      const nextChip = nextChips[nextFocusIndex];
-                      if (nextChip) {
-                        nextChip.focus();
-                        return;
-                      }
-                      contextDropdownRef.current
-                        ?.querySelector<HTMLButtonElement>("button")
-                        ?.focus();
-                    });
-                  }
-                }}
-              >
-                <span className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-hover/90 to-transparent opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100" />
-                {item.type === "buffer" ? (
-                  item.databaseType ? (
-                    <Database className="size-3 shrink-0 text-text-lighter/80" />
-                  ) : (
-                    <FileText className="size-3 shrink-0 text-text-lighter/80" />
-                  )
-                ) : (
-                  <FileText className="size-3 shrink-0 text-accent" />
-                )}
-                <span
-                  className={cn(
-                    "min-w-0 truncate leading-[1.35]",
-                    item.type === "buffer" ? "text-text/90" : "text-accent",
-                  )}
-                >
-                  {item.name}
-                </span>
-                {item.type === "buffer" && item.isDirty && (
-                  <span
-                    className="size-1.5 shrink-0 rounded-full bg-warning"
-                    title="Unsaved changes"
-                  />
-                )}
-                <Button
-                  onClick={() => {
-                    if (item.type === "buffer") {
-                      toggleBufferSelection(item.id);
-                    } else {
-                      toggleFileSelection(item.id);
-                    }
-                  }}
-                  variant="ghost"
-                  compact
-                  className="absolute right-0.5 size-5 rounded-md bg-hover/80 p-0 text-text opacity-0 shadow-[var(--shadow-card)] hover:bg-selected hover:text-text focus:opacity-100 group-hover:opacity-100"
-                  aria-label={`Remove ${item.name} from context`}
-                  tabIndex={0}
-                >
-                  <X size={11} weight="bold" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </SidebarComposerBody>
+        <AgentMessageQueue
+          messages={queuedMessages}
+          onEdit={(index) => {
+            const message = queuedMessages[index];
+            if (!message) return;
+            onRemoveQueuedMessage(index, "edit");
+            replaceInput(message.content);
+            setPastedImages(restorePastedImages(message.images));
+          }}
+          onMove={onMoveQueuedMessage}
+          onRemove={(index) => onRemoveQueuedMessage(index, "discard")}
+        />
 
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 pt-1.5 pb-0.5">
-        {isAcpMetadataLoading ? (
-          <ChatLoadingIndicator label="loading session" compact />
-        ) : (
-          <>
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-              {acpInlineConfigOptions.map(({ option, category }) => {
-                const controlId = `config:${option.id}`;
-                return (
-                  <AcpConfigSelector
-                    key={option.id}
-                    option={option}
-                    onChange={(value) => void changeSessionConfigOption(option.id, value)}
-                    open={activeInlineControl === controlId}
-                    onOpenChange={(open) => {
-                      if (open) {
-                        closeComposerPopovers();
-                        setActiveInlineControl(controlId);
-                        return;
-                      }
-                      setActiveInlineControl((current) => (current === controlId ? null : current));
-                    }}
-                    className={category === "model" ? "max-w-[220px]" : "max-w-[168px]"}
-                    menuClassName="max-w-[260px]"
-                    menuMinWidth={category === "model" ? 220 : 180}
-                  />
-                );
-              })}
-
-              {isCustomAgent && (
-                <>
-                  <ProviderSelector
-                    providerId={aiProviderId}
-                    onChange={handleAthasProviderChange}
-                    appearance="composer"
-                    open={activeInlineControl === "provider"}
-                    onOpenChange={(open) => {
-                      if (open) {
-                        closeComposerPopovers();
-                        setActiveInlineControl("provider");
-                        return;
-                      }
-                      setActiveInlineControl((current) =>
-                        current === "provider" ? null : current,
-                      );
-                    }}
-                    triggerClassName="max-w-[128px]"
-                    tooltip="Select provider"
-                  />
-                  <ModelSelector
-                    providerId={aiProviderId}
-                    modelId={aiModelId}
-                    onChange={handleAthasModelChange}
-                    appearance="composer"
-                    open={activeInlineControl === "model"}
-                    onOpenChange={(open) => {
-                      if (open) {
-                        closeComposerPopovers();
-                        setActiveInlineControl("model");
-                        return;
-                      }
-                      setActiveInlineControl((current) => (current === "model" ? null : current));
-                    }}
-                    triggerClassName="max-w-[176px]"
-                    tooltip="Select model"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className={chatComposerIconButtonClassName()}
-                    tooltip="API keys"
-                    aria-label="Manage API keys"
-                    onClick={() => {
-                      closeInlineMenus();
-                      setIsApiKeyManagerOpen(true);
-                    }}
-                  >
-                    <Key />
-                  </Button>
-                </>
-              )}
-
-              {(isCustomAgent || !hasAcpConfigModeOption) && (
-                <ModeSelector
-                  open={activeInlineControl === "mode"}
-                  onOpenChange={(open) => {
-                    if (open) {
-                      closeComposerPopovers();
-                      setActiveInlineControl("mode");
-                      return;
-                    }
-                    setActiveInlineControl((current) => (current === "mode" ? null : current));
-                  }}
-                  iconOnly
-                />
-              )}
-
-              {hasSlashCommands && (
-                <Button
-                  onClick={() => {
-                    if (inputRef.current && isInputEnabled) {
-                      if (slashCommandState.active) {
-                        setActiveInlineControl(null);
-                        hideSlashCommands();
-                        return;
-                      }
-                      closeInlineMenus();
-                      inputRef.current.textContent = "/";
-                      setInput("/");
-                      setHasInputText(true);
-                      inputRef.current.focus();
-                      const selection = window.getSelection();
-                      if (selection) {
-                        const range = document.createRange();
-                        range.selectNodeContents(inputRef.current);
-                        range.collapse(false);
-                        selection.removeAllRanges();
-                        selection.addRange(range);
-                      }
-                      slashCommandRangeRef.current = { startIndex: 0, endIndex: 1 };
-                      setActiveInlineControl("commands");
-                      showSlashCommands(getSlashDropdownPosition(), "");
-                    }
-                  }}
-                  variant="ghost"
-                  compact
-                  active={slashCommandState.active}
-                  className={chatComposerIconButtonClassName()}
-                  tooltip="Show slash commands"
-                  aria-label="Show slash commands"
-                >
-                  <CommandIcon size={12} />
-                </Button>
-              )}
-            </div>
-
+        <div className="ml-auto flex min-w-0 shrink items-center gap-1">
+          <ComposerAgentSelector
+            cwd={projectPath}
+            currentAgentId={currentAgentId}
+            providerId={aiProviderId}
+            modelId={aiModelId}
+            sessionConfigOptions={sessionConfigOptions}
+            onAgentChange={onAgentChange}
+            onModelChange={handleApiModelChange}
+            onSessionConfigChange={(optionId, value) =>
+              void changeSessionConfigOption(optionId, value)
+            }
+            onBeforeOpen={closeInlineMenus}
+          />
+          <ComposerEffortSelector
+            cwd={projectPath}
+            currentAgentId={currentAgentId}
+            sessionConfigOptions={sessionConfigOptions}
+            onSessionConfigChange={(optionId, value) =>
+              void changeSessionConfigOption(optionId, value)
+            }
+            onOpen={closeInlineMenus}
+          />
+          <ChatPreferencesMenu
+            currentAgentId={currentAgentId}
+            canChangeAgent={Boolean(onAgentChange)}
+            sessionConfigOptions={sessionConfigOptions}
+            onSessionConfigChange={(optionId, value) =>
+              void changeSessionConfigOption(optionId, value)
+            }
+            onSelectSkill={insertSkillAtCursor}
+            onSelectCodexSkill={insertCodexSkillAtCursor}
+            onBeforeOpen={closeInlineMenus}
+          />
+          {hasSlashCommands && (
             <Button
               type="button"
               onClick={() => {
+                if (!inputRef.current || !isInputEnabled) return;
+                if (slashCommandState.active) {
+                  hideSlashCommands();
+                  return;
+                }
                 closeInlineMenus();
-                setIsSkillsOpen(true);
+                inputRef.current.textContent = "/";
+                setInput("/");
+                setHasInputText(true);
+                inputRef.current.focus();
+                const selection = window.getSelection();
+                if (selection) {
+                  const range = document.createRange();
+                  range.selectNodeContents(inputRef.current);
+                  range.collapse(false);
+                  selection.removeAllRanges();
+                  selection.addRange(range);
+                }
+                slashCommandRangeRef.current = { startIndex: 0, endIndex: 1 };
+                showSlashCommands(getSlashDropdownPosition(), "");
               }}
               variant="ghost"
-              compact
-              className={chatComposerIconButtonClassName("ml-auto shrink-0")}
-              tooltip="Skills"
-              aria-label="Skills"
+              disabled={!isInputEnabled}
+              iconOnly
+              active={slashCommandState.active}
+              tooltip="Show slash commands"
+              aria-label="Show slash commands"
             >
-              <BookOpen />
+              <CommandIcon />
             </Button>
-          </>
-        )}
-      </div>
+          )}
+
+          <Button
+            type="button"
+            disabled={!isInputEnabled || !isSpeechRecognitionSupported}
+            active={isListening}
+            aria-pressed={isListening}
+            onClick={toggleVoiceInput}
+            variant={isListening ? "accent-ghost" : "ghost"}
+            iconOnly
+            tooltip={
+              isMacDevSpeechRecognitionBlocked
+                ? "Voice input is unavailable in macOS development builds. Use a packaged build."
+                : !isSpeechRecognitionSupported
+                  ? "Voice input is not supported by this webview"
+                  : isListening
+                    ? interimTranscript || "Stop voice input"
+                    : "Start voice input"
+            }
+            aria-label={isListening ? "Stop voice input" : "Start voice input"}
+          >
+            <MicrophoneIcon className={cn(isListening && "animate-pulse")} />
+          </Button>
+        </div>
+      </ComposerToolbar>
 
       {(isActiveSurface || isComposerFocused) && mentionState.active && (
         <FileMentionDropdown
           files={mentionableFiles}
+          mentionState={mentionState}
+          onClose={hideMention}
+          onSelectedIndexChange={setSelectedIndex}
           onSelect={handleFileMentionSelect}
           onVisibleFilesChange={(files) => {
             visibleMentionFilesRef.current = files;
@@ -1718,22 +1245,19 @@ const AIChatInputBar = memo(function AIChatInputBar({
         />
       )}
 
-      {(isActiveSurface || isComposerFocused) && slashCommandState.active && (
-        <SlashCommandDropdown onSelect={handleSlashCommandSelect} />
+      {slashCommandState.active && (
+        <SlashCommandDropdown
+          slashCommandState={slashCommandState}
+          availableSlashCommands={availableSlashCommands}
+          filteredCommands={filteredSlashCommands}
+          onSelectedIndexChange={setSlashCommandSelectedIndex}
+          onSelect={(command) => {
+            handleSlashCommandSelect(command);
+          }}
+          onClose={hideSlashCommands}
+        />
       )}
-
-      <SkillsCommand
-        isOpen={isSkillsOpen}
-        onClose={() => setIsSkillsOpen(false)}
-        onSelectSkill={insertSkillAtCursor}
-      />
-
-      <ProviderApiKeyCommand
-        isOpen={isApiKeyManagerOpen}
-        onClose={() => setIsApiKeyManagerOpen(false)}
-        initialProviderId={aiProviderId}
-      />
-    </SidebarFooter>
+    </div>
   );
 });
 

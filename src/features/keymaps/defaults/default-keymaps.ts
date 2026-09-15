@@ -20,6 +20,11 @@ export const defaultKeymaps: Keybinding[] = [
     when: "!terminalFocus",
   },
   {
+    key: "cmd+shift+n",
+    command: "workbench.newWindow",
+    source: "default",
+  },
+  {
     key: "cmd+s",
     command: "file.save",
     source: "default",
@@ -42,6 +47,11 @@ export const defaultKeymaps: Keybinding[] = [
     command: "file.close",
     source: "default",
     when: "!terminalFocus",
+  },
+  {
+    key: "cmd+shift+w",
+    command: "workbench.closeWindow",
+    source: "default",
   },
   { key: "cmd+shift+t", command: "file.reopenClosed", source: "default" },
   {
@@ -115,6 +125,12 @@ export const defaultKeymaps: Keybinding[] = [
     when: "terminalFocus",
   },
   {
+    key: "cmd+f",
+    command: "terminal.find",
+    source: "default",
+    when: "terminalFocus",
+  },
+  {
     key: "cmd+w",
     command: "terminal.close",
     source: "default",
@@ -123,6 +139,54 @@ export const defaultKeymaps: Keybinding[] = [
   {
     key: "cmd+d",
     command: "terminal.split",
+    source: "default",
+    when: "terminalFocus",
+  },
+  {
+    key: "cmd+shift+d",
+    command: "terminal.splitDown",
+    source: "default",
+    when: "terminalFocus",
+  },
+  {
+    key: "cmd+up",
+    command: "terminal.previousCommand",
+    source: "default",
+    when: "terminalFocus",
+  },
+  {
+    key: "cmd+down",
+    command: "terminal.nextCommand",
+    source: "default",
+    when: "terminalFocus",
+  },
+  {
+    key: "cmd+alt+right",
+    command: "terminal.focusNextPane",
+    source: "default",
+    when: "terminalFocus",
+  },
+  {
+    key: "cmd+alt+left",
+    command: "terminal.focusPreviousPane",
+    source: "default",
+    when: "terminalFocus",
+  },
+  {
+    key: "cmd+k",
+    command: "terminal.clear",
+    source: "default",
+    when: "terminalFocus",
+  },
+  {
+    key: "cmd+shift+a",
+    command: "terminal.selectAll",
+    source: "default",
+    when: "terminalFocus",
+  },
+  {
+    key: "cmd+shift+c",
+    command: "terminal.copyLastCommandOutput",
     source: "default",
     when: "terminalFocus",
   },
@@ -217,6 +281,18 @@ export const defaultKeymaps: Keybinding[] = [
     when: "editorFocus",
   },
   {
+    key: "ctrl+up",
+    command: "editor.insertCursorAbove",
+    source: "default",
+    when: "editorFocus && vimMode",
+  },
+  {
+    key: "ctrl+down",
+    command: "editor.insertCursorBelow",
+    source: "default",
+    when: "editorFocus && vimMode",
+  },
+  {
     key: "cmd+alt+up",
     command: "editor.insertCursorAbove",
     source: "default",
@@ -278,7 +354,8 @@ export const defaultKeymaps: Keybinding[] = [
   },
 
   // View Operations
-  { key: "cmd+b", command: "workbench.toggleSidebar", source: "default" },
+  { key: "cmd+b", command: "workbench.toggleActivitySidebar", source: "default" },
+  { key: "cmd+e", command: "workbench.toggleSidebar", source: "default" },
   { key: "cmd+j", command: "workbench.toggleTerminal", source: "default" },
   { key: "cmd+`", command: "workbench.toggleTerminalAlt", source: "default" },
   {
@@ -290,6 +367,12 @@ export const defaultKeymaps: Keybinding[] = [
   {
     key: "cmd+f",
     command: "workbench.showFind",
+    source: "default",
+    when: "editorFocus",
+  },
+  {
+    key: "ctrl+h",
+    command: "workbench.showFindReplace",
     source: "default",
     when: "editorFocus",
   },
@@ -328,11 +411,6 @@ export const defaultKeymaps: Keybinding[] = [
   { key: "shift+F5", command: "debug.stop", source: "default" },
   { key: "F9", command: "debug.toggleBreakpoint", source: "default" },
   {
-    key: "cmd+shift+b",
-    command: "workbench.toggleSidebarPosition",
-    source: "default",
-  },
-  {
     key: "cmd+shift+space",
     command: "workbench.agentLauncher",
     source: "default",
@@ -347,12 +425,6 @@ export const defaultKeymaps: Keybinding[] = [
   { key: "cmd+0", command: "workbench.zoomReset", source: "default" },
 
   // Navigation
-  {
-    key: "cmd+g",
-    command: "editor.goToLine",
-    source: "default",
-    when: "editorFocus",
-  },
   { key: "cmd+alt+right", command: "workbench.nextTab", source: "default" },
   { key: "cmd+alt+left", command: "workbench.previousTab", source: "default" },
   { key: "ctrl+tab", command: "workbench.nextTabCtrlTab", source: "default" },
@@ -429,7 +501,6 @@ export const defaultKeymaps: Keybinding[] = [
     command: "workbench.commandPalette",
     source: "default",
   },
-  { key: "cmd+r", command: "workbench.toggleAIChat", source: "default" },
   { key: "cmd+shift+m", command: "workbench.toggleMinimap", source: "default" },
   {
     key: "alt+z",
@@ -442,8 +513,14 @@ export const defaultKeymaps: Keybinding[] = [
     command: "workbench.openKeyboardShortcuts",
     source: "default",
   },
+  {
+    key: "cmd+k z",
+    command: "workbench.toggleActivePaneFullscreen",
+    source: "default",
+  },
 
   // Window Operations
+  { key: "cmd+,", command: "workbench.openSettings", source: "default" },
   { key: "F11", command: "window.toggleFullscreen", source: "default" },
   {
     key: "cmd+ctrl+f",

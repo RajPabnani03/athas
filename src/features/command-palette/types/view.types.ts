@@ -1,7 +1,11 @@
-export type CommandPaletteViewId =
+type BuiltInCommandPaletteViewId =
   | "root"
-  | "quick-question"
   | "color-theme"
   | "icon-theme"
   | "local-history"
-  | "outline";
+  | "outline"
+  | "databases";
+
+type ExtensionCommandPaletteViewId = `extension:${string}`;
+
+export type CommandPaletteViewId = BuiltInCommandPaletteViewId | ExtensionCommandPaletteViewId;

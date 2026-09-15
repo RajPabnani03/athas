@@ -1,6 +1,13 @@
 # dependency directories
 node_modules/
 
+# direnv (nix flake) local cache
+.direnv/
+
+# nix build result symlinks
+result
+result-*
+
 # Build output
 dist/
 
@@ -31,6 +38,7 @@ bun.lock
 
 # rust compiled folders
 target/
+.zig-cache/
 
 # test video for streaming example
 streaming_example_test_video.mp4

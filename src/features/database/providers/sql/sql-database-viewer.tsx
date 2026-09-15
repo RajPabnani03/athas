@@ -11,6 +11,7 @@ import QueryBar from "../../components/query-bar";
 import SchemaView from "../../components/schema-view";
 import TableSidebar from "../../components/table-sidebar";
 import TableToolbar from "../../components/table-toolbar";
+import { databasePanelClassName } from "../../utils/database-surface";
 import {
   buildQueryResultExportFilename,
   serializeQueryResultToCsv,
@@ -19,7 +20,9 @@ import {
 import { paginateQueryResult } from "../../lib/query-result-pagination";
 import { writeDatabaseClipboardText } from "../../utils/clipboard";
 import { useUIState } from "@/features/window/stores/ui-state.store";
-import { LoadingIndicator } from "@/ui/loading";
+import { Alert, AlertDescription } from "@/ui/alert";
+import { Spinner } from "@/ui/spinner";
+import { Empty, EmptyDescription } from "@/ui/empty";
 import type { DatabaseObjectKind, ViewMode } from "../../types/common.types";
 import type { DatabaseType } from "../../types/provider.types";
 import type { SqlDatabaseActions, SqlDatabaseState } from "./stores/create-sql.store";
@@ -144,15 +147,19 @@ export default function SqlDatabaseViewer({
       type: "text/csv;charset=utf-8;",
     });
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
+    const objectUrl = URL.createObjectURL(blob);
+    link.href = objectUrl;
     link.download = buildQueryResultExportFilename({
       isCustomQuery: store.isCustomQuery,
       selectedTable: store.selectedTable,
       page: store.currentPage,
       totalPages: store.totalPages,
     });
-    link.click();
-    URL.revokeObjectURL(link.href);
+    try {
+      link.click();
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
   };
 
   const copyAsJSON = async () => {
@@ -161,9 +168,10 @@ export default function SqlDatabaseViewer({
   };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-secondary-bg text-text">
+    <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
       <TableToolbar
         fileName={store.fileName}
+        selectedObjectName={store.selectedTable}
         dbInfo={store.dbInfo}
         selectedObjectKind={store.selectedObjectKind}
         subscriptionInfo={store.subscriptionInfo}
@@ -203,7 +211,7 @@ export default function SqlDatabaseViewer({
         }
       />
 
-      <div className="flex min-h-0 flex-1 gap-2 p-2 pt-1.5">
+      <div className="flex min-h-0 flex-1">
         <TableSidebar
           tables={store.tables}
           selectedTable={store.selectedTable}
@@ -230,7 +238,7 @@ export default function SqlDatabaseViewer({
           onClearHistory={actions.clearSqlHistory}
         />
 
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/70 bg-primary-bg">
+        <div className={databasePanelClassName("flex-1 border-border/70 border-l")}>
           <QueryBar
             searchTerm={canMutateRows ? store.searchTerm : ""}
             setSearchTerm={actions.setSearchTerm}
@@ -259,15 +267,17 @@ export default function SqlDatabaseViewer({
           )}
 
           {store.error && (
-            <div className="mx-3 mb-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 ui-font ui-text-sm text-error">
-              {store.error}
-            </div>
+            <Alert tone="error" className="mx-3 mb-2 w-auto">
+              <AlertDescription>{store.error}</AlertDescription>
+            </Alert>
           )}
 
           {isBusy && (
-            <div className="flex flex-1 items-center justify-center p-8">
-              <LoadingIndicator label="Loading" showLabel />
-            </div>
+            <Empty>
+              <EmptyDescription>
+                <Spinner label="Loading" showLabel />
+              </EmptyDescription>
+            </Empty>
           )}
 
           {!isBusy && viewMode === "data" && visibleQueryResult && (

@@ -9,9 +9,14 @@ import type {
   AgentConfig,
 } from "@/features/ai/types/acp.types";
 import type { ContextInfo } from "@/features/ai/types/ai-context.types";
+import type { AgentCompletionResult } from "@/features/ai/types/agent-completion.types";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { useProjectStore } from "@/features/window/stores/project.store";
 import { getAcpPathBaseName, toAcpFileUri } from "@/features/ai/lib/acp-file-uri";
+import {
+  getAcpStartupErrorDetails,
+  isAcpAuthenticationError,
+} from "@/features/ai/lib/acp-authentication";
 import { getChatTitleFromSessionInfo } from "@/features/ai/lib/acp-session-info";
 import { normalizeAcpWorkspacePath } from "@/features/ai/lib/acp-workspace-path";
 import { getFollowUpActionsInstruction } from "@/features/ai/lib/follow-up-actions";
@@ -19,9 +24,9 @@ import { buildContextPrompt } from "../utils/ai-context-builder";
 
 interface AcpHandlers {
   onChunk: (chunk: string) => void;
-  onComplete: () => void;
+  onComplete: (result?: AgentCompletionResult) => void;
   onError: (error: string, canReconnect?: boolean) => void;
-  onNewMessage?: () => void;
+  onResponseContinuation?: () => void;
   onToolUse?: (event: Extract<AcpEvent, { type: "tool_start" }>) => void;
   onToolUpdate?: (event: Extract<AcpEvent, { type: "tool_update" }>) => void;
   onToolComplete?: (toolName: string, toolId?: string, output?: unknown, error?: string) => void;
@@ -35,17 +40,36 @@ interface AcpListeners {
   event?: () => void;
 }
 
+const ACP_STATUS_TIMEOUT_MS = 5_000;
+const ACP_START_TIMEOUT_MS = 15_000;
+const ACP_PROMPT_TIMEOUT_MS = 10_000;
+const ACP_FIRST_RESPONSE_TIMEOUT_MS = 20_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+}
+
+function hasSessionId(event: AcpEvent): event is AcpEvent & { sessionId: string } {
+  return "sessionId" in event && typeof event.sessionId === "string";
+}
+
 export class AcpStreamHandler {
   private static activeHandler: AcpStreamHandler | null = null;
+  private static startupQueue: Promise<void> = Promise.resolve();
   private listeners: AcpListeners = {};
-  private timeout?: NodeJS.Timeout;
-  private lastActivityTime = Date.now();
   private activeTools = new Map<string, string>();
   private sessionComplete = false;
   private pendingNewMessage = false;
   private cancelled = false;
   private wasRunning = false;
-  private receivedResponseSignal = false;
+  private activeSessionId: string | null = null;
+  private awaitingFirstResponse = false;
+  private firstResponseTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private agentId: string,
@@ -53,7 +77,7 @@ export class AcpStreamHandler {
     private chatId?: string,
   ) {}
 
-  static async warmup(agentId: string, chatId: string): Promise<void> {
+  static async warmup(agentId: string, chatId?: string): Promise<void> {
     const handler = new AcpStreamHandler(
       agentId,
       {
@@ -67,23 +91,54 @@ export class AcpStreamHandler {
   }
 
   async start(userMessage: string, context: ContextInfo): Promise<void> {
+    if (AcpStreamHandler.activeHandler && AcpStreamHandler.activeHandler !== this) {
+      this.handlers.onError(
+        "Another agent session is already running. Stop it before sending this prompt.",
+      );
+      return;
+    }
     try {
       AcpStreamHandler.activeHandler = this;
-      this.receivedResponseSignal = false;
-      await this.setupListeners();
       await this.ensureAgentRunning();
-      await invoke("send_acp_prompt", { prompt: this.buildPrompt(userMessage, context) });
-      this.setupTimeout();
+      if (!this.activeSessionId) {
+        throw new Error(`${this.agentId} did not create an active session`);
+      }
+      if (
+        context.images?.length &&
+        !useAIChatStore.getState().acpStatus?.agentCapabilities?.promptCapabilities.image
+      ) {
+        this.fail(
+          "This agent does not support image attachments. Choose an image-capable agent or remove the images.",
+        );
+        return;
+      }
+      await this.setupListeners();
+      this.awaitingFirstResponse = true;
+      await withTimeout(
+        invoke("send_acp_prompt", { prompt: this.buildPrompt(userMessage, context) }),
+        ACP_PROMPT_TIMEOUT_MS,
+        `${this.agentId} did not accept the prompt in time`,
+      );
+      this.armFirstResponseTimeout();
     } catch (error) {
       console.error("ACP agent error:", error);
-      this.cleanup();
-      this.handlers.onError(this.formatStartupError(error));
+      this.fail(this.formatStartupError(error));
     }
   }
 
-  private async ensureAgentRunning(): Promise<void> {
+  private ensureAgentRunning(): Promise<void> {
+    const startup = AcpStreamHandler.startupQueue.then(() => this.ensureAgentRunningOnce());
+    AcpStreamHandler.startupQueue = startup.catch(() => undefined);
+    return startup;
+  }
+
+  private async ensureAgentRunningOnce(): Promise<void> {
     try {
-      const status = await invoke<AcpAgentStatus>("get_acp_status");
+      const status = await withTimeout(
+        invoke<AcpAgentStatus>("get_acp_status"),
+        ACP_STATUS_TIMEOUT_MS,
+        "Agent status check timed out",
+      );
       const targetChat = this.getTargetChat();
       const desiredSessionId =
         targetChat?.agentId === this.agentId ? (targetChat.acpSessionId ?? null) : null;
@@ -100,7 +155,8 @@ export class AcpStreamHandler {
         statusWorkspacePath !== desiredWorkspacePath;
 
       if (status.running) {
-        useAIChatStore.getState().setAcpStatus(status);
+        useAIChatStore.getState().actions.setAcpStatus(status);
+        this.activeSessionId = status.sessionId ?? null;
       }
 
       if (
@@ -113,21 +169,32 @@ export class AcpStreamHandler {
 
         let startStatus: AcpAgentStatus;
         try {
-          startStatus = await invoke<AcpAgentStatus>("start_acp_agent", {
-            agentId: this.agentId,
-            workspacePath,
-            sessionId: desiredSessionId,
-          });
+          startStatus = await withTimeout(
+            invoke<AcpAgentStatus>("start_acp_agent", {
+              agentId: this.agentId,
+              workspacePath,
+              sessionId: desiredSessionId,
+            }),
+            ACP_START_TIMEOUT_MS,
+            `${this.agentId} startup timed out`,
+          );
         } catch (error) {
+          if (error instanceof Error && error.message.includes("startup timed out")) {
+            throw error;
+          }
           const availableAgents = await invoke<AgentConfig[]>("get_available_agents");
           const agent = availableAgents.find((item) => item.id === this.agentId);
           if (!agent?.installed && agent?.canInstall) {
             await invoke<AgentConfig>("install_acp_agent", { agentId: this.agentId });
-            startStatus = await invoke<AcpAgentStatus>("start_acp_agent", {
-              agentId: this.agentId,
-              workspacePath,
-              sessionId: desiredSessionId,
-            });
+            startStatus = await withTimeout(
+              invoke<AcpAgentStatus>("start_acp_agent", {
+                agentId: this.agentId,
+                workspacePath,
+                sessionId: desiredSessionId,
+              }),
+              ACP_START_TIMEOUT_MS,
+              `${this.agentId} startup timed out`,
+            );
           } else {
             throw error;
           }
@@ -137,11 +204,14 @@ export class AcpStreamHandler {
           throw new Error(`${this.agentId} failed to start`);
         }
 
-        useAIChatStore.getState().setAcpStatus(startStatus);
+        useAIChatStore.getState().actions.setAcpStatus(startStatus);
+        this.activeSessionId = startStatus.sessionId ?? null;
 
         if (startStatus.sessionId) {
           if (targetChat) {
-            useAIChatStore.getState().setChatAcpSessionId(targetChat.id, startStatus.sessionId);
+            useAIChatStore
+              .getState()
+              .actions.setChatAcpSessionId(targetChat.id, startStatus.sessionId);
           }
         }
 
@@ -150,6 +220,7 @@ export class AcpStreamHandler {
         // Wait for initialization
         await new Promise((resolve) => setTimeout(resolve, 1000));
       } else {
+        this.activeSessionId = status.sessionId ?? null;
         this.wasRunning = true;
       }
     } catch (error) {
@@ -162,17 +233,18 @@ export class AcpStreamHandler {
   }
 
   private getTargetChat() {
-    const store = useAIChatStore.getState();
+    const { actions } = useAIChatStore.getState();
     if (this.chatId) {
-      return store.getChatById(this.chatId);
+      return actions.getChatById(this.chatId);
     }
 
-    return store.getCurrentChat();
+    return actions.getCurrentChat();
   }
 
   private formatStartupError(error: unknown): string {
     const message = error instanceof Error ? error.message : String(error);
     const normalized = message.toLowerCase();
+    const details = getAcpStartupErrorDetails(message);
 
     if (normalized.includes("runtime")) {
       return `${this.agentId} could not start because a required runtime is unavailable.`;
@@ -180,18 +252,27 @@ export class AcpStreamHandler {
     if (normalized.includes("install")) {
       return `${this.agentId} could not be installed automatically. Check network access and local tool permissions.`;
     }
-    if (normalized.includes("auth")) {
-      return `${this.agentId} requires authentication before it can answer prompts.`;
+    if (isAcpAuthenticationError(message) || normalized.includes("auth")) {
+      const summary = `Authentication required: ${this.agentId} must be authenticated before it can answer prompts.`;
+      return details ? `${summary}|||${details}` : summary;
+    }
+    if (normalized.includes("timed out") || normalized.includes("in time")) {
+      return `${this.agentId} did not respond during startup. Restart the agent session and try again.`;
     }
 
     return `${this.agentId} is currently unavailable.`;
   }
 
   private buildPrompt(userMessage: string, context: ContextInfo): AcpPromptContentBlock[] {
+    const images: AcpPromptContentBlock[] = (context.images ?? []).map((image) => ({
+      type: "image",
+      data: image.data,
+      mimeType: image.mediaType,
+    }));
     // ACP slash commands must remain the first token in the prompt.
     // If we prepend context, agents interpret them as plain text.
     if (userMessage.trimStart().startsWith("/")) {
-      return [{ type: "text", text: userMessage }];
+      return [{ type: "text", text: userMessage }, ...images];
     }
 
     const contextPrompt = [buildContextPrompt(context), getFollowUpActionsInstruction()]
@@ -242,7 +323,7 @@ export class AcpStreamHandler {
       });
     }
 
-    return blocks;
+    return [...blocks, ...images];
   }
 
   private async setupListeners(): Promise<void> {
@@ -253,11 +334,29 @@ export class AcpStreamHandler {
 
   private handleAcpEvent(event: AcpEvent): void {
     if (this.cancelled) return;
+    if (event.type === "status_changed") {
+      if (event.status.agentId !== this.agentId) return;
+      if (
+        this.activeSessionId &&
+        event.status.sessionId &&
+        event.status.sessionId !== this.activeSessionId
+      ) {
+        return;
+      }
+    } else if (
+      !hasSessionId(event) ||
+      !this.activeSessionId ||
+      event.sessionId !== this.activeSessionId
+    ) {
+      return;
+    }
+    this.markPromptActivity(event);
+    if (event.type === "thought_chunk") {
+      this.startPendingMessage();
+    }
     if (this.handlers.onEvent) {
       this.handlers.onEvent(event);
     }
-
-    this.lastActivityTime = Date.now();
 
     switch (event.type) {
       case "user_message_chunk":
@@ -309,12 +408,11 @@ export class AcpStreamHandler {
         break;
 
       case "slash_commands_update":
-        // Handle slash commands update
-        useAIChatStore.getState().setAvailableSlashCommands(event.commands);
+        useAIChatStore.getState().actions.setAvailableSlashCommands(event.commands);
         break;
 
       case "config_options_update":
-        useAIChatStore.getState().setSessionConfigOptions(event.configOptions);
+        useAIChatStore.getState().actions.setSessionConfigOptions(event.configOptions);
         break;
 
       case "plan_update":
@@ -322,7 +420,6 @@ export class AcpStreamHandler {
         break;
 
       case "usage_update":
-        this.handleUsageUpdate(event);
         break;
 
       case "session_info_update":
@@ -345,46 +442,45 @@ export class AcpStreamHandler {
     if (event.stopReason === "cancelled") {
       // User cancelled the prompt
       this.cleanup();
-      this.handlers.onComplete();
+      this.handlers.onComplete({ outcome: "cancelled" });
       return;
     }
     // Treat all other stop reasons as completion in case no session_complete arrives
     this.handleSessionComplete();
   }
 
-  private handleUsageUpdate(event: Extract<AcpEvent, { type: "usage_update" }>): void {
-    console.info("ACP usage update:", event.usage);
-  }
-
   private handleSessionModeUpdate(event: Extract<AcpEvent, { type: "session_mode_update" }>): void {
     console.log("Session mode state updated:", event.modeState);
     useAIChatStore
       .getState()
-      .setSessionModeState(event.modeState.currentModeId, event.modeState.availableModes);
+      .actions.setSessionModeState(event.modeState.currentModeId, event.modeState.availableModes);
   }
 
   private handleCurrentModeUpdate(event: Extract<AcpEvent, { type: "current_mode_update" }>): void {
     console.log("Current mode changed:", event.currentModeId);
-    useAIChatStore.getState().setCurrentModeId(event.currentModeId);
+    useAIChatStore.getState().actions.setCurrentModeId(event.currentModeId);
   }
 
   private handleStatusChanged(event: Extract<AcpEvent, { type: "status_changed" }>): void {
     console.log("Agent status changed:", event.status);
-    useAIChatStore.getState().setAcpStatus(event.status);
+    useAIChatStore.getState().actions.setAcpStatus(event.status);
+    if (event.status.agentId === this.agentId) {
+      this.activeSessionId = event.status.sessionId ?? this.activeSessionId;
+    }
 
     if (event.status.running && event.status.sessionId) {
       const targetChat = this.getTargetChat();
       if (targetChat && targetChat.agentId === this.agentId) {
-        useAIChatStore.getState().setChatAcpSessionId(targetChat.id, event.status.sessionId);
+        useAIChatStore
+          .getState()
+          .actions.setChatAcpSessionId(targetChat.id, event.status.sessionId);
       }
     }
 
     // Detect unexpected agent crash: was running but now stopped without user action
     if (this.wasRunning && !event.status.running && !this.sessionComplete && !this.cancelled) {
       console.warn("Agent crashed unexpectedly");
-      this.cleanup();
-      // Pass canReconnect=true to indicate the error is recoverable
-      this.handlers.onError("Agent disconnected unexpectedly. Click retry to restart.", true);
+      this.fail("Agent disconnected unexpectedly. Click retry to restart.", true);
     }
   }
 
@@ -393,11 +489,6 @@ export class AcpStreamHandler {
     const bufferActions = useBufferStore.getState().actions;
 
     switch (action.action) {
-      case "open_web_viewer":
-        console.log("Opening web viewer:", action.url);
-        bufferActions.openWebViewerBuffer(action.url);
-        break;
-
       case "open_terminal":
         console.log("Opening terminal:", action.command);
         bufferActions.openTerminalBuffer({
@@ -412,7 +503,7 @@ export class AcpStreamHandler {
           ? getChatTitleFromSessionInfo(targetChat.title, action.title)
           : null;
         if (targetChat && nextTitle) {
-          useAIChatStore.getState().updateChatTitle(targetChat.id, nextTitle);
+          useAIChatStore.getState().actions.updateChatTitle(targetChat.id, nextTitle);
         }
         break;
       }
@@ -420,11 +511,7 @@ export class AcpStreamHandler {
   }
 
   private handleContentChunk(event: Extract<AcpEvent, { type: "content_chunk" }>): void {
-    this.receivedResponseSignal = true;
-    if (this.pendingNewMessage && this.handlers.onNewMessage) {
-      this.handlers.onNewMessage();
-    }
-    this.pendingNewMessage = false;
+    this.startPendingMessage();
 
     if (event.content.type === "text") {
       this.handlers.onChunk(event.content.text);
@@ -444,8 +531,13 @@ export class AcpStreamHandler {
     }
   }
 
+  private startPendingMessage(): void {
+    if (!this.pendingNewMessage) return;
+    this.pendingNewMessage = false;
+    this.handlers.onResponseContinuation?.();
+  }
+
   private handleToolStart(event: Extract<AcpEvent, { type: "tool_start" }>): void {
-    this.receivedResponseSignal = true;
     this.activeTools.set(event.toolId, event.toolName);
     if (this.handlers.onToolUse) {
       this.handlers.onToolUse(event);
@@ -453,7 +545,6 @@ export class AcpStreamHandler {
   }
 
   private handleToolUpdate(event: Extract<AcpEvent, { type: "tool_update" }>): void {
-    this.receivedResponseSignal = true;
     if (event.toolName) {
       this.activeTools.set(event.toolId, event.toolName);
     }
@@ -471,12 +562,15 @@ export class AcpStreamHandler {
     this.pendingNewMessage = true;
 
     if (!event.success) {
-      console.warn("Tool call failed:", event.toolId);
+      console.debug("Tool call failed:", {
+        toolId: event.toolId,
+        toolName,
+        error: event.error,
+      });
     }
   }
 
   private handlePermissionRequest(event: Extract<AcpEvent, { type: "permission_request" }>): void {
-    this.receivedResponseSignal = true;
     if (this.handlers.onPermissionRequest) {
       this.handlers.onPermissionRequest(event);
     } else {
@@ -490,65 +584,69 @@ export class AcpStreamHandler {
   }
 
   private handleSessionComplete(): void {
+    if (this.sessionComplete) return;
     console.log("Session complete");
     this.sessionComplete = true;
     this.pendingNewMessage = false;
     this.cleanup();
-    this.handlers.onComplete();
+    this.handlers.onComplete({ outcome: "completed" });
   }
 
   private handleError(event: Extract<AcpEvent, { type: "error" }>): void {
+    if (this.sessionComplete || this.cancelled) return;
     console.error("ACP error:", event.error);
-    this.pendingNewMessage = false;
-    this.cleanup();
-    this.handlers.onError(event.error);
+    this.fail(event.error);
   }
 
-  private setupTimeout(): void {
-    const checkInactivity = () => {
-      const now = Date.now();
-      const inactiveTime = now - this.lastActivityTime;
+  private markPromptActivity(event: AcpEvent): void {
+    if (!this.awaitingFirstResponse) return;
 
-      // If session is already complete, don't check timeout
-      if (this.sessionComplete) {
-        return;
-      }
-
-      // If no activity for 10 seconds and no active tool, consider complete
-      if (inactiveTime > 10000 && this.activeTools.size === 0) {
-        if (!this.receivedResponseSignal) {
-          console.log("No ACP response received before inactivity timeout");
-          this.cleanup();
-          this.handlers.onError(`${this.agentId} did not return any response.`, true);
-          return;
+    switch (event.type) {
+      case "user_message_chunk":
+      case "content_chunk":
+      case "thought_chunk":
+      case "tool_start":
+      case "tool_update":
+      case "tool_complete":
+      case "permission_request":
+      case "session_complete":
+      case "error":
+      case "plan_update":
+      case "prompt_complete":
+      case "ui_action":
+        this.awaitingFirstResponse = false;
+        if (this.firstResponseTimeout) {
+          clearTimeout(this.firstResponseTimeout);
+          this.firstResponseTimeout = null;
         }
-        console.log("No activity for 10 seconds, conversation appears complete");
-        this.cleanup();
-        this.handlers.onComplete();
-        return;
-      }
+        break;
+    }
+  }
 
-      // If still processing tool but no activity for 60 seconds, timeout
-      if (inactiveTime > 60000) {
-        console.log("Timeout: No activity for 60 seconds");
-        this.cleanup();
-        this.handlers.onError("Request timed out - no activity");
-        return;
-      }
+  private armFirstResponseTimeout(): void {
+    if (!this.awaitingFirstResponse || this.sessionComplete || this.cancelled) return;
 
-      // Continue checking
-      this.timeout = setTimeout(checkInactivity, 1000);
-    };
+    this.firstResponseTimeout = setTimeout(() => {
+      this.fail(
+        `${this.agentId} accepted the prompt but did not return any activity. Restart the agent session and try again.`,
+      );
+    }, ACP_FIRST_RESPONSE_TIMEOUT_MS);
+  }
 
-    this.timeout = setTimeout(checkInactivity, 1000);
+  private fail(error: string, canReconnect?: boolean): void {
+    if (this.sessionComplete || this.cancelled) return;
+    this.sessionComplete = true;
+    this.pendingNewMessage = false;
+    this.cleanup();
+    this.handlers.onError(error, canReconnect);
   }
 
   private cleanup(): void {
     console.log("Cleaning up ACP listeners...");
-
-    if (this.timeout) {
-      clearTimeout(this.timeout);
-      this.timeout = undefined;
+    this.awaitingFirstResponse = false;
+    if (this.firstResponseTimeout) {
+      clearTimeout(this.firstResponseTimeout);
+      this.firstResponseTimeout = null;
     }
     this.pendingNewMessage = false;
     this.activeTools.clear();
@@ -568,7 +666,7 @@ export class AcpStreamHandler {
     this.cancelled = true;
     this.pendingNewMessage = false;
     this.cleanup();
-    this.handlers.onComplete();
+    this.handlers.onComplete({ outcome: "cancelled" });
   }
 
   // Static method to respond to permission requests
@@ -607,6 +705,31 @@ export class AcpStreamHandler {
         cursor: args.cursor ?? undefined,
       },
     });
+  }
+
+  static async deleteSession(sessionId: string): Promise<void> {
+    await invoke("delete_acp_session", {
+      args: { sessionId },
+    });
+  }
+
+  static async logoutAgent(): Promise<void> {
+    await invoke("logout_acp_agent");
+  }
+
+  static async restartAgent(agentId: string, chatId?: string | null): Promise<void> {
+    AcpStreamHandler.activeHandler?.forceStop();
+    await invoke("stop_acp_agent");
+
+    const actions = useAIChatStore.getState().actions;
+    if (chatId) {
+      actions.setChatAcpSessionId(chatId, null);
+    }
+    actions.setAvailableSlashCommands([]);
+    actions.setSessionModeState(null, []);
+    actions.setSessionConfigOptions([]);
+
+    await AcpStreamHandler.warmup(agentId, chatId ?? undefined);
   }
 
   // Static method to stop the current agent

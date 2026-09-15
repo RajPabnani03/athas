@@ -15,6 +15,13 @@ const HOSTED_INLINE_EDIT_PROVIDER_ID = "openrouter";
 const DEFAULT_INLINE_EDIT_INSTRUCTION = "Improve this code while preserving behavior.";
 
 export interface InlineEditRequest {
+  feature?:
+    | "inline-edit"
+    | "commit-message"
+    | "github-draft"
+    | "chat-title"
+    | "review-summary"
+    | "review-insight";
   provider?: string;
   model: string;
   beforeSelection: string;
@@ -81,7 +88,7 @@ export async function requestInlineEdit(
   }
 
   if (!response.ok) {
-    let message =
+    const message =
       body &&
       typeof body === "object" &&
       "error" in body &&
@@ -169,9 +176,11 @@ async function requestProviderInlineEdit(
     apiKey: apiKey || undefined,
   };
 
-  const headers = provider.buildHeaders(apiKey || undefined);
-  const payload = provider.buildPayload(streamRequest);
-  const url = provider.buildUrl ? provider.buildUrl(streamRequest) : provider.apiUrl;
+  const [headers, payload, url] = await Promise.all([
+    provider.buildHeaders(apiKey || undefined),
+    provider.buildPayload(streamRequest),
+    provider.buildUrl ? provider.buildUrl(streamRequest) : Promise.resolve(provider.apiUrl),
+  ]);
   const needsTauriFetch =
     request.provider === "gemini" ||
     request.provider === "ollama" ||

@@ -48,6 +48,13 @@
 .github-markdown.github-markdown-pr blockquote {
   margin: 0.9em 0;
   padding: 0.75em 1em;
+  color: inherit;
+  font-style: normal;
+}
+
+.github-markdown.github-markdown-pr .markdown-alert {
+  margin: 0.9em 0;
+  padding: 0.75em 1em;
 }
 
 .github-markdown.github-markdown-pr ul,
@@ -57,6 +64,24 @@
 
 .github-markdown.github-markdown-pr pre {
   margin: 0.9em 0;
+}
+
+.github-markdown.github-markdown-pr img,
+.github-markdown.github-markdown-pr video {
+  display: inline-block;
+  vertical-align: middle;
+  max-width: 100%;
+  max-height: min(70vh, 48rem);
+  object-fit: contain;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.github-markdown.github-markdown-pr video {
+  display: block;
+  margin: 0.75em 0;
 }
 
 .github-markdown.github-markdown-pr .github-markdown-pr-content > :first-child {

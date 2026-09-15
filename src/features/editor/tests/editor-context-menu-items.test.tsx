@@ -1,56 +1,52 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { buildEditorContextMenuItems } from "../context-menu/editor-context-menu-items";
+import { buildEditorContextMenuGroups } from "../context-menu/editor-context-menu-items";
 
 const baseOptions = {
   hasSelection: true,
-  modifierKey: "Cmd",
-  altKey: "Option",
 };
 
 function getItem(id: string, handlers = {}) {
-  const item = buildEditorContextMenuItems({
+  const item = buildEditorContextMenuGroups({
     ...baseOptions,
     ...handlers,
-  }).find((entry) => entry.id === id);
+  })
+    .flatMap((group) => group.items)
+    .find((entry) => entry.id === id);
 
   if (!item) throw new Error(`Missing menu item ${id}`);
   return item;
 }
 
-describe("buildEditorContextMenuItems", () => {
-  it("disables command items that do not have a handler", () => {
-    expect(getItem("format").disabled).toBe(true);
+describe("buildEditorContextMenuGroups", () => {
+  it("groups sharing, editing, code, and navigation actions", () => {
+    const groups = buildEditorContextMenuGroups(baseOptions);
+
+    expect(groups.map((group) => group.id)).toEqual(["sharing", "editing", "code", "navigation"]);
+    expect(groups.flatMap((group) => group.items)).toHaveLength(15);
+  });
+
+  it("disables commands that do not have a handler", () => {
     expect(getItem("format-selection").disabled).toBe(true);
     expect(getItem("go-to-definition").disabled).toBe(true);
     expect(getItem("quick-fix").disabled).toBe(true);
-    expect(getItem("bookmark").disabled).toBe(true);
   });
 
-  it("enables command items when their handler is present", () => {
-    expect(getItem("format", { onFormat: vi.fn() }).disabled).toBe(false);
-    expect(
-      getItem("select-next-occurrence", {
-        onSelectNextOccurrence: vi.fn(),
-      }).disabled,
-    ).toBe(false);
+  it("enables commands when their handler is present", () => {
+    expect(getItem("format-selection", { onFormatSelection: vi.fn() }).disabled).toBe(false);
     expect(getItem("go-to-definition", { onGoToDefinition: vi.fn() }).disabled).toBe(false);
-    expect(getItem("trigger-suggest", { onTriggerSuggest: vi.fn() }).disabled).toBe(false);
+    expect(getItem("quick-fix", { onQuickFix: vi.fn() }).disabled).toBe(false);
   });
 
   it("keeps selection-only commands disabled without a selection", () => {
-    const [copy, toggleCase, formatSelection] = ["copy", "toggle-case", "format-selection"].map(
-      (id) =>
-        buildEditorContextMenuItems({
-          ...baseOptions,
-          hasSelection: false,
-          onCopy: vi.fn(),
-          onFormatSelection: vi.fn(),
-          onToggleCase: vi.fn(),
-        }).find((entry) => entry.id === id),
-    );
+    const handlers = {
+      hasSelection: false,
+      onCopy: vi.fn(),
+      onFormat: vi.fn(),
+      onToggleCase: vi.fn(),
+    };
 
-    expect(copy?.disabled).toBe(true);
-    expect(toggleCase?.disabled).toBe(true);
-    expect(formatSelection?.disabled).toBe(true);
+    expect(getItem("copy", handlers).disabled).toBe(true);
+    expect(getItem("format", handlers).disabled).toBe(false);
+    expect(getItem("toggle-case", handlers).disabled).toBe(true);
   });
 });

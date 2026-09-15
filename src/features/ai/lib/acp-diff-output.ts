@@ -1,17 +1,30 @@
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { EXTENSION_VIEW_LIMITS } from "@/extensions/ui/services/extension-view-schema";
+import type { ExtensionViewNode } from "@/extensions/ui/types/extension-view";
 import type { MultiFileDiff } from "@/features/git/types/git-diff.types";
-import type { GitDiff, GitDiffLine } from "@/features/git/types/git.types";
+import type { GitDiff } from "@/features/git/types/git.types";
 import { countDiffStats } from "@/features/git/utils/git-diff-helpers";
+import {
+  buildGitDiffLines,
+  buildLineDiffHunks,
+  diffTextLines,
+} from "@/features/git/utils/line-diff";
 import { useProjectStore } from "@/features/window/stores/project.store";
 
-interface AcpDiffOutput {
+export interface AcpDiffOutput {
   path: string;
   oldText: string;
   newText: string;
 }
 
+type ExtensionDiffNode = Extract<ExtensionViewNode, { type: "diff" }>;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
+}
+
+function isAcpDiffOutput(value: unknown): value is Record<string, unknown> & { path: string } {
+  return isRecord(value) && value.type === "diff" && typeof value.path === "string";
 }
 
 function normalizePath(path: string): string {
@@ -31,50 +44,62 @@ function getBaseName(path: string): string {
   return path.split("/").pop() || path;
 }
 
+function getLanguageHint(path: string): string | undefined {
+  const fileName = getBaseName(path);
+  const separator = fileName.lastIndexOf(".");
+  return separator > 0 && separator < fileName.length - 1
+    ? fileName.slice(separator + 1)
+    : undefined;
+}
+
 export function getAcpDiffOutputs(output: unknown): AcpDiffOutput[] {
-  if (!Array.isArray(output)) return [];
+  const items = Array.isArray(output) ? output : [output];
 
-  return output
-    .filter(isRecord)
-    .filter((item) => item.type === "diff" && typeof item.path === "string")
-    .map((item) => ({
-      path: item.path as string,
-      oldText: typeof item.oldText === "string" ? item.oldText : "",
-      newText: typeof item.newText === "string" ? item.newText : "",
-    }));
+  return items.filter(isAcpDiffOutput).map((item) => ({
+    path: item.path as string,
+    oldText: typeof item.oldText === "string" ? item.oldText : "",
+    newText: typeof item.newText === "string" ? item.newText : "",
+  }));
 }
 
-function createHunkHeader(oldLines: string[], newLines: string[]): GitDiffLine {
-  const oldCount = Math.max(oldLines.length, 1);
-  const newCount = Math.max(newLines.length, 1);
+export function stripAcpDiffOutputs(output: unknown): unknown {
+  if (isAcpDiffOutput(output)) return undefined;
+  if (!Array.isArray(output)) return output;
+  const remaining = output.filter((item) => !isAcpDiffOutput(item));
+  return remaining.length > 0 ? remaining : undefined;
+}
+
+export function createAcpDiffViewNode(
+  diff: AcpDiffOutput,
+  rootFolderPath?: string | null,
+): ExtensionDiffNode {
+  const hunks = buildLineDiffHunks(diffTextLines(diff.oldText, diff.newText));
+  const allLines: ExtensionDiffNode["lines"] = hunks.flatMap((hunk) => [
+    {
+      type: "header" as const,
+      content: `-${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount}`,
+    },
+    ...hunk.ops.map((op) => ({
+      type: op.type,
+      content: op.content,
+      oldLine: op.oldLine,
+      newLine: op.newLine,
+    })),
+  ]);
+
+  // The view schema rejects an empty diff, so a no-op edit still says so.
+  const lines =
+    allLines.length > 0
+      ? allLines.slice(0, EXTENSION_VIEW_LIMITS.maxDiffLines)
+      : [{ type: "header" as const, content: "No changes" }];
+
   return {
-    line_type: "header",
-    content: `@@ -1,${oldCount} +1,${newCount} @@`,
+    type: "diff",
+    filePath: toRelativeDisplayPath(diff.path, rootFolderPath),
+    language: getLanguageHint(diff.path),
+    lines,
+    truncated: allLines.length > lines.length,
   };
-}
-
-function createDiffLines(oldText: string, newText: string): GitDiffLine[] {
-  const oldLines = oldText.length > 0 ? oldText.split("\n") : [];
-  const newLines = newText.length > 0 ? newText.split("\n") : [];
-  const lines: GitDiffLine[] = [createHunkHeader(oldLines, newLines)];
-
-  for (let index = 0; index < oldLines.length; index += 1) {
-    lines.push({
-      line_type: "removed",
-      content: oldLines[index],
-      old_line_number: index + 1,
-    });
-  }
-
-  for (let index = 0; index < newLines.length; index += 1) {
-    lines.push({
-      line_type: "added",
-      content: newLines[index],
-      new_line_number: index + 1,
-    });
-  }
-
-  return lines;
 }
 
 function toGitDiff(diff: AcpDiffOutput, rootFolderPath?: string | null): GitDiff {
@@ -89,7 +114,7 @@ function toGitDiff(diff: AcpDiffOutput, rootFolderPath?: string | null): GitDiff
     is_new: isNew,
     is_deleted: isDeleted,
     is_renamed: false,
-    lines: createDiffLines(diff.oldText, diff.newText),
+    lines: buildGitDiffLines(diff.oldText, diff.newText),
   };
 }
 

@@ -1,10 +1,10 @@
 import type { StateCreator } from "zustand";
 import type { BottomPaneTab } from "@/features/window/stores/ui-state/types/ui-state.types";
 import { useProjectStore } from "@/features/window/stores/project.store";
-import { useSessionStore } from "@/features/window/stores/session.store";
-import { DEFAULT_PROJECT_UI_STATE } from "@/features/window/stores/workspace-ui-session";
+import { workspaceSessionRepository } from "@/features/workspace/persistence/workspace-session-repository";
+import { DEFAULT_PROJECT_UI_STATE } from "@/features/window/stores/workspace-ui-defaults";
 
-export interface PanelState {
+interface PanelState {
   isSidebarVisible: boolean;
   isRightSidebarVisible: boolean;
   isFindVisible: boolean;
@@ -12,7 +12,7 @@ export interface PanelState {
   bottomPaneActiveTab: BottomPaneTab;
 }
 
-export interface PanelActions {
+interface PanelActions {
   setIsSidebarVisible: (v: boolean) => void;
   setIsRightSidebarVisible: (v: boolean) => void;
   setIsFindVisible: (v: boolean) => void;
@@ -36,7 +36,7 @@ export const createPanelSlice: StateCreator<PanelSlice, [], [], PanelSlice> = (s
     const projectPath = useProjectStore.getState().rootFolderPath;
     if (projectPath) {
       const state = get() as PanelSlice & { activeSidebarView?: string };
-      useSessionStore.getState().saveUiState(projectPath, {
+      workspaceSessionRepository.saveUi(projectPath, {
         isSidebarVisible: v,
         isBottomPaneVisible: get().isBottomPaneVisible,
         bottomPaneActiveTab: get().bottomPaneActiveTab,
@@ -51,7 +51,7 @@ export const createPanelSlice: StateCreator<PanelSlice, [], [], PanelSlice> = (s
     const projectPath = useProjectStore.getState().rootFolderPath;
     if (projectPath) {
       const state = get() as PanelSlice & { activeSidebarView?: string };
-      useSessionStore.getState().saveUiState(projectPath, {
+      workspaceSessionRepository.saveUi(projectPath, {
         isSidebarVisible: get().isSidebarVisible,
         isBottomPaneVisible: v,
         bottomPaneActiveTab: get().bottomPaneActiveTab,
@@ -64,7 +64,7 @@ export const createPanelSlice: StateCreator<PanelSlice, [], [], PanelSlice> = (s
     const projectPath = useProjectStore.getState().rootFolderPath;
     if (projectPath) {
       const state = get() as PanelSlice & { activeSidebarView?: string };
-      useSessionStore.getState().saveUiState(projectPath, {
+      workspaceSessionRepository.saveUi(projectPath, {
         isSidebarVisible: get().isSidebarVisible,
         isBottomPaneVisible: get().isBottomPaneVisible,
         bottomPaneActiveTab: tab,

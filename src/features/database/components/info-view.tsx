@@ -1,4 +1,5 @@
 import { Button } from "@/ui/button";
+import { ScrollArea } from "@/ui/scroll-area";
 import { getDatabaseObjectOwner, groupDatabaseObjects } from "../lib/database-catalog";
 import type { ColumnFilter, DatabaseInfo, TableInfo } from "../types/common.types";
 import SqlHistoryList from "./sql-history-list";
@@ -33,12 +34,12 @@ export default function InfoView({
   const objectGroups = groupDatabaseObjects(tables);
 
   return (
-    <div className="flex-1 overflow-auto ui-font">
+    <ScrollArea fill="flex" className="font-sans" orientation="both">
       <div className="divide-y divide-border">
         {/* Database stats */}
         <div className="p-3">
-          <div className="mb-1 ui-text-sm text-text">{fileName}</div>
-          <div className="flex gap-4 ui-text-xs text-text-lighter">
+          <div className="mb-1 ui-text-sm text-foreground">{fileName}</div>
+          <div className="flex gap-4 ui-text-sm text-subtle-foreground">
             <span>{dbInfo?.tables || 0} tables</span>
             <span>{dbInfo?.indexes || 0} indexes</span>
             <span>v{dbInfo?.version || "0"}</span>
@@ -49,11 +50,11 @@ export default function InfoView({
 
         {/* Tables */}
         <div className="p-3">
-          <div className="mb-2 ui-text-xs text-text-lighter">objects</div>
+          <div className="mb-2 ui-text-sm text-subtle-foreground">objects</div>
           <div className="space-y-3">
             {objectGroups.map((group) => (
               <div key={group.kind}>
-                <div className="mb-1 ui-text-xs text-text-lighter uppercase tracking-wide">
+                <div className="mb-1 ui-text-sm text-subtle-foreground uppercase tracking-wide">
                   {group.label} ({group.objects.length})
                 </div>
                 <div className="space-y-1">
@@ -63,16 +64,15 @@ export default function InfoView({
                       <Button
                         key={table.name}
                         onClick={() => onTableChange(table.name)}
-                        variant="ghost"
-                        compact
-                        className={`block h-auto w-full justify-start px-2 py-1 text-left ui-text-sm hover:bg-hover ${
-                          selectedTable === table.name ? "bg-selected" : ""
-                        }`}
+                        variant="list"
+                        width="full"
+                        align="start"
+                        active={selectedTable === table.name}
                       >
                         <span className="flex min-w-0 flex-col items-start">
                           <span className="max-w-full truncate">{table.name}</span>
                           {owner && (
-                            <span className="max-w-full truncate ui-text-xs text-text-lighter">
+                            <span className="max-w-full truncate ui-text-sm text-subtle-foreground">
                               on {owner}
                             </span>
                           )}
@@ -99,6 +99,6 @@ export default function InfoView({
           </div>
         )}
       </div>
-    </div>
+    </ScrollArea>
   );
 }

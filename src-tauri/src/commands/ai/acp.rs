@@ -1,5 +1,7 @@
-use crate::app_runtime::AppHandle;
-use athas_ai::{AcpAgentBridge, AcpAgentStatus, AcpSessionList, AgentConfig, AgentRuntime};
+use crate::{app_runtime::AppHandle, service_urls};
+use athas_ai::{
+   AcpAgentBridge, AcpAgentStatus, AcpSessionList, AgentConfig, AgentRuntime, SessionConfigValue,
+};
 use athas_runtime::{RuntimeManager, RuntimeType};
 use athas_tooling::{ToolConfig, ToolInstaller, ToolRuntime};
 use serde::Deserialize;
@@ -14,9 +16,21 @@ use tauri::{Manager, State};
 use tokio::sync::Mutex;
 
 pub type AcpBridgeState = Arc<Mutex<AcpAgentBridge>>;
-const EXTENSIONS_CDN_BASE_URL: &str = "https://athas.dev/extensions";
 const AGENT_CATALOG_CACHE_SECONDS: u64 = 300;
-const TERMINAL_ONLY_AGENT_IDS: &[&str] = &["claude-code"];
+const NON_ACP_AGENT_IDS: &[&str] = &["claude-code", "codex-cli", "codex"];
+const BUNDLED_AGENT_MANIFESTS: &[&str] = &[
+   include_str!("../../../../extensions/official/antigravity/extension.json"),
+   include_str!("../../../../extensions/official/claude-code/extension.json"),
+   include_str!("../../../../extensions/official/gemini-cli/extension.json"),
+   include_str!("../../../../extensions/official/github-copilot/extension.json"),
+   include_str!("../../../../extensions/official/kimi-cli/extension.json"),
+   include_str!("../../../../extensions/official/opencode/extension.json"),
+   include_str!("../../../../extensions/official/qwen-code/extension.json"),
+];
+
+fn is_acp_agent_id(agent_id: &str) -> bool {
+   !NON_ACP_AGENT_IDS.contains(&agent_id)
+}
 
 #[derive(Deserialize)]
 pub struct PermissionResponseArgs {
@@ -74,10 +88,11 @@ pub async fn install_acp_agent(
    };
 
    let tool_config = tool_config_from_agent(&agent)?;
-   let installed_binary = ToolInstaller::install(&app_handle, &tool_config)
+   let installed_binary = ToolInstaller::install_managed(&app_handle, &tool_config)
       .await
       .map_err(|e| e.to_string())?;
    write_acp_wrapper(&app_handle, &agent, &tool_config, &installed_binary).await?;
+   write_acp_agent_metadata(&app_handle, &agent)?;
 
    let mut bridge = bridge.lock().await;
    bridge.invalidate_agent_detection_cache();
@@ -88,6 +103,43 @@ pub async fn install_acp_agent(
       .ok_or_else(|| format!("Installed ACP agent disappeared: {}", agent_id))?;
 
    Ok(installed)
+}
+
+#[tauri::command]
+pub async fn update_acp_agent(
+   app_handle: AppHandle,
+   bridge: State<'_, AcpBridgeState>,
+   agent_id: String,
+) -> Result<AgentConfig, String> {
+   let agent = {
+      let mut bridge = bridge.lock().await;
+      refresh_registered_agents(&mut bridge).await;
+      bridge.invalidate_agent_detection_cache();
+      bridge
+         .detect_agents()
+         .into_iter()
+         .find(|agent| agent.id == agent_id)
+         .ok_or_else(|| format!("Unknown ACP agent: {}", agent_id))?
+   };
+
+   if !agent.can_install {
+      return Err(format!("{} does not support managed updates", agent.name));
+   }
+
+   let tool_config = tool_config_from_agent(&agent)?;
+   let installed_binary = ToolInstaller::install_managed(&app_handle, &tool_config)
+      .await
+      .map_err(|e| e.to_string())?;
+   write_acp_wrapper(&app_handle, &agent, &tool_config, &installed_binary).await?;
+   write_acp_agent_metadata(&app_handle, &agent)?;
+
+   let mut bridge = bridge.lock().await;
+   bridge.invalidate_agent_detection_cache();
+   bridge
+      .detect_agents()
+      .into_iter()
+      .find(|candidate| candidate.id == agent_id)
+      .ok_or_else(|| format!("Updated ACP agent disappeared: {}", agent_id))
 }
 
 #[tauri::command]
@@ -109,6 +161,7 @@ pub async fn uninstall_acp_agent(
 
    let tool_config = tool_config_from_agent(&agent)?;
    remove_acp_wrapper(&app_handle, &agent.id)?;
+   remove_acp_agent_metadata(&app_handle, &agent.id)?;
    remove_managed_tool(&app_handle, &tool_config)?;
 
    let mut bridge = bridge.lock().await;
@@ -136,7 +189,10 @@ static AGENT_CATALOG_CACHE: std::sync::OnceLock<std::sync::Mutex<Option<CachedAg
 struct MarketplaceAgentInstall {
    runtime: AgentRuntime,
    package: String,
+   version: Option<String>,
    command: Option<String>,
+   #[serde(default)]
+   commands_by_platform: HashMap<String, String>,
    download_url: Option<String>,
    #[serde(default)]
    download_urls: HashMap<String, String>,
@@ -150,6 +206,8 @@ struct MarketplaceAgentContribution {
    binary_name: String,
    #[serde(default)]
    args: Vec<String>,
+   #[serde(default)]
+   args_by_platform: HashMap<String, Vec<String>>,
    #[serde(default)]
    env_vars: HashMap<String, String>,
    icon: Option<String>,
@@ -166,7 +224,7 @@ struct MarketplaceExtensionManifest {
 
 fn extensions_manifest_url() -> String {
    let base_url = std::env::var("ATHAS_EXTENSIONS_CDN_URL")
-      .unwrap_or_else(|_| EXTENSIONS_CDN_BASE_URL.to_string());
+      .unwrap_or_else(|_| service_urls::extensions_cdn_base_url().to_string());
    format!("{}/manifests.json", base_url.trim_end_matches('/'))
 }
 
@@ -183,32 +241,44 @@ fn current_platform_arch() -> Option<&'static str> {
 }
 
 fn to_agent_config(contribution: MarketplaceAgentContribution) -> AgentConfig {
+   let platform_arch = current_platform_arch();
+   let args = platform_arch
+      .and_then(|platform| contribution.args_by_platform.get(platform).cloned())
+      .unwrap_or(contribution.args);
    let mut agent = AgentConfig {
       id: contribution.id,
       name: contribution.name,
       binary_name: contribution.binary_name,
       binary_path: None,
-      args: contribution.args,
+      args,
       env_vars: contribution.env_vars,
       icon: contribution.icon,
       description: contribution.description,
       installed: false,
       install_runtime: None,
       install_package: None,
+      available_version: None,
+      installed_version: None,
+      update_available: false,
+      managed: false,
       install_download_url: None,
       install_command: None,
       can_install: false,
    };
 
    if let Some(install) = contribution.install {
-      let download_url = current_platform_arch()
+      let download_url = platform_arch
          .and_then(|platform_arch| install.download_urls.get(platform_arch).cloned())
          .or(install.download_url);
+      let command = platform_arch
+         .and_then(|platform_arch| install.commands_by_platform.get(platform_arch).cloned())
+         .or(install.command);
       let is_binary_install = install.runtime == AgentRuntime::Binary;
 
       agent.install_runtime = Some(install.runtime);
       agent.install_package = Some(install.package);
-      agent.install_command = install.command;
+      agent.available_version = install.version;
+      agent.install_command = command;
       agent.install_download_url = download_url;
       agent.can_install = agent.install_runtime.is_some()
          && agent.install_package.is_some()
@@ -216,6 +286,53 @@ fn to_agent_config(contribution: MarketplaceAgentContribution) -> AgentConfig {
    }
 
    agent
+}
+
+fn merge_agent_catalog(
+   marketplace_agents: Vec<AgentConfig>,
+   fallback_agents: Vec<AgentConfig>,
+) -> Vec<AgentConfig> {
+   let mut agents = marketplace_agents
+      .into_iter()
+      .map(|agent| (agent.id.clone(), agent))
+      .collect::<HashMap<_, _>>();
+
+   for fallback in fallback_agents {
+      agents.entry(fallback.id.clone()).or_insert(fallback);
+   }
+
+   let mut agents = agents.into_values().collect::<Vec<_>>();
+   agents.sort_by_key(|agent| agent.name.clone());
+   agents
+}
+
+fn bundled_agent_catalog() -> Vec<AgentConfig> {
+   BUNDLED_AGENT_MANIFESTS
+      .iter()
+      .filter_map(
+         |manifest| match serde_json::from_str::<MarketplaceExtensionManifest>(manifest) {
+            Ok(manifest) => Some(manifest),
+            Err(error) => {
+               log::error!("Invalid bundled agent manifest: {error}");
+               None
+            }
+         },
+      )
+      .flat_map(|manifest| manifest.agents)
+      .filter(|agent| is_acp_agent_id(&agent.id))
+      .map(to_agent_config)
+      .collect()
+}
+
+fn agent_configs_from_manifests(
+   manifests: HashMap<String, MarketplaceExtensionManifest>,
+) -> Vec<AgentConfig> {
+   manifests
+      .into_values()
+      .flat_map(|manifest| manifest.agents)
+      .filter(|agent| is_acp_agent_id(&agent.id))
+      .map(to_agent_config)
+      .collect()
 }
 
 async fn load_marketplace_agents() -> Result<Vec<AgentConfig>, String> {
@@ -231,32 +348,41 @@ async fn load_marketplace_agents() -> Result<Vec<AgentConfig>, String> {
       }
    }
 
-   let response = reqwest::Client::new()
+   let bundled_agents = bundled_agent_catalog();
+   let marketplace_agents = match reqwest::Client::new()
       .get(extensions_manifest_url())
       .timeout(Duration::from_secs(5))
       .send()
       .await
-      .map_err(|error| format!("Failed to load agent catalog: {}", error))?;
-
-   if !response.status().is_success() {
-      return Err(format!(
-         "Failed to load agent catalog: HTTP {}",
-         response.status()
-      ));
-   }
-
-   let manifests = response
-      .json::<HashMap<String, MarketplaceExtensionManifest>>()
-      .await
-      .map_err(|error| format!("Invalid agent catalog: {}", error))?;
-
-   let mut agents = manifests
-      .into_values()
-      .flat_map(|manifest| manifest.agents)
-      .filter(|agent| !TERMINAL_ONLY_AGENT_IDS.contains(&agent.id.as_str()))
-      .map(to_agent_config)
-      .collect::<Vec<_>>();
-   agents.sort_by_key(|agent| agent.name.clone());
+   {
+      Ok(response) if response.status().is_success() => {
+         match response
+            .json::<HashMap<String, MarketplaceExtensionManifest>>()
+            .await
+         {
+            Ok(manifests) => agent_configs_from_manifests(manifests),
+            Err(error) => {
+               log::warn!("Invalid remote agent catalog: {error}; using bundled agents");
+               Vec::new()
+            }
+         }
+      }
+      Ok(response) => {
+         log::warn!(
+            "Failed to load agent catalog: HTTP {}; using bundled agents",
+            response.status()
+         );
+         Vec::new()
+      }
+      Err(error) => {
+         log::warn!(
+            "Failed to load agent catalog: {}; using bundled agents",
+            error
+         );
+         Vec::new()
+      }
+   };
+   let agents = merge_agent_catalog(marketplace_agents, bundled_agents);
 
    let mut cached = cache
       .lock()
@@ -333,13 +459,19 @@ pub async fn set_acp_session_mode(
 pub struct SessionConfigOptionArgs {
    #[serde(alias = "configId")]
    config_id: String,
-   value: String,
+   value: SessionConfigValue,
 }
 
 #[derive(Deserialize)]
 pub struct SessionListArgs {
    cwd: Option<String>,
    cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct SessionDeleteArgs {
+   #[serde(alias = "sessionId")]
+   session_id: String,
 }
 
 #[tauri::command]
@@ -349,7 +481,7 @@ pub async fn set_acp_session_config_option(
 ) -> Result<(), String> {
    let bridge = { bridge.lock().await.clone() };
    bridge
-      .set_session_config_option(&args.config_id, &args.value)
+      .set_session_config_option(&args.config_id, args.value)
       .await
       .map_err(|e| e.to_string())
 }
@@ -364,6 +496,24 @@ pub async fn list_acp_sessions(
       .list_sessions(args.cwd, args.cursor)
       .await
       .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_acp_session(
+   bridge: State<'_, AcpBridgeState>,
+   args: SessionDeleteArgs,
+) -> Result<(), String> {
+   let bridge = { bridge.lock().await.clone() };
+   bridge
+      .delete_session(&args.session_id)
+      .await
+      .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn logout_acp_agent(bridge: State<'_, AcpBridgeState>) -> Result<(), String> {
+   let bridge = { bridge.lock().await.clone() };
+   bridge.logout().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -418,13 +568,53 @@ fn remove_acp_wrapper(app_handle: &AppHandle, agent_id: &str) -> Result<(), Stri
    Ok(())
 }
 
+fn acp_agent_metadata_path(app_handle: &AppHandle, agent_id: &str) -> Result<PathBuf, String> {
+   let wrapper_path = acp_wrapper_path(app_handle, agent_id)?;
+   Ok(wrapper_path.with_file_name(format!("{agent_id}.json")))
+}
+
+fn write_acp_agent_metadata(app_handle: &AppHandle, agent: &AgentConfig) -> Result<(), String> {
+   let metadata_path = acp_agent_metadata_path(app_handle, &agent.id)?;
+   let contents = serde_json::to_vec_pretty(&serde_json::json!({
+      "version": agent.available_version.as_deref(),
+      "package": agent.install_package.as_deref(),
+   }))
+   .map_err(|error| format!("Failed to serialize ACP agent metadata: {error}"))?;
+   fs::write(metadata_path, contents)
+      .map_err(|error| format!("Failed to write ACP agent metadata: {error}"))
+}
+
+fn remove_acp_agent_metadata(app_handle: &AppHandle, agent_id: &str) -> Result<(), String> {
+   let metadata_path = acp_agent_metadata_path(app_handle, agent_id)?;
+   if metadata_path.exists() {
+      fs::remove_file(metadata_path)
+         .map_err(|error| format!("Failed to remove ACP agent metadata: {error}"))?;
+   }
+   Ok(())
+}
+
+fn node_package_identity(package_spec: &str) -> &str {
+   if package_spec.starts_with('@') {
+      return package_spec
+         .rfind('@')
+         .filter(|separator| *separator > package_spec.find('/').unwrap_or(0))
+         .map(|separator| &package_spec[..separator])
+         .unwrap_or(package_spec);
+   }
+
+   package_spec
+      .split_once('@')
+      .map(|(package, _)| package)
+      .unwrap_or(package_spec)
+}
+
 fn remove_managed_tool(app_handle: &AppHandle, tool_config: &ToolConfig) -> Result<(), String> {
    let Some(package) = tool_config.package.as_ref() else {
       return Ok(());
    };
    let tools_dir = ToolInstaller::get_tools_dir(app_handle).map_err(|e| e.to_string())?;
    let path = match tool_config.runtime {
-      ToolRuntime::Node => tools_dir.join("npm").join(package),
+      ToolRuntime::Node => tools_dir.join("npm").join(node_package_identity(package)),
       ToolRuntime::Python => tools_dir.join("python").join(package),
       ToolRuntime::Go => {
          ToolInstaller::get_tool_path(app_handle, tool_config).map_err(|e| e.to_string())?
@@ -433,7 +623,7 @@ fn remove_managed_tool(app_handle: &AppHandle, tool_config: &ToolConfig) -> Resu
          ToolInstaller::get_tool_path(app_handle, tool_config).map_err(|e| e.to_string())?
       }
       ToolRuntime::Binary => tools_dir.join("binary").join(&tool_config.name),
-      ToolRuntime::Bun => tools_dir.join("bun").join(package),
+      ToolRuntime::Bun => tools_dir.join("bun").join(node_package_identity(package)),
       ToolRuntime::Ruby => tools_dir.join("ruby").join(package),
       ToolRuntime::R => tools_dir.join("r").join(package),
       ToolRuntime::System => return Ok(()),
@@ -537,4 +727,62 @@ fn make_wrapper_executable(path: &PathBuf) -> Result<(), String> {
    }
 
    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+   use super::{
+      bundled_agent_catalog, is_acp_agent_id, merge_agent_catalog, node_package_identity,
+   };
+   use athas_ai::AgentConfig;
+
+   #[test]
+   fn keeps_terminal_integrations_out_of_the_acp_catalog() {
+      assert!(!is_acp_agent_id("claude-code"));
+      assert!(!is_acp_agent_id("codex"));
+   }
+
+   #[test]
+   fn accepts_the_claude_agent_adapter() {
+      assert!(is_acp_agent_id("claude-acp"));
+   }
+
+   #[test]
+   fn removes_versions_from_node_package_specs() {
+      assert_eq!(node_package_identity("opencode-ai@1.18.21"), "opencode-ai");
+      assert_eq!(
+         node_package_identity("@google/gemini-cli@0.56.0"),
+         "@google/gemini-cli"
+      );
+      assert_eq!(node_package_identity("@scope/package"), "@scope/package");
+   }
+
+   #[test]
+   fn bundles_every_official_acp_agent_for_offline_discovery() {
+      let agents = bundled_agent_catalog();
+      let ids = agents
+         .iter()
+         .map(|agent| agent.id.as_str())
+         .collect::<Vec<_>>();
+
+      assert_eq!(agents.len(), 7);
+      assert!(ids.contains(&"claude-acp"));
+      assert!(ids.contains(&"antigravity-acp"));
+      assert!(agents.iter().all(|agent| agent.can_install));
+   }
+
+   #[test]
+   fn remote_agent_metadata_overrides_the_bundled_fallback() {
+      let mut bundled = AgentConfig::new("test-agent", "Bundled", "test-agent");
+      bundled.available_version = Some("1.0.0".to_string());
+      let mut remote = bundled.clone();
+      remote.name = "Remote".to_string();
+      remote.available_version = Some("2.0.0".to_string());
+
+      let merged = merge_agent_catalog(vec![remote], vec![bundled]);
+
+      assert_eq!(merged.len(), 1);
+      assert_eq!(merged[0].name, "Remote");
+      assert_eq!(merged[0].available_version.as_deref(), Some("2.0.0"));
+   }
 }

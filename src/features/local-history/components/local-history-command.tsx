@@ -1,15 +1,16 @@
 import {
-  ArrowCounterClockwiseIcon as ArrowCounterClockwise,
-  ArrowLeftIcon as ArrowLeft,
-  ArrowsLeftRightIcon as ArrowsLeftRight,
-  ClockCounterClockwiseIcon as ClockCounterClockwise,
-  EyeIcon as Eye,
-  PencilSimpleIcon as PencilSimple,
-  PlusIcon as Plus,
-  TrashIcon as Trash,
-} from "@phosphor-icons/react";
+  ArrowCounterClockwiseIcon,
+  ArrowLeftIcon,
+  ArrowsLeftRightIcon,
+  EyeIcon,
+  HistoryIcon,
+  PenIcon,
+  PlusIcon,
+  TrashIcon,
+} from "@/ui/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { emitGitChanged } from "@/features/git/events/git-events";
 import { readFile, writeFile } from "@/features/file-system/controllers/platform";
 import {
   deleteLocalHistoryEntry,
@@ -22,9 +23,16 @@ import {
 import { useLocalHistoryStore } from "@/features/local-history/stores/local-history.store";
 import { createLocalHistoryDiff } from "@/features/local-history/utils/local-history-diff";
 import { Button } from "@/ui/button";
-import { CommandEmpty, CommandHeader, CommandInput, CommandList } from "@/ui/command";
-import { showPromptDialog } from "@/features/dialogs/services/dialog-service";
-import { toast } from "@/ui/toast";
+import {
+  CommandEmpty,
+  CommandHeader,
+  CommandHeaderAction,
+  CommandInput,
+  CommandList,
+} from "@/ui/command";
+import { showPromptDialog } from "@/ui/dialog";
+import { InlineRenameInput } from "@/ui/input";
+import { toast } from "sonner";
 import { cn } from "@/utils/cn";
 import { formatRelativeDate, formatShortDateTime } from "@/utils/date";
 import { getBaseName } from "@/utils/path-helpers";
@@ -64,6 +72,8 @@ export function LocalHistoryCommandContent({
   const [entries, setEntries] = useState<LocalHistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [renamingEntryId, setRenamingEntryId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -284,9 +294,11 @@ export function LocalHistoryCommandContent({
           bufferStore.actions.markBufferDirty(openBuffer.id, false);
         }
 
-        window.dispatchEvent(
-          new CustomEvent("git-status-updated", { detail: { filePath: targetPath } }),
-        );
+        emitGitChanged({
+          filePath: targetPath,
+          scopes: ["working-tree"],
+          source: "restore-local-history",
+        });
         toast.success("Snapshot restored");
         onClose();
       } catch (error) {
@@ -313,16 +325,8 @@ export function LocalHistoryCommandContent({
   );
 
   const renameSnapshot = useCallback(
-    async (entry: LocalHistoryEntry) => {
+    async (entry: LocalHistoryEntry, label: string) => {
       if (!targetPath) return;
-
-      const label = await showPromptDialog("Name this local history entry:", {
-        title: "Rename Local History Entry",
-        defaultValue: entry.label ?? "",
-        placeholder: "Entry name",
-        confirmLabel: "Rename",
-      });
-      if (label === null) return;
 
       try {
         const updatedEntry = await renameLocalHistoryEntry(
@@ -336,6 +340,9 @@ export function LocalHistoryCommandContent({
       } catch (error) {
         console.error("Failed to rename local history snapshot:", error);
         toast.error("Failed to rename snapshot");
+      } finally {
+        setRenamingEntryId(null);
+        setRenameValue("");
       }
     },
     [targetPath],
@@ -373,24 +380,23 @@ export function LocalHistoryCommandContent({
   return (
     <>
       <CommandHeader onClose={onClose}>
-        <Button aria-label="Back" onClick={onBack} variant="ghost" className="rounded" compact>
-          <ArrowLeft className="text-text-lighter" />
-        </Button>
-        <ClockCounterClockwise className="size-4 shrink-0 text-text-lighter" />
+        <CommandHeaderAction aria-label="Back" onClick={onBack}>
+          <ArrowLeftIcon />
+        </CommandHeaderAction>
+        <HistoryIcon className="size-4 shrink-0 text-subtle-foreground" />
         <div className="min-w-0 flex-1">
-          <div className="truncate ui-font ui-text-sm text-text">Local History: {fileName}</div>
-          <div className="truncate ui-font ui-text-xs text-text-lighter">{targetPath}</div>
+          <div className="truncate font-sans ui-text-base text-foreground">
+            Local History: {fileName}
+          </div>
+          <div className="truncate font-sans ui-text-base text-subtle-foreground">{targetPath}</div>
         </div>
-        <Button
+        <CommandHeaderAction
           aria-label="Create local history entry"
           onClick={() => void createSnapshot()}
-          variant="ghost"
-          compact
-          className="rounded"
           tooltip="Create entry"
         >
-          <Plus className="text-text-lighter" />
-        </Button>
+          <PlusIcon />
+        </CommandHeaderAction>
       </CommandHeader>
 
       <div className="border-border border-b px-4 py-2">
@@ -418,14 +424,35 @@ export function LocalHistoryCommandContent({
               onClick={() => void openSnapshot(entry)}
               onMouseEnter={() => setSelectedIndex(index)}
               className={cn(
-                "mb-1 flex min-h-12 w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-hover",
-                index === selectedIndex ? "bg-selected text-text" : "bg-transparent text-text",
+                "mb-1 flex min-h-12 w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent",
+                index === selectedIndex
+                  ? "bg-selected text-foreground"
+                  : "bg-transparent text-foreground",
               )}
             >
-              <ClockCounterClockwise className="size-4 shrink-0 text-text-lighter" />
+              <HistoryIcon className="size-4 shrink-0 text-subtle-foreground" />
               <div className="min-w-0 flex-1">
-                <div className="truncate ui-font ui-text-sm text-text">{getEntryTitle(entry)}</div>
-                <div className="truncate ui-font ui-text-xs text-text-lighter">
+                {renamingEntryId === entry.id ? (
+                  <InlineRenameInput
+                    value={renameValue}
+                    onValueChange={setRenameValue}
+                    onSubmit={(label) => void renameSnapshot(entry, label)}
+                    onCancel={() => {
+                      setRenamingEntryId(null);
+                      setRenameValue("");
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    allowEmpty
+                    aria-label={`Rename ${getEntryTitle(entry)}`}
+                    placeholder="Entry name"
+                  />
+                ) : (
+                  <div className="truncate font-sans ui-text-base text-foreground">
+                    {getEntryTitle(entry)}
+                  </div>
+                )}
+                <div className="truncate font-sans ui-text-base text-subtle-foreground">
                   {formatRelativeDate(new Date(entry.created_at))} ·{" "}
                   {formatSnapshotSize(entry.size)}
                   {entry.reason ? ` · ${entry.reason}` : ""}
@@ -440,8 +467,9 @@ export function LocalHistoryCommandContent({
                     event.stopPropagation();
                     void openSnapshot(entry);
                   }}
+                  iconOnly
                 >
-                  <Eye />
+                  <EyeIcon />
                 </Button>
                 <Button
                   type="button"
@@ -451,8 +479,9 @@ export function LocalHistoryCommandContent({
                     event.stopPropagation();
                     void compareWithCurrent(entry);
                   }}
+                  iconOnly
                 >
-                  <ArrowsLeftRight />
+                  <ArrowsLeftRightIcon />
                 </Button>
                 <Button
                   type="button"
@@ -462,8 +491,9 @@ export function LocalHistoryCommandContent({
                     event.stopPropagation();
                     void compareWithPrevious(entry);
                   }}
+                  iconOnly
                 >
-                  <ClockCounterClockwise />
+                  <HistoryIcon />
                 </Button>
                 <Button
                   type="button"
@@ -473,8 +503,9 @@ export function LocalHistoryCommandContent({
                     event.stopPropagation();
                     void restoreSnapshot(entry);
                   }}
+                  iconOnly
                 >
-                  <ArrowCounterClockwise />
+                  <ArrowCounterClockwiseIcon />
                 </Button>
                 <Button
                   type="button"
@@ -482,10 +513,12 @@ export function LocalHistoryCommandContent({
                   tooltip="Rename snapshot"
                   onClick={(event) => {
                     event.stopPropagation();
-                    void renameSnapshot(entry);
+                    setRenamingEntryId(entry.id);
+                    setRenameValue(entry.label ?? "");
                   }}
+                  iconOnly
                 >
-                  <PencilSimple />
+                  <PenIcon />
                 </Button>
                 <Button
                   type="button"
@@ -495,8 +528,9 @@ export function LocalHistoryCommandContent({
                     event.stopPropagation();
                     void deleteSnapshot(entry);
                   }}
+                  iconOnly
                 >
-                  <Trash />
+                  <TrashIcon />
                 </Button>
               </div>
             </div>

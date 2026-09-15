@@ -1,4 +1,11 @@
+import { toOpenAIMessage } from "@/features/ai/lib/image-attachments";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import {
+  DEFAULT_OLLAMA_BASE_URL,
+  OLLAMA_CLOUD_BASE_URL,
+  isOllamaCloudUrl,
+  normalizeOllamaBaseUrl,
+} from "@/features/ai/lib/ollama-endpoint";
 import type { ProviderModel } from "./ai-provider-interface";
 import { AIProvider, type ProviderHeaders, type StreamRequest } from "./ai-provider-interface";
 
@@ -17,9 +24,6 @@ import { AIProvider, type ProviderHeaders, type StreamRequest } from "./ai-provi
  * - https://docs.ollama.com/api/introduction
  * - https://docs.ollama.com/cloud
  */
-
-export const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
-export const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
 
 const OLLAMA_TIMEOUT_MS = 5000;
 
@@ -45,25 +49,6 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs = OLLAMA_TIMEOUT_MS): Pro
       },
     );
   });
-}
-
-export function normalizeOllamaBaseUrl(url: string): string {
-  return url.replace(/\/+$/, "") || DEFAULT_OLLAMA_BASE_URL;
-}
-
-/**
- * Heuristic: is this URL pointing at Ollama Cloud (which requires auth)?
- *
- * We only treat `ollama.com` hosts as cloud; everything else (localhost,
- * LAN IPs, custom gateways) is considered self-hosted and auth is optional.
- */
-export function isOllamaCloudUrl(url: string): boolean {
-  try {
-    const { hostname } = new URL(url);
-    return hostname === "ollama.com" || hostname.endsWith(".ollama.com");
-  } catch {
-    return false;
-  }
 }
 
 function buildAuthHeaders(apiKey?: string | null): ProviderHeaders {
@@ -134,7 +119,7 @@ export class OllamaProvider extends AIProvider {
   buildPayload(request: StreamRequest) {
     return {
       model: request.modelId,
-      messages: request.messages,
+      messages: request.messages.map(toOpenAIMessage),
       stream: true,
       temperature: request.temperature,
       max_tokens: request.maxTokens,
@@ -166,7 +151,7 @@ export class OllamaProvider extends AIProvider {
         models.push({
           id,
           name: paramSize ? `${id} (${paramSize})` : id,
-          maxTokens: 4096,
+          maxOutputTokens: 4096,
         });
       }
       return models;

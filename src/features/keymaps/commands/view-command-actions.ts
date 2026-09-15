@@ -1,5 +1,6 @@
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
-import { useEditorUIStore } from "@/features/editor/stores/ui.store";
+import { openNewAgentChat } from "@/features/ai/lib/open-new-agent-chat";
+import { editorAPI } from "@/features/editor/extensions/api";
 import { OPEN_NOTIFICATIONS_COMMAND_EVENT } from "@/features/notifications/constants/notifications-events";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { useWhatsNewStore } from "@/features/settings/stores/whats-new.store";
@@ -7,12 +8,9 @@ import { useUIState } from "@/features/window/stores/ui-state.store";
 import { useZoomStore } from "@/features/window/stores/zoom.store";
 import { useKeymapStore } from "../stores/keymaps.store";
 
-function getZoomTarget(): "editor" | "terminal" | "webviewer" {
+function getZoomTarget(): "editor" | "terminal" {
   const terminalContainer = document.querySelector('[data-terminal-container="active"]');
   if (terminalContainer?.contains(document.activeElement)) return "terminal";
-
-  const activeBuffer = useBufferStore.getState().buffers.find((b) => b.isActive);
-  if (activeBuffer?.type === "webViewer") return "webviewer";
 
   return "editor";
 }
@@ -20,6 +18,11 @@ function getZoomTarget(): "editor" | "terminal" | "webviewer" {
 export function toggleSidebar(): void {
   const state = useUIState.getState();
   state.setIsSidebarVisible(!state.isSidebarVisible);
+}
+
+export function toggleActivitySidebar(): void {
+  const { settings, actions } = useSettingsStore.getState();
+  void actions.updateSetting("activityRailExpanded", !settings.activityRailExpanded);
 }
 
 export function toggleTerminalPane(): void {
@@ -46,9 +49,8 @@ export function showNotifications(): void {
   window.dispatchEvent(new CustomEvent(OPEN_NOTIFICATIONS_COMMAND_EVENT));
 }
 
-export function toggleAgentLauncher(): void {
-  const state = useUIState.getState();
-  state.setIsAgentLauncherVisible(!state.isAgentLauncherVisible);
+export function openNewAgentSession(): void {
+  openNewAgentChat();
 }
 
 export function showFind(): void {
@@ -62,14 +64,24 @@ export function showFind(): void {
     window.dispatchEvent(new CustomEvent("terminal-open-search"));
     return;
   }
+
+  if (editorAPI.openFind()) {
+    useUIState.getState().setIsFindVisible(false);
+    return;
+  }
+
   const state = useUIState.getState();
   state.setIsFindVisible(!state.isFindVisible);
 }
 
 export function showFindReplace(): void {
+  if (editorAPI.openFind(true)) {
+    useUIState.getState().setIsFindVisible(false);
+    return;
+  }
+
   const state = useUIState.getState();
   state.setIsFindVisible(true);
-  useEditorUIStore.getState().actions.setIsReplaceVisible(true);
 }
 
 export function openGlobalSearchBuffer(): void {
@@ -106,9 +118,24 @@ export function toggleGitHubSidebar(): void {
   }
 }
 
-export function toggleSidebarPosition(): void {
-  const { settings, updateSetting } = useSettingsStore.getState();
-  updateSetting("sidebarPosition", settings.sidebarPosition === "left" ? "right" : "left");
+export function toggleViewsSidebar(): void {
+  const state = useUIState.getState();
+  if (state.isSidebarVisible && state.activeSidebarView === "views") {
+    state.setIsSidebarVisible(false);
+  } else {
+    state.setActiveView("views");
+    state.setIsSidebarVisible(true);
+  }
+}
+
+export function toggleDockerSidebar(): void {
+  const state = useUIState.getState();
+  if (state.isSidebarVisible && state.activeSidebarView === "docker") {
+    state.setIsSidebarVisible(false);
+  } else {
+    state.setActiveView("docker");
+    state.setIsSidebarVisible(true);
+  }
 }
 
 export function showThemeSelector(): void {
@@ -116,58 +143,43 @@ export function showThemeSelector(): void {
 }
 
 export async function showWhatsNew(): Promise<void> {
-  await useWhatsNewStore.getState().open();
-}
-
-export function toggleAIChat(): void {
-  useSettingsStore.getState().toggleAIChatVisible();
+  await useWhatsNewStore.getState().actions.open();
 }
 
 export function toggleMinimap(): void {
-  const { settings, updateSetting } = useSettingsStore.getState();
+  const { settings, actions } = useSettingsStore.getState();
+  const { updateSetting } = actions;
   updateSetting("showMinimap", !settings.showMinimap);
 }
 
 export function toggleWordWrap(): void {
-  const { settings, updateSetting } = useSettingsStore.getState();
+  const { settings, actions } = useSettingsStore.getState();
+  const { updateSetting } = actions;
   updateSetting("wordWrap", !settings.wordWrap);
 }
 
 export function toggleLineNumbers(): void {
-  const { settings, updateSetting } = useSettingsStore.getState();
+  const { settings, actions } = useSettingsStore.getState();
+  const { updateSetting } = actions;
   updateSetting("lineNumbers", !settings.lineNumbers);
 }
 
 export function toggleRenderWhitespace(): void {
-  const { settings, updateSetting } = useSettingsStore.getState();
+  const { settings, actions } = useSettingsStore.getState();
+  const { updateSetting } = actions;
   updateSetting("renderWhitespace", settings.renderWhitespace === "none" ? "all" : "none");
 }
 
 export function zoomIn(): void {
-  const target = getZoomTarget();
-  if (target === "webviewer") {
-    window.dispatchEvent(new CustomEvent("webviewer-zoom", { detail: "in" }));
-  } else {
-    useZoomStore.getState().actions.zoomIn(target);
-  }
+  useZoomStore.getState().actions.zoomIn(getZoomTarget());
 }
 
 export function zoomOut(): void {
-  const target = getZoomTarget();
-  if (target === "webviewer") {
-    window.dispatchEvent(new CustomEvent("webviewer-zoom", { detail: "out" }));
-  } else {
-    useZoomStore.getState().actions.zoomOut(target);
-  }
+  useZoomStore.getState().actions.zoomOut(getZoomTarget());
 }
 
 export function resetZoom(): void {
-  const target = getZoomTarget();
-  if (target === "webviewer") {
-    window.dispatchEvent(new CustomEvent("webviewer-zoom", { detail: "reset" }));
-  } else {
-    useZoomStore.getState().actions.resetZoom(target);
-  }
+  useZoomStore.getState().actions.resetZoom(getZoomTarget());
 }
 
 export function openKeyboardShortcuts(): void {

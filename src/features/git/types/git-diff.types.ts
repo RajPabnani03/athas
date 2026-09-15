@@ -21,6 +21,7 @@ export interface ImageContainerProps {
   labelColor: string;
   base64?: string;
   alt: string;
+  filePath: string;
   zoom: number;
 }
 
@@ -51,7 +52,7 @@ export interface DiffHunkHeaderProps {
   filePath: string;
   onStageHunk?: (hunk: GitHunk) => void;
   onUnstageHunk?: (hunk: GitHunk) => void;
-  isInMultiFileView?: boolean;
+  canStageHunks?: boolean;
 }
 
 export interface DiffLineProps {
@@ -64,6 +65,14 @@ export interface DiffLineProps {
   lineHeight: number;
   tabSize: number;
   tokens?: HighlightToken[];
+  searchHighlights?: DiffSearchHighlight[];
+  searchLineIndex?: number;
+}
+
+export interface DiffSearchHighlight {
+  start: number;
+  end: number;
+  isCurrent: boolean;
 }
 
 export interface TextDiffViewerProps {
@@ -73,8 +82,9 @@ export interface TextDiffViewerProps {
   showWhitespace: boolean;
   onStageHunk?: (hunk: GitHunk) => void;
   onUnstageHunk?: (hunk: GitHunk) => void;
-  isInMultiFileView?: boolean;
+  canStageHunks?: boolean;
   isEmbeddedInScrollView?: boolean;
+  searchHighlights?: Map<number, DiffSearchHighlight[]>;
 }
 
 export interface ImageDiffViewerProps {
@@ -91,6 +101,7 @@ export interface MultiFileDiff {
   commitMessage?: string;
   commitDescription?: string;
   commitAuthor?: string;
+  commitEmail?: string;
   commitDate?: string;
   files: GitDiff[];
   totalFiles: number;
@@ -98,20 +109,13 @@ export interface MultiFileDiff {
   totalDeletions: number;
   fileKeys?: string[];
   initiallyExpandedFileKey?: string;
+  selectedFileKey?: string;
+  selectedFilePath?: string;
+  fileNavigation?: "embedded" | "external";
   isLoading?: boolean;
-}
-
-export interface MultiFileDiffViewerProps {
-  multiDiff: MultiFileDiff;
-  onClose: () => void;
-}
-
-export interface FileDiffSummary {
-  key: string;
-  fileName: string;
-  filePath: string;
-  status: "added" | "deleted" | "modified" | "renamed";
-  additions: number;
-  deletions: number;
-  shouldAutoCollapse: boolean;
+  indexingProgress?: {
+    processed: number;
+    total: number;
+    label?: string;
+  };
 }

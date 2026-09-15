@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { useToast } from "@/features/layout/contexts/toast-context";
@@ -11,16 +11,32 @@ import {
   subscribeToTelemetryLog,
   type TelemetryLogEntry,
 } from "@/features/telemetry/services/telemetry";
+import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { EmptyState } from "@/ui/empty";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/ui/item";
 import Switch from "@/ui/switch";
-import Section, { SettingRow } from "../settings-section";
+import { TextLink } from "@/ui/text-link";
+import Section, { SettingBlock, SettingsView, SettingRow } from "../settings-section";
+import { getServiceUrls } from "@/config/services";
 
 const telemetryDescription =
-  "Athas sends anonymous operational metadata for updates and, when enabled, heartbeats, extensions, and crashes; it never sends file paths, project names, prompts, or editor content.";
-const telemetryLearnMoreUrl = "https://athas.dev/docs/telemetry";
+  "Athas sends anonymous operational metadata for updates and, when enabled, heartbeats, integrations, and crashes; it never sends file paths, project names, prompts, or editor content.";
+const telemetryLearnMoreUrl = getServiceUrls().telemetryDocsUrl;
+
+function getTelemetryStatusVariant(
+  status: TelemetryLogEntry["status"],
+): ComponentProps<typeof Badge>["variant"] {
+  if (status === "failed") return "error";
+  if (status === "sent") return "success";
+  if (status === "local") return "accent";
+  return "muted";
+}
 
 export const AdvancedSettings = () => {
-  const { settings, updateSetting, resetToDefaults } = useSettingsStore();
+  const telemetry = useSettingsStore((state) => state.settings.telemetry);
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
+  const resetToDefaults = useSettingsStore((state) => state.actions.resetToDefaults);
   const { showToast } = useToast();
   const [showTelemetryLog, setShowTelemetryLog] = useState(false);
   const [telemetryLog, setTelemetryLog] = useState<TelemetryLogEntry[]>([]);
@@ -34,7 +50,6 @@ export const AdvancedSettings = () => {
     resetToDefaults();
     showToast({ message: "Settings reset to defaults", type: "success" });
   };
-
   const handleClearTelemetryLog = async () => {
     await clearTelemetryLogEntries();
     showToast({ message: "Telemetry log cleared", type: "success" });
@@ -86,7 +101,7 @@ export const AdvancedSettings = () => {
 
       try {
         const text = await file.text();
-        const imported = useSettingsStore.getState().updateSettingsFromJSON(text);
+        const imported = useSettingsStore.getState().actions.updateSettingsFromJSON(text);
 
         if (!imported) {
           showToast({ message: "Invalid settings file format", type: "error" });
@@ -103,18 +118,18 @@ export const AdvancedSettings = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <SettingsView>
       <Section title="Data">
-        <SettingRow label="Export Settings" description="Save all app settings to a JSON file.">
+        <SettingRow label="Export Settings" description="Save all app settings to a JSON file">
           <Button variant="default" onClick={() => void handleExportSettings()}>
             Export
           </Button>
         </SettingRow>
         <SettingRow
           label="Import Settings"
-          description="Restore app settings from an Athas settings JSON file."
+          description="Restore app settings from an Athas settings JSON file"
         >
-          <Button variant="default" onClick={handleImportSettings} compact>
+          <Button variant="default" onClick={handleImportSettings}>
             Import
           </Button>
         </SettingRow>
@@ -128,74 +143,54 @@ export const AdvancedSettings = () => {
           description={
             <>
               {telemetryDescription}{" "}
-              <a
-                href={telemetryLearnMoreUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-link hover:underline"
-              >
+              <TextLink href={telemetryLearnMoreUrl} target="_blank" rel="noopener noreferrer">
                 Learn more
-              </a>
+              </TextLink>
             </>
           }
         >
-          <Switch
-            checked={settings.telemetry}
-            onChange={(checked) => updateSetting("telemetry", checked)}
-            size="sm"
-          />
+          <Switch checked={telemetry} onChange={(checked) => updateSetting("telemetry", checked)} />
         </SettingRow>
         <SettingRow
           label="Telemetry Log"
-          description="Inspect the local queue and recent telemetry delivery results."
+          description="Inspect local friction signals, the upload queue, and recent delivery results"
         >
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <Button variant="default" onClick={() => setShowTelemetryLog((value) => !value)}>
               {showTelemetryLog ? "Hide Log" : "Open Log"}
             </Button>
-            <Button variant="default" onClick={handleClearTelemetryLog} compact>
+            <Button variant="default" onClick={handleClearTelemetryLog}>
               Clear
             </Button>
           </div>
         </SettingRow>
         {showTelemetryLog && (
-          <div className="rounded-lg border border-border/70 bg-primary-bg/50">
+          <SettingBlock className="max-h-72 overflow-y-auto">
             {telemetryLog.length === 0 ? (
-              <p className="ui-font ui-text-sm px-3 py-2 text-text-lighter">
-                No telemetry entries yet.
-              </p>
+              <EmptyState className="py-3" message="No telemetry entries yet" />
             ) : (
-              <div className="max-h-72 overflow-y-auto">
+              <ItemGroup>
                 {[...telemetryLog].reverse().map((entry) => (
-                  <div
-                    key={entry.id}
-                    className="ui-font ui-text-sm flex items-center gap-2 border-border/70 px-3 py-2 text-text not-last:border-b"
-                  >
-                    <span className="min-w-0 flex-1 truncate font-medium">{entry.eventType}</span>
-                    <span
-                      className={
-                        entry.status === "failed"
-                          ? "shrink-0 uppercase text-error"
-                          : entry.status === "sent"
-                            ? "shrink-0 uppercase text-success"
-                            : "shrink-0 uppercase text-text-lighter"
-                      }
-                    >
-                      {entry.status}
-                    </span>
-                    <span className="min-w-0 flex-[1.4] truncate text-text-lighter">
-                      {entry.error || entry.summary}
-                    </span>
-                    <span className="shrink-0 text-text-lightest">
-                      {new Date(entry.timestamp).toLocaleString()}
-                    </span>
-                  </div>
+                  <Item key={entry.id} variant="muted">
+                    <ItemContent>
+                      <ItemTitle>{entry.eventType}</ItemTitle>
+                      <ItemDescription>{entry.error || entry.summary}</ItemDescription>
+                    </ItemContent>
+                    <ItemActions>
+                      <Badge variant={getTelemetryStatusVariant(entry.status)}>
+                        {entry.status}
+                      </Badge>
+                      <time className="font-sans ui-text-sm text-subtle-foreground">
+                        {new Date(entry.timestamp).toLocaleString()}
+                      </time>
+                    </ItemActions>
+                  </Item>
                 ))}
-              </div>
+              </ItemGroup>
             )}
-          </div>
+          </SettingBlock>
         )}
       </Section>
-    </div>
+    </SettingsView>
   );
 };

@@ -1,13 +1,15 @@
-import { ArrowCounterClockwiseIcon as RotateCcw } from "@phosphor-icons/react";
+import { ArrowCounterClockwiseIcon } from "@/ui/icons";
 import {
   useCallback,
   useId,
   useLayoutEffect,
   useRef,
+  type ComponentProps,
   type MouseEvent,
   type ReactNode,
 } from "react";
 import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 import { cn } from "@/utils/cn";
 import { getSettingSearchTargetKey } from "../lib/settings-search";
 
@@ -18,31 +20,49 @@ interface SectionProps {
   className?: string;
 }
 
-export const SETTINGS_CONTROL_WIDTHS = {
-  compact: "w-28 max-w-full",
-  default: "w-36 max-w-full",
-  wide: "w-44 max-w-full",
-  xwide: "w-56 max-w-full",
-  number: "w-28 max-w-full",
-  numberCompact: "w-24 max-w-full",
-  text: "w-48 max-w-full",
-  textWide: "w-56 max-w-full",
-} as const;
+interface SettingsViewProps extends ComponentProps<"div"> {
+  layout?: "stack" | "fill";
+}
+
+export function SettingsView({ layout = "stack", className, ...props }: SettingsViewProps) {
+  return (
+    <div
+      data-slot="settings-view"
+      className={cn(
+        "min-w-0",
+        layout === "stack" ? "space-y-6" : "flex h-full min-h-0 flex-col",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
 
 export default function Section({ title, description, children, className }: SectionProps) {
+  const sectionKey = getSettingSearchTargetKey(title);
+
   return (
     <section
-      className={cn("px-1 py-0.5 first:[&>.settings-section-header]:hidden", className)}
+      className={cn(
+        "scroll-mt-6 rounded-lg transition-[background-color,box-shadow] data-[settings-search-section-active=true]:bg-primary/5 data-[settings-search-section-active=true]:ring-1 data-[settings-search-section-active=true]:ring-primary/25",
+        className,
+      )}
       data-settings-section={title}
-      data-settings-section-key={getSettingSearchTargetKey(title)}
+      data-settings-section-key={sectionKey}
     >
-      <div className="settings-section-header mb-2 px-1 py-1.5">
-        <h4 className="ui-font ui-text-base text-text">{title}</h4>
-        {description && <p className="ui-font ui-text-sm text-text-lighter">{description}</p>}
+      <div className="mb-2 px-1">
+        <h2 className="font-medium text-foreground ui-text-base">{title}</h2>
+        {description ? (
+          <p className="mt-0.5 text-subtle-foreground ui-text-sm">{description}</p>
+        ) : null}
       </div>
-      <div className="space-y-2">{children}</div>
+      <Card className="gap-0 divide-y divide-border/60 py-0">{children}</Card>
     </section>
   );
+}
+
+export function SettingBlock({ className, ...props }: ComponentProps<"div">) {
+  return <div data-slot="setting-block" className={cn("px-4 py-3", className)} {...props} />;
 }
 
 interface SettingRowProps {
@@ -54,6 +74,7 @@ interface SettingRowProps {
   onReset?: () => void;
   canReset?: boolean;
   resetLabel?: string;
+  activateOnClick?: boolean;
 }
 
 export function SettingRow({
@@ -65,6 +86,7 @@ export function SettingRow({
   onReset,
   canReset = !!onReset,
   resetLabel,
+  activateOnClick = true,
 }: SettingRowProps) {
   const controlRef = useRef<HTMLDivElement>(null);
   const rowId = useId();
@@ -112,20 +134,18 @@ export function SettingRow({
       return;
     }
 
-    const segmentedControl = controlRef.current?.querySelector<HTMLElement>(
-      "[data-slot='segmented-control']",
+    const toggleGroup = controlRef.current?.querySelector<HTMLElement>(
+      "[data-slot='toggle-group']",
     );
-    if (segmentedControl) {
-      const segmentedItems = Array.from(
-        segmentedControl.querySelectorAll<HTMLElement>("[role='button']"),
+    if (toggleGroup) {
+      const toggleItems = Array.from(
+        toggleGroup.querySelectorAll<HTMLElement>("[data-slot='toggle-group-item']"),
       ).filter((item) => !item.hasAttribute("disabled"));
-      const activeIndex = segmentedItems.findIndex(
-        (item) => item.getAttribute("data-active") === "true",
-      );
+      const activeIndex = toggleItems.findIndex((item) => item.hasAttribute("data-pressed"));
 
-      if (segmentedItems.length > 0) {
-        const nextIndex = activeIndex >= 0 ? (activeIndex + 1) % segmentedItems.length : 0;
-        const nextItem = segmentedItems[nextIndex];
+      if (toggleItems.length > 0) {
+        const nextIndex = activeIndex >= 0 ? (activeIndex + 1) % toggleItems.length : 0;
+        const nextItem = toggleItems[nextIndex];
         nextItem?.focus();
         nextItem?.click();
         return;
@@ -170,19 +190,24 @@ export function SettingRow({
       data-setting-row-label={label}
       tabIndex={-1}
       className={cn(
-        "flex items-center justify-between gap-3 rounded-lg px-1 py-2 select-none transition-colors hover:bg-hover/40 focus-within:bg-hover/40 focus:outline-none data-[settings-search-active=true]:bg-accent/10 data-[settings-search-active=true]:ring-1 data-[settings-search-active=true]:ring-accent/35 max-[640px]:flex-col max-[640px]:items-stretch max-[640px]:gap-2",
+        "flex w-full min-w-0 max-w-full items-center justify-between gap-3 px-4 py-3 select-none transition-[background-color,box-shadow] hover:bg-accent/40 focus-within:bg-accent/40 focus:outline-none data-[settings-search-active=true]:bg-primary/15 data-[settings-search-active=true]:ring-1 data-[settings-search-active=true]:ring-primary/50 max-[640px]:flex-col max-[640px]:items-stretch max-[640px]:gap-2 @max-[640px]/settings:flex-col @max-[640px]/settings:items-stretch @max-[640px]/settings:gap-2",
         className,
       )}
-      onClick={handleRowClick}
+      onClick={activateOnClick ? handleRowClick : undefined}
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <div id={labelId} className="ui-font ui-text-sm cursor-default text-text">
+          <div
+            id={labelId}
+            className="font-sans ui-text-sm font-medium min-w-0 cursor-default wrap-break-word text-foreground"
+          >
             {label}
           </div>
           {labelAccessory}
           {onReset ? (
-            <span className="flex size-5 items-center justify-center">
+            <span
+              className={cn("flex size-5 items-center justify-center", !canReset && "invisible")}
+            >
               <Button
                 type="button"
                 variant="ghost"
@@ -190,23 +215,25 @@ export function SettingRow({
                 disabled={!canReset}
                 aria-label={resetLabel || `Reset ${label}`}
                 tooltip={canReset ? resetLabel || `Reset ${label}` : undefined}
-                className={cn(!canReset && "pointer-events-none invisible")}
-                compact
+                iconOnly
               >
-                <RotateCcw />
+                <ArrowCounterClockwiseIcon />
               </Button>
             </span>
           ) : null}
         </div>
         {description && (
-          <div id={descriptionId} className="ui-font ui-text-sm cursor-default text-text-lighter">
+          <div
+            id={descriptionId}
+            className="font-sans ui-text-sm cursor-default leading-snug text-subtle-foreground"
+          >
             {description}
           </div>
         )}
       </div>
       <div
         ref={controlRef}
-        className="ui-font ui-text-sm shrink-0 select-auto [--app-ui-badge-height:1.5rem] [--app-ui-button-compact-height:1.5rem] [--app-ui-button-compact-min-width:1.5rem] [--app-ui-button-height:1.5rem] [--app-ui-button-min-width:1.5rem] [--app-ui-control-font-size:var(--ui-text-sm)] max-[640px]:w-full max-[640px]:shrink max-[640px]:[&>input]:w-full max-[640px]:[&>textarea]:w-full"
+        className="font-sans ui-text-sm min-w-0 max-w-full shrink-0 select-auto max-[640px]:w-full max-[640px]:shrink max-[640px]:[&>div]:flex-wrap max-[640px]:[&>input]:w-full max-[640px]:[&>textarea]:w-full @max-[640px]/settings:w-full @max-[640px]/settings:shrink @max-[640px]/settings:[&>div]:flex-wrap @max-[640px]/settings:[&>input]:w-full @max-[640px]/settings:[&>textarea]:w-full"
       >
         {children}
       </div>

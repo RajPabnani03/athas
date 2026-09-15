@@ -1,18 +1,16 @@
-import { cva } from "class-variance-authority";
-import { AnimatePresence, motion, useReducedMotion, type Transition } from "framer-motion";
+import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
+import { AnimatePresence, motion, useReducedMotionConfig, type Transition } from "motion/react";
 import {
   type CSSProperties,
+  type ComponentProps,
   type ReactNode,
   type RefObject,
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { instantTransition, overlayEntrance } from "@/ui/motion";
+import { OVERLAY_MAX_WIDTH, type OverlaySize, OVERLAY_SIZES } from "@/ui/overlay-size";
+import { instantTransition, overlayEntrance } from "@/utils/motion";
 import { cn } from "@/utils/cn";
-
-const popoverContentVariants = cva(
-  "pointer-events-auto fixed z-[10040] min-w-[240px] max-w-[min(480px,calc(100vw-16px))] select-none overflow-y-auto rounded-xl border border-border bg-secondary-bg/95 p-1 shadow-[var(--shadow-popover)] backdrop-blur-sm [overscroll-behavior:contain]",
-);
 
 function containScrollChain(event: ReactWheelEvent<HTMLDivElement>) {
   const root = event.currentTarget;
@@ -57,7 +55,7 @@ interface PopoverContentProps {
   transition?: Transition;
 }
 
-export function PopoverContent({
+export function FloatingPopoverContent({
   isOpen,
   contentRef,
   children,
@@ -70,7 +68,7 @@ export function PopoverContent({
   exit = overlayEntrance.exit,
   transition = overlayEntrance.transition,
 }: PopoverContentProps) {
-  const prefersReducedMotion = useReducedMotion();
+  const prefersReducedMotion = useReducedMotionConfig();
 
   if (typeof document === "undefined") return null;
 
@@ -86,7 +84,10 @@ export function PopoverContent({
       animate={shouldAnimate ? animate : { opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
       exit={shouldAnimate ? exit : { opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
       transition={shouldAnimate ? transition : instantTransition}
-      className={cn(popoverContentVariants(), className)}
+      className={cn(
+        "pointer-events-auto fixed z-10070 min-w-60 max-w-[min(480px,calc(100vw-16px))] select-none overflow-y-auto rounded-lg bg-surface/98 p-1 font-sans text-foreground shadow-(--shadow-card) ring-1 ring-border/50 outline-none backdrop-blur-sm overscroll-none ui-text-chrome",
+        className,
+      )}
       style={style}
     >
       {children}
@@ -95,3 +96,107 @@ export function PopoverContent({
 
   return createPortal(<AnimatePresence>{node}</AnimatePresence>, portalContainer ?? document.body);
 }
+
+function Popover(props: PopoverPrimitive.Root.Props) {
+  return <PopoverPrimitive.Root data-slot="popover" {...props} />;
+}
+
+function PopoverTrigger(props: PopoverPrimitive.Trigger.Props) {
+  return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />;
+}
+
+function PopoverContent({
+  className,
+  align = "center",
+  alignOffset = 0,
+  side = "bottom",
+  sideOffset = 6,
+  collisionPadding = 8,
+  anchor,
+  portalContainer,
+  size = "wide",
+  ...props
+}: PopoverPrimitive.Popup.Props &
+  Pick<
+    PopoverPrimitive.Positioner.Props,
+    "align" | "alignOffset" | "anchor" | "collisionPadding" | "side" | "sideOffset"
+  > & {
+    portalContainer?: HTMLElement | ShadowRoot | null;
+    /** Width preset from the shared overlay scale. See `@/ui/overlay-size`. */
+    size?: OverlaySize;
+  }) {
+  return (
+    <PopoverPrimitive.Portal data-slot="popover-portal" container={portalContainer}>
+      <PopoverPrimitive.Positioner
+        align={align}
+        alignOffset={alignOffset}
+        anchor={anchor}
+        side={side}
+        sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
+        className="isolate z-10070"
+      >
+        <PopoverPrimitive.Popup
+          data-slot="popover-content"
+          className={cn(
+            "z-10070 flex origin-(--transform-origin) flex-col gap-2 rounded-lg bg-surface/98 p-2 font-sans text-foreground shadow-(--shadow-card) ring-1 ring-border/50 outline-none backdrop-blur-sm transition-opacity duration-75 data-ending-style:opacity-0 data-starting-style:opacity-0 ui-text-chrome",
+            OVERLAY_MAX_WIDTH,
+            OVERLAY_SIZES[size],
+            className,
+          )}
+          {...props}
+        />
+      </PopoverPrimitive.Positioner>
+    </PopoverPrimitive.Portal>
+  );
+}
+
+function PopoverListContent({ className, ...props }: ComponentProps<typeof PopoverContent>) {
+  return (
+    <PopoverContent
+      data-slot="popover-list-content"
+      className={cn("gap-0 overflow-hidden p-0", className)}
+      {...props}
+    />
+  );
+}
+
+function PopoverHeader({ className, ...props }: ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="popover-header"
+      className={cn("flex flex-col gap-0.5 font-sans ui-text-chrome", className)}
+      {...props}
+    />
+  );
+}
+
+function PopoverTitle({ className, ...props }: PopoverPrimitive.Title.Props) {
+  return (
+    <PopoverPrimitive.Title
+      data-slot="popover-title"
+      className={cn("font-medium text-foreground", className)}
+      {...props}
+    />
+  );
+}
+
+function PopoverDescription({ className, ...props }: PopoverPrimitive.Description.Props) {
+  return (
+    <PopoverPrimitive.Description
+      data-slot="popover-description"
+      className={cn("text-subtle-foreground", className)}
+      {...props}
+    />
+  );
+}
+
+export {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverListContent,
+  PopoverTitle,
+  PopoverTrigger,
+};

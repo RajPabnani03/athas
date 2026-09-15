@@ -1,7 +1,9 @@
+import { loadWorkspaceTeamContext } from "@/features/workspace/team/services/workspace-team-context";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
-import type { ChatMode, OutputStyle } from "@/features/ai/types/ai-chat-store.types";
+import type { ChatMode, OutputStyle } from "@/features/ai/types/ai-chat.types";
 import type { AcpEvent } from "@/features/ai/types/acp.types";
+import type { AgentCompletionResult } from "@/features/ai/types/agent-completion.types";
 import type { ContextInfo } from "@/features/ai/types/ai-context.types";
 import type { AgentType } from "@/features/ai/types/ai-chat.types";
 import type { AIMessage } from "@/features/ai/types/messages.types";
@@ -10,28 +12,31 @@ import {
   getModelById,
   getProviderById,
 } from "@/features/ai/types/providers.types";
-import { getProvider } from "@/features/ai/services/providers/ai-provider-registry";
-import { isOllamaCloudUrl } from "@/features/ai/services/providers/ollama-provider";
+import {
+  buildProviderSystemPromptContext,
+  getProvider,
+  shouldUseTauriFetchForProvider,
+} from "@/features/ai/services/providers/ai-provider-registry";
+import { isOllamaCloudUrl } from "@/features/ai/lib/ollama-endpoint";
 import { processStreamingResponse } from "@/utils/stream-utils";
 import { getProviderApiToken } from "@/features/ai/services/ai-token-service";
-import { canUseHostedProvider } from "@/features/ai/lib/provider-access";
+import { resolveChatCompletionTokenLimit } from "@/features/ai/lib/chat-completion-budget";
 import {
   getCustomProviderApiToken,
   resolveCustomProviderBaseUrl,
   resolveCustomProviderModelId,
 } from "@/features/ai/lib/custom-provider-config";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
-import { getAuthToken } from "@/features/window/services/auth-api";
-import { useAuthStore } from "@/features/window/stores/auth.store";
-import { getApiBase } from "@/utils/api-base";
 import { AcpStreamHandler } from "./acp-stream-handler";
 import { buildContextPrompt, buildSystemPrompt } from "../utils/ai-context-builder";
-import { CLAUDE_CODE_TERMINAL_AGENT_ID } from "../lib/claude-code";
+import { isTerminalAgent } from "../lib/terminal-agents";
 import { setCustomProviderBaseUrl } from "./providers/ai-provider-registry";
+import { CODEX_INTEGRATION_ID } from "../integrations/integration-registry";
+import { CodexIntegrationService } from "../integrations/codex/codex-integration-service";
 
 // Check if an agent uses ACP (CLI-based) vs HTTP API
 export const isAcpAgent = (agentId: AgentType): boolean => {
-  return agentId !== "custom" && agentId !== CLAUDE_CODE_TERMINAL_AGENT_ID;
+  return agentId !== "custom" && agentId !== CODEX_INTEGRATION_ID && !isTerminalAgent(agentId);
 };
 
 function resolveProviderModelPair(providerId: string, modelId: string) {
@@ -55,7 +60,8 @@ function resolveProviderModelPair(providerId: string, modelId: string) {
       provider: requestedProvider,
       model: {
         ...requestedDynamicModel,
-        maxTokens: requestedDynamicModel.maxTokens || 4096,
+        maxOutputTokens:
+          requestedDynamicModel.maxOutputTokens ?? requestedDynamicModel.maxTokens ?? 4096,
       },
     };
   }
@@ -68,7 +74,7 @@ function resolveProviderModelPair(providerId: string, modelId: string) {
       model: {
         id: modelId,
         name: modelId,
-        maxTokens: 4096,
+        maxOutputTokens: 4096,
       },
     };
   }
@@ -86,7 +92,7 @@ function resolveProviderModelPair(providerId: string, modelId: string) {
         model: {
           id: customModelId,
           name: customModelId,
-          maxTokens: 4096,
+          maxOutputTokens: 4096,
         },
       };
     }
@@ -111,7 +117,7 @@ function resolveProviderModelPair(providerId: string, modelId: string) {
         provider,
         model: {
           ...dynamicModel,
-          maxTokens: dynamicModel.maxTokens || 4096,
+          maxOutputTokens: dynamicModel.maxOutputTokens ?? dynamicModel.maxTokens ?? 4096,
         },
       };
     }
@@ -133,10 +139,10 @@ export const getChatCompletionStream = async (
   userMessage: string,
   context: ContextInfo,
   onChunk: (chunk: string) => void,
-  onComplete: () => void,
+  onComplete: (result?: AgentCompletionResult) => void,
   onError: (error: string, canReconnect?: boolean) => void,
   conversationHistory?: AIMessage[],
-  onNewMessage?: () => void,
+  onResponseContinuation?: () => void,
   onToolUse?: (event: Extract<AcpEvent, { type: "tool_start" }>) => void,
   onToolUpdate?: (event: Extract<AcpEvent, { type: "tool_update" }>) => void,
   onToolComplete?: (toolName: string, toolId?: string, output?: unknown, error?: string) => void,
@@ -150,7 +156,33 @@ export const getChatCompletionStream = async (
   systemPromptOverride?: string,
 ): Promise<void> => {
   try {
-    // Handle ACP-based CLI agents (Gemini CLI, Codex CLI, etc.)
+    if (context.projectRoot) {
+      const team = await loadWorkspaceTeamContext(context.projectRoot);
+      context = { ...context, teamInstructions: team?.instructions };
+    }
+    if (agentId === CODEX_INTEGRATION_ID) {
+      const integration = new CodexIntegrationService(
+        {
+          onChunk,
+          onComplete,
+          onError,
+          onResponseContinuation,
+          onToolUse,
+          onToolComplete,
+          onPermissionRequest,
+          onEvent: onAcpEvent,
+        },
+        chatId,
+      );
+      const contextPrompt = buildContextPrompt(context);
+      await integration.start(
+        contextPrompt ? `${contextPrompt}\n\nUser request:\n${userMessage}` : userMessage,
+        context,
+      );
+      return;
+    }
+
+    // Handle ACP-based coding agents.
     if (isAcpAgent(agentId)) {
       const handler = new AcpStreamHandler(
         agentId,
@@ -158,7 +190,7 @@ export const getChatCompletionStream = async (
           onChunk,
           onComplete,
           onError,
-          onNewMessage,
+          onResponseContinuation,
           onToolUse,
           onToolUpdate,
           onToolComplete,
@@ -182,7 +214,7 @@ export const getChatCompletionStream = async (
     const model = resolved.model;
 
     if (providerId === "custom" && !model) {
-      throw new Error("Custom provider model is required. Add one in Settings → AI.");
+      throw new Error("Custom provider model is required. Add one in Settings -> Agent.");
     }
 
     if (!provider || !model) {
@@ -196,14 +228,12 @@ export const getChatCompletionStream = async (
       providerId === "custom"
         ? await getCustomProviderApiToken()
         : await getProviderApiToken(providerId);
-    const subscription = useAuthStore.getState().subscription;
-    const useHostedOpenRouter = !apiKey && canUseHostedProvider(providerId, subscription);
-    if (!apiKey && provider.requiresApiKey && !useHostedOpenRouter) {
+    if (!apiKey && provider.requiresApiKey) {
       throw new Error(`${provider.name} API key not found`);
     }
 
     if (providerId === "custom" && !customProviderBaseUrl) {
-      throw new Error("Custom provider base URL is required. Add one in Settings → AI.");
+      throw new Error("Custom provider base URL is required. Add one in Settings -> Agent.");
     }
     if (providerId === "custom") {
       setCustomProviderBaseUrl(customProviderBaseUrl);
@@ -214,13 +244,21 @@ export const getChatCompletionStream = async (
     if (providerId === "ollama" && !apiKey) {
       const ollamaBaseUrl = useSettingsStore.getState().settings.ollamaBaseUrl;
       if (ollamaBaseUrl && isOllamaCloudUrl(ollamaBaseUrl)) {
-        throw new Error("Ollama Cloud requires an API key. Add one in Settings → AI → Ollama.");
+        throw new Error(
+          "Ollama Cloud requires an API key. Add one in Settings -> Agent -> Ollama.",
+        );
       }
     }
 
     const contextPrompt = buildContextPrompt(context);
-    const systemPrompt =
-      systemPromptOverride || buildSystemPrompt(contextPrompt, mode, outputStyle);
+    let systemPrompt = systemPromptOverride || buildSystemPrompt(contextPrompt, mode, outputStyle);
+    const providerSystemPromptContext = await buildProviderSystemPromptContext(
+      providerId,
+      settings,
+    );
+    if (providerSystemPromptContext) {
+      systemPrompt = `${systemPrompt}\n\n${providerSystemPromptContext}`;
+    }
 
     // Build messages array with conversation history
     const messages: AIMessage[] = [
@@ -239,35 +277,8 @@ export const getChatCompletionStream = async (
     messages.push({
       role: "user" as const,
       content: userMessage,
+      ...(context.images?.length ? { images: context.images } : {}),
     });
-
-    if (useHostedOpenRouter) {
-      const token = await getAuthToken();
-      if (!token) {
-        throw new Error("Not authenticated");
-      }
-
-      const response = await tauriFetch(`${getApiBase()}/api/ai/chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          model: modelId,
-          messages,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        onError(errorText || `Hosted Athas Agent request failed (${response.status})`);
-        return;
-      }
-
-      await processStreamingResponse(response, onChunk, onComplete, onError);
-      return;
-    }
 
     // Use provider abstraction
     const providerImpl = getProvider(providerId);
@@ -278,20 +289,21 @@ export const getChatCompletionStream = async (
     const streamRequest = {
       modelId,
       messages,
-      maxTokens: Math.min(1000, Math.floor(model.maxTokens * 0.25)),
+      maxTokens: resolveChatCompletionTokenLimit(model.maxOutputTokens ?? model.maxTokens),
       temperature: 0.7,
       apiKey: apiKey || undefined,
     };
 
-    const headers = providerImpl.buildHeaders(apiKey || undefined);
-    const payload = providerImpl.buildPayload(streamRequest);
-    const url = providerImpl.buildUrl ? providerImpl.buildUrl(streamRequest) : provider.apiUrl;
+    const headers = await providerImpl.buildHeaders(apiKey || undefined);
+    const payload = await providerImpl.buildPayload(streamRequest);
+    const url = providerImpl.buildUrl
+      ? await providerImpl.buildUrl(streamRequest)
+      : provider.apiUrl;
 
     console.log(`Making ${provider.name} streaming chat request with model ${model.name}...`);
 
     // Use Tauri's fetch for providers that don't support browser CORS
-    const needsTauriFetch =
-      providerId === "gemini" || providerId === "ollama" || providerId === "anthropic";
+    const needsTauriFetch = shouldUseTauriFetchForProvider(providerId);
     const fetchFn = needsTauriFetch ? tauriFetch : fetch;
     const response = await fetchFn(url, {
       method: "POST",
@@ -313,50 +325,4 @@ export const getChatCompletionStream = async (
     console.error(`${providerId} streaming chat completion error:`, error);
     onError(`Failed to connect to ${providerId} API: ${error.message || error}`);
   }
-};
-
-export const getQuickQuestionCompletionStream = async (
-  providerId: string,
-  modelId: string,
-  question: string,
-  context: ContextInfo,
-  onChunk: (chunk: string) => void,
-  onComplete: () => void,
-  onError: (error: string, canReconnect?: boolean) => void,
-): Promise<void> => {
-  const contextPrompt = buildContextPrompt(context);
-  const systemPrompt = `You are a lightweight AI question-answering assistant inside Athas.
-
-This is a quick question flow, not an agent session.
-- Answer the user's question directly and concisely.
-- Do not claim you can edit files, open files, run commands, call tools, or take actions.
-- Use the provided editor context only when it is relevant.
-- If the question asks you to change code or perform work, explain the likely answer or next step without saying you performed it.
-
-Current context:
-${contextPrompt}`;
-
-  await getChatCompletionStream(
-    "custom",
-    providerId,
-    modelId,
-    question,
-    context,
-    onChunk,
-    onComplete,
-    onError,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    "chat",
-    "default",
-    undefined,
-    undefined,
-    undefined,
-    systemPrompt,
-  );
 };

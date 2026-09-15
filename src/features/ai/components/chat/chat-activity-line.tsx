@@ -1,70 +1,77 @@
-import { CaretRightIcon as CaretRight } from "@phosphor-icons/react";
+import { ChevronRightIcon } from "@/ui/icons";
 import type { ReactNode } from "react";
 import { useState } from "react";
+import { Marker, MarkerContent, MarkerIcon } from "@/ui/marker";
+import { Shimmer } from "@/ui/shimmer";
 import { cn } from "@/utils/cn";
+
+type ActivityState = "running" | "success" | "error" | "info";
+
+const stateClassNames: Record<ActivityState, string> = {
+  running: "text-primary",
+  success: "text-success",
+  error: "text-destructive",
+  info: "text-subtle-foreground/60",
+};
 
 interface ChatActivityLineProps {
   icon?: ReactNode;
   title: string;
   detail?: string | null;
-  state?: "running" | "success" | "error" | "info";
+  state?: ActivityState;
   actions?: ReactNode;
   children?: ReactNode;
+  detailsVariant?: "text" | "content";
 }
 
 export function ChatActivityLine({
   icon,
   title,
   detail,
+  state = "info",
   actions,
   children,
+  detailsVariant = "text",
 }: ChatActivityLineProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const canExpand = Boolean(children);
   const summary = detail ? `${title}: ${detail}` : title;
-  const contentClassName =
-    "ui-font ui-text-xs flex h-6 min-w-0 flex-1 items-center justify-start gap-1.5 rounded-md px-0 text-text-lighter/55";
 
   return (
-    <div className="select-none">
-      <div className="flex min-w-0 items-center gap-1">
-        {canExpand ? (
-          <button
-            type="button"
-            onClick={() => setIsExpanded((current) => !current)}
-            className={cn(
-              contentClassName,
-              "hover:bg-transparent hover:text-text-lighter/75 focus-visible:outline-none",
-            )}
-            aria-expanded={isExpanded}
-          >
-            {icon ? (
-              <span className="flex size-4 shrink-0 items-center justify-center opacity-60">
-                {icon}
-              </span>
+    <div data-ai-element="activity-marker" className="py-0.5 select-none">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Marker
+          render={canExpand ? <button type="button" /> : undefined}
+          role={state === "running" ? "status" : undefined}
+          aria-expanded={canExpand ? isExpanded : undefined}
+          onClick={canExpand ? () => setIsExpanded((current) => !current) : undefined}
+          className="min-w-0 flex-1"
+        >
+          <MarkerIcon className={stateClassNames[state]}>
+            {icon ?? <span className="size-1.5 rounded-full bg-current" />}
+          </MarkerIcon>
+          <MarkerContent className="flex flex-1 items-center gap-1">
+            <Shimmer active={state === "running"} className="min-w-0 flex-1 truncate">
+              {summary}
+            </Shimmer>
+            {canExpand ? (
+              <ChevronRightIcon
+                className={cn(
+                  "shrink-0 opacity-35 transition-transform",
+                  isExpanded && "rotate-90",
+                )}
+              />
             ) : null}
-            <span className="min-w-0 flex-1 truncate text-left">{summary}</span>
-            <CaretRight
-              size={12}
-              className={cn("shrink-0 opacity-35 transition-transform", isExpanded && "rotate-90")}
-            />
-          </button>
-        ) : (
-          <div className={contentClassName}>
-            {icon ? (
-              <span className="flex size-4 shrink-0 items-center justify-center opacity-60">
-                {icon}
-              </span>
-            ) : null}
-            <span className="min-w-0 flex-1 truncate text-left">{summary}</span>
-          </div>
-        )}
+          </MarkerContent>
+        </Marker>
         {actions ? <span className="shrink-0">{actions}</span> : null}
       </div>
-      {canExpand && isExpanded ? (
-        <div className="ui-text-xs editor-font mt-1 max-h-64 overflow-auto whitespace-pre-wrap text-text-lighter/45">
+      {canExpand && isExpanded && detailsVariant === "text" ? (
+        <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap pl-6 font-mono ui-text-sm text-subtle-foreground/55">
           {children}
-        </div>
+        </pre>
+      ) : canExpand && isExpanded ? (
+        <div className="mt-1.5 min-w-0 pl-6">{children}</div>
       ) : null}
     </div>
   );

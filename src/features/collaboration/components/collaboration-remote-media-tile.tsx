@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Card, CardContent } from "@/ui/card";
 
 export interface RemoteMediaShare {
   deviceId: string;
@@ -21,21 +22,21 @@ export function RemoteMediaTile({ share }: { share: RemoteMediaShare }) {
   }, [audioElement, hasVideo, share.stream, videoElement]);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border/60 bg-secondary-bg/45">
+    <Card>
       {hasVideo ? (
         <video
           ref={setVideoElement}
           autoPlay
           playsInline
           muted
-          className="aspect-video w-full bg-black"
+          className="aspect-video w-full bg-background"
         />
       ) : null}
       <audio ref={setAudioElement} autoPlay />
-      <div className="ui-text-xs flex items-center justify-between px-2 py-1 text-text-lighter">
+      <CardContent className="flex items-center justify-between px-2 py-1 text-subtle-foreground">
         <span className="truncate">{share.deviceId}</span>
         <span>{hasVideo ? "screen" : "audio"}</span>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

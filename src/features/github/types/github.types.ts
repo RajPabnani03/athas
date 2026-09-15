@@ -1,4 +1,4 @@
-export interface PullRequestAuthor {
+interface PullRequestAuthor {
   login: string;
   avatarUrl?: string | null;
 }
@@ -9,6 +9,7 @@ export interface StatusCheck {
   status: string | null;
   conclusion: string | null;
   workflowName: string | null;
+  detailsUrl?: string | null;
 }
 
 export interface LinkedIssue {
@@ -21,9 +22,17 @@ export interface Label {
   color: string;
 }
 
-export interface ReviewRequest {
+interface ReviewRequest {
   login: string;
   avatarUrl?: string | null;
+}
+
+export interface PullRequestReview {
+  login: string;
+  avatarUrl?: string | null;
+  state: string;
+  body: string;
+  submittedAt: string | null;
 }
 
 export interface PullRequest {
@@ -65,6 +74,10 @@ export interface PullRequestDetails {
   reviewRequests: ReviewRequest[];
   mergeStateStatus: string | null;
   mergeable: string | null;
+  mergedAt: string | null;
+  mergedBy: PullRequestAuthor | null;
+  closedAt: string | null;
+  reviews: PullRequestReview[];
   labels: Label[];
   assignees: PullRequestAuthor[];
 }
@@ -76,9 +89,12 @@ export interface PullRequestFile {
 }
 
 export interface PullRequestComment {
+  id: number;
   author: PullRequestAuthor;
   body: string;
   createdAt: string;
+  updatedAt: string;
+  url: string;
 }
 
 export interface IssueListItem {
@@ -91,10 +107,47 @@ export interface IssueListItem {
   labels: Label[];
 }
 
+export interface GitHubNotification {
+  id: string;
+  title: string;
+  subjectType: string;
+  reason: string;
+  unread: boolean;
+  updatedAt: string;
+  lastReadAt: string | null;
+  repositoryFullName: string;
+  url: string;
+  subjectUrl: string;
+}
+
+export interface GitHubActionNotificationTarget {
+  id: string;
+  repositoryFullName: string;
+  checkSuiteId: number | null;
+  title: string;
+  updatedAt: string;
+}
+
 export interface IssueComment {
+  id: number;
   author: PullRequestAuthor;
   body: string;
   createdAt: string;
+  updatedAt: string;
+  url: string;
+}
+
+export interface IssueMilestone {
+  number: number;
+  title: string;
+  state: string;
+  dueOn: string | null;
+}
+
+export interface IssueType {
+  id: number;
+  name: string;
+  description: string | null;
 }
 
 export interface IssueDetails {
@@ -108,6 +161,13 @@ export interface IssueDetails {
   url: string;
   labels: Label[];
   assignees: PullRequestAuthor[];
+  stateReason: string | null;
+  locked: boolean;
+  activeLockReason: string | null;
+  milestone: IssueMilestone | null;
+  issueType: IssueType | null;
+  closedAt: string | null;
+  closedBy: PullRequestAuthor | null;
   comments: IssueComment[];
 }
 
@@ -116,6 +176,8 @@ export interface WorkflowRunStep {
   status: string | null;
   conclusion: string | null;
   number?: number | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface WorkflowRunJob {
@@ -131,35 +193,34 @@ export interface WorkflowRunJob {
   steps: WorkflowRunStep[];
 }
 
-export interface WorkflowRunDetails {
+export interface WorkflowRunSummary {
   databaseId: number;
-  name: string | null;
   displayTitle: string | null;
+  name: string | null;
   workflowName: string | null;
   event: string | null;
   status: string | null;
   conclusion: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  runStartedAt: string | null;
+  runNumber: number | null;
+  runAttempt: number | null;
+  workflowId: number | null;
+  actor: PullRequestAuthor | null;
+  triggeringActor?: PullRequestAuthor | null;
+  pullRequestNumbers?: number[];
+  headCommitMessage: string | null;
   url: string;
   headBranch: string | null;
   headSha: string | null;
+}
+
+export interface WorkflowRunDetails extends WorkflowRunSummary {
   jobs: WorkflowRunJob[];
 }
 
-export interface WorkflowRunListItem {
-  databaseId: number;
-  displayTitle: string | null;
-  name: string | null;
-  workflowName: string | null;
-  event: string | null;
-  status: string | null;
-  conclusion: string | null;
-  updatedAt: string | null;
-  url: string;
-  headBranch: string | null;
-  headSha: string | null;
-}
+export type WorkflowRunListItem = WorkflowRunSummary;
 
 export interface WorkflowListItem {
   id: number;

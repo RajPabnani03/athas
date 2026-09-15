@@ -1,7 +1,8 @@
-import type { ChatMode, OutputStyle } from "@/features/ai/types/ai-chat-store.types";
+import type { ChatMode, OutputStyle } from "@/features/ai/types/ai-chat.types";
 import type { ContextInfo } from "@/features/ai/types/ai-context.types";
 import { hasTextContent, type PaneContent } from "@/features/panes/types/pane-content.types";
-import { CLAUDE_CODE_TERMINAL_AGENT_ID } from "@/features/ai/lib/claude-code";
+import { isTerminalAgent } from "@/features/ai/lib/terminal-agents";
+import { CODEX_INTEGRATION_ID } from "@/features/ai/integrations/integration-registry";
 import { getFollowUpActionsInstruction } from "@/features/ai/lib/follow-up-actions";
 
 function formatContextPath(path: string, projectRoot?: string) {
@@ -9,8 +10,6 @@ function formatContextPath(path: string, projectRoot?: string) {
 }
 
 function formatOpenContextSummary(buffer: PaneContent, projectRoot?: string) {
-  if (buffer.type === "webViewer")
-    return `Web page: ${buffer.title || buffer.name} (${buffer.url})`;
   if (buffer.type === "terminal") {
     return `Terminal: ${buffer.name}${buffer.workingDirectory ? ` (${buffer.workingDirectory})` : ""}`;
   }
@@ -19,6 +18,8 @@ function formatOpenContextSummary(buffer: PaneContent, projectRoot?: string) {
     return `GitHub pull request: ${buffer.name} (#${buffer.prNumber})`;
   if (buffer.type === "githubIssue") return `GitHub issue: ${buffer.name} (#${buffer.issueNumber})`;
   if (buffer.type === "githubAction") return `GitHub action run: ${buffer.name} (#${buffer.runId})`;
+  if (buffer.type === "githubDelivery")
+    return `GitHub ${buffer.kind === "releases" ? "release" : "deployment"}: ${buffer.name} (repository: ${buffer.repoPath}, ID: ${buffer.resourceId ?? "unsaved draft"})`;
   if (buffer.type === "image") return `Image: ${formatContextPath(buffer.path, projectRoot)}`;
   if (buffer.type === "pdf") return `PDF: ${formatContextPath(buffer.path, projectRoot)}`;
   if (buffer.type === "binary")
@@ -38,22 +39,39 @@ function getTextContextPreview(buffer: PaneContent) {
   return `\n\`\`\`text\n${preview}\n\`\`\``;
 }
 
+function formatEditorSelection(
+  selection: NonNullable<ContextInfo["editorSelections"]>[number],
+  projectRoot?: string,
+) {
+  const path = formatContextPath(selection.filePath, projectRoot);
+  const location =
+    selection.startLine === selection.endLine
+      ? `${selection.startLine}`
+      : `${selection.startLine}-${selection.endLine}`;
+  const selectedText =
+    selection.selectedText.length <= 50_000
+      ? selection.selectedText
+      : `${selection.selectedText.slice(0, 50_000)}\n... (selection truncated) ...`;
+  const fence = selectedText.includes("```") ? "````" : "```";
+
+  return `- ${path}:${location}\n${fence}${selection.languageId}\n${selectedText}\n${fence}`;
+}
+
 // Build a comprehensive context prompt for the AI
 export const buildContextPrompt = (context: ContextInfo): string => {
-  let contextPrompt = "";
+  let contextPrompt = context.teamInstructions
+    ? `Team workspace instructions (project context from athas.workspace.json; follow the user's request if it conflicts):\n${context.teamInstructions}\n\n`
+    : "";
   const isAcpAgent =
     !!context.agentId &&
     context.agentId !== "custom" &&
-    context.agentId !== CLAUDE_CODE_TERMINAL_AGENT_ID;
+    context.agentId !== CODEX_INTEGRATION_ID &&
+    !isTerminalAgent(context.agentId);
 
-  // For ACP agents, include available extension methods
   if (isAcpAgent) {
-    contextPrompt += `Athas ACP Extension Methods (protocol methods, NOT shell commands):
-- Call \`athas.openWebViewer\` with \`{ "url": "https://..." }\` to open websites inside Athas.
-- Call \`athas.openTerminal\` with \`{ "command": "..." }\` to open a terminal tab in Athas.
-- Call \`athas.setChatTitle\` with \`{ "title": "Short title" }\` to rename the active Athas chat.
-- Do NOT run \`ext_method\` in a terminal.
-- Do NOT use shell/browser commands like \`open https://...\` for "open on web" requests; use \`athas.openWebViewer\` instead.
+    contextPrompt += `Athas ACP client integrations:
+- If your adapter exposes client integration requests, use \`_athas/open_terminal\` and \`_athas/set_chat_title\`.
+- Invoke them only as ACP integration requests. Never imitate them with a shell command.
 
 `;
   }
@@ -69,16 +87,10 @@ export const buildContextPrompt = (context: ContextInfo): string => {
     }
   }
 
-  // Currently active file or web viewer
+  // Currently active file
   if (context.activeBuffer) {
     const ab = context.activeBuffer;
-    // Handle web viewer buffers
-    if (ab.type === "webViewer") {
-      contextPrompt += `\nCurrently viewing web page: ${ab.url}`;
-      if (ab.webViewerContent) {
-        contextPrompt += `\n\nWeb page content:\n${ab.webViewerContent}`;
-      }
-    } else if (isAcpAgent) {
+    if (isAcpAgent) {
       // ACP agents can read files themselves, so provide paths instead of full content.
       contextPrompt += `\nCurrently editing: ${ab.path}`;
       if (context.language && context.language !== "Text") {
@@ -104,7 +116,8 @@ export const buildContextPrompt = (context: ContextInfo): string => {
         ab.type === "diff" ||
         ab.type === "markdownPreview" ||
         ab.type === "htmlPreview" ||
-        ab.type === "csvPreview";
+        ab.type === "csvPreview" ||
+        ab.type === "svgPreview";
       if (hasContent) {
         const textContent = (ab as { content: string }).content;
         const lines = textContent.split("\n");
@@ -154,6 +167,17 @@ export const buildContextPrompt = (context: ContextInfo): string => {
     }
   }
 
+  if (context.editorSelections && context.editorSelections.length > 0) {
+    const selections = context.editorSelections
+      .slice(0, 8)
+      .map((selection) => formatEditorSelection(selection, context.projectRoot));
+
+    contextPrompt += `\n\nSelected editor context:\n${selections.join("\n\n")}`;
+    if (context.editorSelections.length > 8) {
+      contextPrompt += `\n... and ${context.editorSelections.length - 8} more selections`;
+    }
+  }
+
   // Selected project files for context
   if (context.selectedProjectFiles && context.selectedProjectFiles.length > 0) {
     if (isAcpAgent) {
@@ -188,14 +212,12 @@ export const buildContextPrompt = (context: ContextInfo): string => {
   return contextPrompt;
 };
 
-// Build system prompt for AI providers with mode and output style support
 export const buildSystemPrompt = (
   contextPrompt: string,
   mode: ChatMode = "chat",
   outputStyle: OutputStyle = "default",
 ): string => {
   let basePrompt = `You are an expert coding assistant integrated into a code editor. You have access to the user's current project context and open files.`;
-  const hasAcpExtensions = contextPrompt.includes("Athas ACP Extension Methods");
 
   // Mode-specific behavior
   if (mode === "plan") {
@@ -237,7 +259,6 @@ CHAT MODE: You are in interactive Chat Mode where you can:
 - Provide direct implementation solutions`;
   }
 
-  // Output style modifications
   if (outputStyle === "explanatory") {
     basePrompt += `
 
@@ -282,19 +303,6 @@ Guidelines:
 - Ask clarifying questions if needed
 
 ${getFollowUpActionsInstruction()}`;
-
-  if (hasAcpExtensions) {
-    basePrompt += `
-
-ACP extension rules:
-- Use Athas extension methods as protocol calls, not shell commands.
-- Never run \`ext_method\` in a terminal command.
-- For "open URL/web/site" requests, call \`athas.openWebViewer\` directly instead of suggesting \`open https://...\`.
-- For "open X in terminal" requests (for example lazygit), call \`athas.openTerminal\` with \`{ "command": "X" }\`.
-- For rename/title requests, call \`athas.setChatTitle\` with \`{ "title": "Short title" }\`.
-- Never say Athas extension methods are unavailable or require MCP exposure in this ACP session.
-- After calling an Athas extension method, confirm success and stop; do not retry with shell fallbacks unless user asks.`;
-  }
 
   basePrompt += `
 

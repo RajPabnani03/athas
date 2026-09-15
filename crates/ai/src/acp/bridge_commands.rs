@@ -1,7 +1,7 @@
 use super::{
    bridge::AcpWorker,
    client::PermissionResponse,
-   types::{AcpAgentStatus, AcpSessionList, AgentConfig},
+   types::{AcpAgentStatus, AcpSessionList, AgentConfig, SessionConfigValue},
 };
 use crate::runtime::AthasAppHandle as AppHandle;
 use anyhow::Result;
@@ -31,13 +31,20 @@ pub(super) enum AcpCommand {
    },
    SetConfigOption {
       config_id: String,
-      value: String,
+      value: SessionConfigValue,
       response_tx: oneshot::Sender<Result<()>>,
    },
    ListSessions {
       cwd: Option<String>,
       cursor: Option<String>,
       response_tx: oneshot::Sender<Result<AcpSessionList>>,
+   },
+   DeleteSession {
+      session_id: String,
+      response_tx: oneshot::Sender<Result<()>>,
+   },
+   Logout {
+      response_tx: oneshot::Sender<Result<()>>,
    },
    CancelPrompt {
       response_tx: oneshot::Sender<Result<()>>,
@@ -138,6 +145,25 @@ pub(super) async fn run_worker_loop(
                   response_tx,
                } => {
                   let result = worker.list_sessions(cwd, cursor).await;
+                  {
+                     let mut s = status.lock().await;
+                     *s = worker.get_status();
+                  }
+                  let _ = response_tx.send(result);
+               }
+               AcpCommand::DeleteSession {
+                  session_id,
+                  response_tx,
+               } => {
+                  let result = worker.delete_session(&session_id).await;
+                  {
+                     let mut s = status.lock().await;
+                     *s = worker.get_status();
+                  }
+                  let _ = response_tx.send(result);
+               }
+               AcpCommand::Logout { response_tx } => {
+                  let result = worker.logout().await;
                   {
                      let mut s = status.lock().await;
                      *s = worker.get_status();

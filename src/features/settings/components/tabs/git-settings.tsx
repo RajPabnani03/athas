@@ -1,10 +1,29 @@
-import { getDefaultSetting, useSettingsStore } from "@/features/settings/stores/settings.store";
-import Section, { SETTINGS_CONTROL_WIDTHS, SettingRow } from "../settings-section";
+import { useShallow } from "zustand/react/shallow";
+import { getDefaultSetting } from "@/features/settings/config/default-settings";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { GitHubCredentials } from "./github-credentials";
+import Section, { SettingsView, SettingRow } from "../settings-section";
 import Select from "@/ui/select";
 import Switch from "@/ui/switch";
 
 export const GitSettings = () => {
-  const { settings, updateSetting } = useSettingsStore();
+  const settings = useSettingsStore(
+    useShallow((state) => ({
+      autoRefreshGitStatus: state.settings.autoRefreshGitStatus,
+      collapseEmptyGitSections: state.settings.collapseEmptyGitSections,
+      compactGitStatusBadges: state.settings.compactGitStatusBadges,
+      confirmBeforeDiscard: state.settings.confirmBeforeDiscard,
+      coreFeatures: state.settings.coreFeatures,
+      enableInlineGitBlame: state.settings.enableInlineGitBlame,
+      gitChangesFolderView: state.settings.gitChangesFolderView,
+      gitDefaultDiffView: state.settings.gitDefaultDiffView,
+      openDiffOnClick: state.settings.openDiffOnClick,
+      rememberLastGitPanelMode: state.settings.rememberLastGitPanelMode,
+      showStagedFirst: state.settings.showStagedFirst,
+      showUntrackedFiles: state.settings.showUntrackedFiles,
+    })),
+  );
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
 
   const handleGitFeatureToggle = (enabled: boolean) => {
     updateSetting("coreFeatures", {
@@ -14,7 +33,7 @@ export const GitSettings = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <SettingsView>
       <Section title="Integration">
         <SettingRow
           label="Git Integration"
@@ -22,7 +41,7 @@ export const GitSettings = () => {
           onReset={() => updateSetting("coreFeatures", getDefaultSetting("coreFeatures"))}
           canReset={settings.coreFeatures.git !== getDefaultSetting("coreFeatures").git}
         >
-          <Switch checked={settings.coreFeatures.git} onChange={handleGitFeatureToggle} size="sm" />
+          <Switch checked={settings.coreFeatures.git} onChange={handleGitFeatureToggle} />
         </SettingRow>
 
         <SettingRow
@@ -36,7 +55,6 @@ export const GitSettings = () => {
           <Switch
             checked={settings.autoRefreshGitStatus}
             onChange={(checked) => updateSetting("autoRefreshGitStatus", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -51,7 +69,6 @@ export const GitSettings = () => {
           <Switch
             checked={settings.confirmBeforeDiscard}
             onChange={(checked) => updateSetting("confirmBeforeDiscard", checked)}
-            size="sm"
           />
         </SettingRow>
       </Section>
@@ -68,7 +85,6 @@ export const GitSettings = () => {
           <Switch
             checked={settings.gitChangesFolderView}
             onChange={(checked) => updateSetting("gitChangesFolderView", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -83,7 +99,6 @@ export const GitSettings = () => {
           <Switch
             checked={settings.showUntrackedFiles}
             onChange={(checked) => updateSetting("showUntrackedFiles", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -96,7 +111,6 @@ export const GitSettings = () => {
           <Switch
             checked={settings.showStagedFirst}
             onChange={(checked) => updateSetting("showStagedFirst", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -109,7 +123,6 @@ export const GitSettings = () => {
           <Switch
             checked={settings.openDiffOnClick}
             onChange={(checked) => updateSetting("openDiffOnClick", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -124,7 +137,6 @@ export const GitSettings = () => {
           <Switch
             checked={settings.compactGitStatusBadges}
             onChange={(checked) => updateSetting("compactGitStatusBadges", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -141,7 +153,6 @@ export const GitSettings = () => {
           <Switch
             checked={settings.collapseEmptyGitSections}
             onChange={(checked) => updateSetting("collapseEmptyGitSections", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -158,7 +169,6 @@ export const GitSettings = () => {
           <Switch
             checked={settings.rememberLastGitPanelMode}
             onChange={(checked) => updateSetting("rememberLastGitPanelMode", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -177,14 +187,12 @@ export const GitSettings = () => {
               { value: "split", label: "Split" },
             ]}
             onChange={(value) => updateSetting("gitDefaultDiffView", value as "unified" | "split")}
-            className={SETTINGS_CONTROL_WIDTHS.default}
-            size="xs"
             variant="default"
-            searchable
-            searchableTrigger="input"
           />
         </SettingRow>
       </Section>
+
+      <GitHubCredentials />
 
       <Section title="Editor">
         <SettingRow
@@ -198,42 +206,9 @@ export const GitSettings = () => {
           <Switch
             checked={settings.enableInlineGitBlame}
             onChange={(checked) => updateSetting("enableInlineGitBlame", checked)}
-            size="sm"
-          />
-        </SettingRow>
-
-        <SettingRow
-          label="Enable Git Gutter"
-          description="Show added, modified, and deleted indicators in the editor gutter"
-          onReset={() => updateSetting("enableGitGutter", getDefaultSetting("enableGitGutter"))}
-          canReset={settings.enableGitGutter !== getDefaultSetting("enableGitGutter")}
-        >
-          <Switch
-            checked={settings.enableGitGutter}
-            onChange={(checked) => updateSetting("enableGitGutter", checked)}
-            size="sm"
           />
         </SettingRow>
       </Section>
-
-      <Section title="File Tree">
-        <SettingRow
-          label="Show Git Status In File Tree"
-          description="Display Git color decorations in Files"
-          onReset={() =>
-            updateSetting("showGitStatusInFileTree", getDefaultSetting("showGitStatusInFileTree"))
-          }
-          canReset={
-            settings.showGitStatusInFileTree !== getDefaultSetting("showGitStatusInFileTree")
-          }
-        >
-          <Switch
-            checked={settings.showGitStatusInFileTree}
-            onChange={(checked) => updateSetting("showGitStatusInFileTree", checked)}
-            size="sm"
-          />
-        </SettingRow>
-      </Section>
-    </div>
+    </SettingsView>
   );
 };

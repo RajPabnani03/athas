@@ -1,16 +1,15 @@
+import { ChevronDownIcon, ChevronRightIcon } from "@/ui/icons";
+import { memo, useMemo } from "react";
 import {
-  CaretDownIcon as ChevronDown,
-  CaretRightIcon as ChevronRight,
-  FileTextIcon as FileText,
-} from "@phosphor-icons/react";
-import { memo } from "react";
+  ViewerErrorState,
+  ViewerLoadingState,
+  ViewerState,
+} from "@/features/viewer/components/viewer-state";
+import { DiffFileContent } from "@/features/git/components/diff/diff-file-content";
 import { Button } from "@/ui/button";
-import { LoadingIndicator } from "@/ui/loading";
-import Tooltip from "@/ui/tooltip";
 import { cn } from "@/utils/cn";
-import { usePRDiffHighlighting } from "../hooks/use-pr-diff-highlighting";
+import { parseGitPatchLines } from "@/features/git/utils/git-diff-parser";
 import type { FileDiff } from "../types/github-pr-viewer.types";
-import { DiffLineDisplay } from "./diff-line-display";
 
 interface FileDiffViewProps {
   file: FileDiff;
@@ -20,13 +19,14 @@ interface FileDiffViewProps {
   isLoadingPatch: boolean;
   patchError?: string;
   isStatic?: boolean;
+  showHeader?: boolean;
 }
 
 const statusColors: Record<FileDiff["status"], string> = {
-  added: "bg-git-added/15 text-git-added",
-  deleted: "bg-git-deleted/15 text-git-deleted",
-  modified: "bg-git-modified/15 text-git-modified",
-  renamed: "bg-git-renamed/15 text-git-renamed",
+  added: "text-git-added",
+  deleted: "text-git-deleted",
+  modified: "text-git-modified",
+  renamed: "text-git-renamed",
 };
 
 export const FileDiffView = memo(
@@ -38,19 +38,35 @@ export const FileDiffView = memo(
     isLoadingPatch,
     patchError,
     isStatic = false,
+    showHeader = true,
   }: FileDiffViewProps) => {
     const fileLines = file.lines ?? [];
-    const tokenMap = usePRDiffHighlighting(isExpanded ? fileLines : [], file.path);
+    const diff = useMemo(() => {
+      const parsed = parseGitPatchLines(fileLines, file.path);
+
+      return {
+        ...parsed,
+        file_path: file.path,
+        old_path: file.oldPath,
+        new_path: file.path,
+        is_new: file.status === "added",
+        is_deleted: file.status === "deleted",
+        is_renamed: file.status === "renamed",
+        additions: file.additions,
+        deletions: file.deletions,
+      };
+    }, [file.additions, file.deletions, file.oldPath, file.path, file.status, fileLines]);
 
     return (
-      <div className="min-w-0 overflow-hidden rounded-md border border-border/70 bg-primary-bg">
-        {isStatic ? (
-          <div className="flex items-center gap-2 px-2.5 py-2">
-            <FileText className="shrink-0 text-text-lighter" />
+      <div className="min-w-0 overflow-hidden bg-background">
+        {showHeader && isStatic ? (
+          <div className="flex min-h-9 items-center gap-2 border-border/60 border-b px-3 py-1.5">
             <div className="min-w-0 flex-1">
-              <div className="ui-text-sm truncate text-text">{file.path}</div>
+              <div className="ui-text-sm truncate text-foreground">{file.path}</div>
               {file.oldPath && (
-                <div className="ui-text-sm truncate text-text-lighter">from {file.oldPath}</div>
+                <div className="ui-text-sm truncate text-subtle-foreground">
+                  from {file.oldPath}
+                </div>
               )}
             </div>
             <span className={cn("ui-text-sm shrink-0 capitalize", statusColors[file.status])}>
@@ -58,26 +74,30 @@ export const FileDiffView = memo(
             </span>
             <span className="ui-text-sm shrink-0 text-git-added">+{file.additions}</span>
             <span className="ui-text-sm shrink-0 text-git-deleted">-{file.deletions}</span>
+            <Button onClick={() => onOpenFile(file.path)} variant="ghost">
+              Open
+            </Button>
           </div>
-        ) : (
+        ) : showHeader ? (
           <Button
             type="button"
-            variant="ghost"
+            variant="list"
             onClick={onToggle}
-            className="h-auto w-full justify-start rounded-none px-2.5 py-2 text-left hover:bg-hover/60"
+            width="full"
+            align="start"
             aria-label={`${isExpanded ? "Collapse" : "Expand"} diff for ${file.path}`}
-            compact
           >
             {isExpanded ? (
-              <ChevronDown className="text-text-lighter" />
+              <ChevronDownIcon className="text-subtle-foreground" />
             ) : (
-              <ChevronRight className="text-text-lighter" />
+              <ChevronRightIcon className="text-subtle-foreground" />
             )}
-            <FileText className="shrink-0 text-text-lighter" />
             <div className="min-w-0 flex-1">
-              <div className="ui-text-sm truncate text-text">{file.path}</div>
+              <div className="ui-text-sm truncate text-foreground">{file.path}</div>
               {file.oldPath && (
-                <div className="ui-text-sm truncate text-text-lighter">from {file.oldPath}</div>
+                <div className="ui-text-sm truncate text-subtle-foreground">
+                  from {file.oldPath}
+                </div>
               )}
             </div>
             <span className={cn("ui-text-sm shrink-0 capitalize", statusColors[file.status])}>
@@ -86,44 +106,30 @@ export const FileDiffView = memo(
             <span className="ui-text-sm shrink-0 text-git-added">+{file.additions}</span>
             <span className="ui-text-sm shrink-0 text-git-deleted">-{file.deletions}</span>
           </Button>
-        )}
+        ) : null}
         {isExpanded && (
-          <div className="border-border/70 border-t bg-primary-bg">
-            <div className="flex items-center justify-between px-3 py-2">
-              <Tooltip content="Open file in editor" side="top">
-                <Button
-                  onClick={() => onOpenFile(file.path)}
-                  variant="ghost"
-                  compact
-                  className="text-text-lighter"
-                >
-                  Open File
-                </Button>
-              </Tooltip>
-              <span className="ui-text-sm text-text-lighter">
-                {isLoadingPatch ? "Loading patch..." : `${fileLines.length} diff lines`}
-              </span>
-            </div>
-            <div className="max-h-[540px] overflow-auto">
+          <div className="bg-background">
+            <div className={showHeader ? "max-h-135 overflow-auto" : "overflow-hidden"}>
               {isLoadingPatch ? (
-                <div className="flex items-center justify-center py-6">
-                  <LoadingIndicator label="Loading file diff" showLabel compact />
-                </div>
+                <ViewerLoadingState
+                  label="Loading file diff"
+                  layout="section"
+                  className="min-h-0 flex-none py-6"
+                />
               ) : patchError ? (
-                <div className="ui-text-sm px-3 py-4 text-center text-error">{patchError}</div>
+                <ViewerErrorState
+                  message={patchError}
+                  layout="section"
+                  className="min-h-0 flex-none px-3 py-4"
+                />
               ) : fileLines.length === 0 ? (
-                <div className="ui-text-sm px-3 py-4 text-center text-text-lighter">
-                  No diff hunks available for this file.
-                </div>
+                <ViewerState
+                  description="No diff hunks available for this file."
+                  layout="section"
+                  className="min-h-0 flex-none px-3 py-4"
+                />
               ) : (
-                fileLines.map((line, index) => (
-                  <DiffLineDisplay
-                    key={index}
-                    line={line}
-                    index={index}
-                    tokens={tokenMap.get(index)}
-                  />
-                ))
+                <DiffFileContent key={file.path} diff={diff} sectionKey={file.path} />
               )}
             </div>
           </div>

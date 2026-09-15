@@ -1,23 +1,27 @@
+import { openTerminalWindow } from "@/features/window/detached/standalone-content-service";
 import {
-  CopyIcon as Copy,
-  DownloadIcon as Download,
-  PencilSimpleIcon as Edit,
-  PushPinIcon as Pin,
-  PushPinSlashIcon as PinOff,
-  ArrowCounterClockwiseIcon as RotateCcw,
-  XIcon as X,
-} from "@phosphor-icons/react";
+  ArrowCounterClockwiseIcon,
+  ColumnsIcon,
+  CopyIcon,
+  DownloadIcon,
+  PenIcon,
+  PinIcon,
+  PinSlashIcon,
+  RowsIcon,
+  TerminalWindowIcon,
+} from "@/ui/icons";
 import type { Terminal } from "@/features/terminal/types/terminal.types";
-import type { ContextMenuItem } from "@/ui/context-menu";
-import { ContextMenu } from "@/ui/context-menu";
-import Keybinding from "@/ui/keybinding";
-import { IS_MAC } from "@/utils/platform";
+import { ContextMenuPopup, type ContextMenuGroupData } from "@/ui/context-menu";
 
 interface TerminalTabContextMenuProps {
   isOpen: boolean;
   position: { x: number; y: number };
   terminal: Terminal | null;
+  isSplit: boolean;
   onClose: () => void;
+  onSplitRight: (terminalId: string) => void;
+  onSplitDown: (terminalId: string) => void;
+  onUnsplit: (terminalId: string) => void;
   onPin: (terminalId: string) => void;
   onCloseTab: (terminalId: string) => void;
   onCloseOthers: (terminalId: string) => void;
@@ -33,7 +37,11 @@ const TerminalTabContextMenu = ({
   isOpen,
   position,
   terminal,
+  isSplit,
   onClose,
+  onSplitRight,
+  onSplitDown,
+  onUnsplit,
   onPin,
   onCloseTab,
   onCloseOthers,
@@ -44,69 +52,116 @@ const TerminalTabContextMenu = ({
   onRename,
   onExport,
 }: TerminalTabContextMenuProps) => {
-  const modKey = IS_MAC ? "Cmd" : "Ctrl";
-
-  const items: ContextMenuItem[] = terminal
+  const groups: ContextMenuGroupData[] = terminal
     ? [
         {
-          id: "pin",
-          label: terminal.isPinned ? "Unpin Terminal" : "Pin Terminal",
-          icon: terminal.isPinned ? <PinOff /> : <Pin />,
-          onClick: () => onPin(terminal.id),
-        },
-        { id: "sep-1", label: "", separator: true, onClick: () => {} },
-        {
-          id: "duplicate",
-          label: "Duplicate Terminal",
-          icon: <Copy />,
-          onClick: () => onDuplicate(terminal.id),
+          id: "tab",
+          items: [
+            {
+              id: "pin",
+              label: terminal.isPinned ? "Unpin Terminal" : "Pin Terminal",
+              icon: terminal.isPinned ? <PinSlashIcon /> : <PinIcon />,
+              onClick: () => onPin(terminal.id),
+            },
+          ],
         },
         {
-          id: "clear",
-          label: "Clear Terminal",
-          icon: <RotateCcw />,
-          onClick: () => onClear(terminal.id),
+          id: "split",
+          items: [
+            {
+              id: "split-right",
+              label: "Split Right",
+              icon: <ColumnsIcon />,
+              onClick: () => onSplitRight(terminal.id),
+            },
+            {
+              id: "split-down",
+              label: "Split Down",
+              icon: <RowsIcon />,
+              onClick: () => onSplitDown(terminal.id),
+            },
+            ...(isSplit
+              ? [
+                  {
+                    id: "unsplit",
+                    label: "Unsplit",
+                    icon: <TerminalWindowIcon />,
+                    onClick: () => onUnsplit(terminal.id),
+                  },
+                ]
+              : []),
+          ],
         },
         {
-          id: "rename",
-          label: "Rename Terminal",
-          icon: <Edit />,
-          keybinding: <Keybinding keys={["F2"]} />,
-          onClick: () => onRename(terminal.id),
+          id: "terminal",
+          items: [
+            {
+              id: "new-window",
+              label: "New Terminal Window Here",
+              icon: <TerminalWindowIcon />,
+              onClick: () => {
+                void openTerminalWindow({
+                  workingDirectory: terminal.currentDirectory,
+                  shell: terminal.shell,
+                  remoteConnectionId: terminal.remoteConnectionId,
+                });
+              },
+            },
+            {
+              id: "duplicate",
+              label: "Duplicate Terminal",
+              icon: <CopyIcon />,
+              onClick: () => onDuplicate(terminal.id),
+            },
+            {
+              id: "clear",
+              label: "Clear Terminal",
+              icon: <ArrowCounterClockwiseIcon />,
+              onClick: () => onClear(terminal.id),
+            },
+            {
+              id: "rename",
+              label: "Rename Terminal",
+              icon: <PenIcon />,
+              onClick: () => onRename(terminal.id),
+            },
+            {
+              id: "export",
+              label: "Export Output",
+              icon: <DownloadIcon optical="md" />,
+              onClick: () => onExport(terminal.id),
+            },
+          ],
         },
-        {
-          id: "export",
-          label: "Export Output",
-          icon: <Download />,
-          onClick: () => onExport(terminal.id),
-        },
-        { id: "sep-2", label: "", separator: true, onClick: () => {} },
         {
           id: "close",
-          label: "Close Terminal",
-          icon: <X />,
-          keybinding: <Keybinding keys={[modKey, "W"]} />,
-          onClick: () => onCloseTab(terminal.id),
-        },
-        {
-          id: "close-others",
-          label: "Close Other Terminals",
-          onClick: () => onCloseOthers(terminal.id),
-        },
-        {
-          id: "close-all",
-          label: "Close All Terminals",
-          onClick: onCloseAll,
-        },
-        {
-          id: "close-right",
-          label: "Close Terminals to Right",
-          onClick: () => onCloseToRight(terminal.id),
+          items: [
+            {
+              id: "close",
+              label: "Close Terminal",
+              onClick: () => onCloseTab(terminal.id),
+            },
+            {
+              id: "close-others",
+              label: "Close Other Terminals",
+              onClick: () => onCloseOthers(terminal.id),
+            },
+            {
+              id: "close-all",
+              label: "Close All Terminals",
+              onClick: onCloseAll,
+            },
+            {
+              id: "close-right",
+              label: "Close Terminals to Right",
+              onClick: () => onCloseToRight(terminal.id),
+            },
+          ],
         },
       ]
     : [];
 
-  return <ContextMenu isOpen={isOpen} position={position} items={items} onClose={onClose} />;
+  return <ContextMenuPopup isOpen={isOpen} point={position} groups={groups} onClose={onClose} />;
 };
 
 export default TerminalTabContextMenu;

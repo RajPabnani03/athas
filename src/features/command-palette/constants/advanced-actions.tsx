@@ -1,18 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
+import { openNewAgentChat } from "@/features/ai/lib/open-new-agent-chat";
+import { openAgentInNewWindow } from "@/features/ai/detached/agent-window-service";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import {
-  ArrowClockwiseIcon as RefreshCw,
-  SparkleIcon as Sparkles,
-  SquareIcon as Square,
-  TerminalWindowIcon as Terminal,
-} from "@phosphor-icons/react";
+  ArrowClockwiseIcon,
+  ArrowsClockwiseIcon,
+  SparkleIcon,
+  SquareIcon,
+  TerminalWindowIcon,
+} from "@/ui/icons";
 import {
   restartAllLanguageServers,
   stopAllLanguageServers,
 } from "@/features/keymaps/commands/lsp-command-actions";
-import { useUIState } from "@/features/window/stores/ui-state.store";
-import { showAlertDialog } from "@/features/dialogs/services/dialog-service";
+import { openAthasLogBuffer } from "@/features/settings/services/athas-log-service";
+import { showAlertDialog } from "@/ui/dialog";
 import type { Action } from "../types/action.types";
-import type { CommandPaletteViewId } from "../types/view.types";
 
 interface AdvancedActionsParams {
   lspStatus: {
@@ -28,43 +31,48 @@ interface AdvancedActionsParams {
     cursorPosition: { x: number; y: number };
     selectionRange: { start: number; end: number };
   }) => void;
-  pushPaletteView: (view: CommandPaletteViewId) => void;
   showToast: (params: { message: string; type: "success" | "error" | "info" }) => void;
   onClose: () => void;
 }
 
 export const createAdvancedActions = (params: AdvancedActionsParams): Action[] => {
-  const {
-    lspStatus,
-    vimMode,
-    vimCommands,
-    setMode,
-    openQuickEdit,
-    pushPaletteView,
-    showToast,
-    onClose,
-  } = params;
+  const { lspStatus, vimMode, vimCommands, setMode, openQuickEdit, showToast, onClose } = params;
 
   const baseActions: Action[] = [
     {
-      id: "ai-quick-question",
-      label: "AI: Quick Question",
-      description: "Ask a small question using the configured AI provider",
-      icon: <Sparkles />,
+      id: "ai-open-agent-window",
+      label: "AI: Open Agent in New Window",
+      description: "Open the active agent session in its own window",
+      icon: <SparkleIcon />,
       category: "AI",
-      action: () => {
-        pushPaletteView("quick-question");
+      action: async () => {
+        onClose();
+        const state = useBufferStore.getState();
+        const buffer = state.buffers.find((item) => item.id === state.activeBufferId);
+        if (buffer?.type === "agent") await openAgentInNewWindow(buffer.sessionId);
+        else showToast({ message: "Open an agent tab first.", type: "info" });
       },
     },
     {
       id: "ai-new-agent",
       label: "AI: New Agent",
-      description: "Open the unified agent launcher",
-      icon: <Sparkles />,
+      description: "Open a new agent chat",
+      icon: <SparkleIcon />,
       category: "AI",
       commandId: "workbench.agentLauncher",
       action: () => {
-        useUIState.getState().setIsAgentLauncherVisible(true);
+        openNewAgentChat();
+        onClose();
+      },
+    },
+    {
+      id: "ai-continuous-agents",
+      label: "AI: Continuous Agents",
+      description: "Create and manage recurring workspace goals",
+      icon: <ArrowsClockwiseIcon />,
+      category: "AI",
+      action: () => {
+        useBufferStore.getState().actions.openContinuousAgentsBuffer();
         onClose();
       },
     },
@@ -72,7 +80,7 @@ export const createAdvancedActions = (params: AdvancedActionsParams): Action[] =
       id: "ai-quick-edit",
       label: "AI: Quick Edit Selection",
       description: "Edit selected text using AI inline",
-      icon: <Sparkles />,
+      icon: <SparkleIcon />,
       category: "AI",
       action: () => {
         const selection = window.getSelection();
@@ -90,7 +98,7 @@ export const createAdvancedActions = (params: AdvancedActionsParams): Action[] =
       id: "lsp-status",
       label: "LSP: Show Status",
       description: `Status: ${lspStatus.status} (${lspStatus.activeWorkspaces.length} workspaces)`,
-      icon: <Terminal />,
+      icon: <TerminalWindowIcon />,
       category: "LSP",
       action: async () => {
         await showAlertDialog(
@@ -101,10 +109,28 @@ export const createAdvancedActions = (params: AdvancedActionsParams): Action[] =
       },
     },
     {
+      id: "developer-open-athas-log",
+      label: "Developer: Open Athas Log",
+      description: "Open the current Athas application log in a read-only editor tab",
+      icon: <TerminalWindowIcon />,
+      category: "Developer",
+      action: async () => {
+        try {
+          await openAthasLogBuffer();
+        } catch (error) {
+          showToast({
+            message: error instanceof Error ? error.message : "Failed to open Athas log",
+            type: "error",
+          });
+        }
+        onClose();
+      },
+    },
+    {
       id: "lsp.restartAllServers",
       label: "Language Server: Restart All Servers",
       description: "Restart every active language server",
-      icon: <RefreshCw />,
+      icon: <ArrowClockwiseIcon />,
       category: "Language Server",
       commandId: "lsp.restartAllServers",
       action: async () => {
@@ -116,7 +142,7 @@ export const createAdvancedActions = (params: AdvancedActionsParams): Action[] =
       id: "lsp.stopAllServers",
       label: "Language Server: Stop All Servers",
       description: "Stop every active language server",
-      icon: <Square />,
+      icon: <SquareIcon />,
       category: "Language Server",
       commandId: "lsp.stopAllServers",
       action: async () => {
@@ -128,7 +154,7 @@ export const createAdvancedActions = (params: AdvancedActionsParams): Action[] =
       id: "cli-install",
       label: "CLI: Install Terminal Command",
       description: "Install 'athas' command for terminal",
-      icon: <Terminal />,
+      icon: <TerminalWindowIcon />,
       category: "CLI",
       action: async () => {
         try {

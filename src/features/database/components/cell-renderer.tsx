@@ -1,5 +1,6 @@
-import { useState } from "react";
+import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
 import { cn } from "@/utils/cn";
 import type { ForeignKeyInfo } from "../types/common.types";
 
@@ -20,42 +21,27 @@ export default function CellRenderer({
   onFkClick,
   onContextMenu,
 }: CellRendererProps) {
-  const [expanded, setExpanded] = useState(false);
-
   const handleContextMenu = (e: React.MouseEvent) => {
     onContextMenu?.(e, value, columnName);
   };
 
   if (value === null || value === undefined) {
     return (
-      <span
-        className="rounded bg-hover px-1 py-0.5 ui-font ui-text-xs text-text-lighter"
-        onContextMenu={handleContextMenu}
-      >
+      <Badge variant="muted" onContextMenu={handleContextMenu}>
         NULL
-      </span>
+      </Badge>
     );
   }
 
   // JSON detection
   if (typeof value === "string" && isJsonString(value)) {
     return (
-      <span onContextMenu={handleContextMenu}>
-        <Button
-          onClick={() => setExpanded(!expanded)}
-          variant="ghost"
-          compact
-          className="block h-auto max-w-[280px] truncate p-0 text-left ui-font font-normal text-accent"
-          tooltip="Click to expand JSON"
-        >
-          {expanded ? value : truncateText(value, 50)}
-        </Button>
-        {expanded && (
-          <pre className="mt-1 max-h-40 overflow-auto rounded bg-secondary-bg p-2 ui-font ui-text-sm text-text">
-            {formatJson(value)}
-          </pre>
-        )}
-      </span>
+      <ExpandedCellValue
+        label={truncateText(value, 50)}
+        value={formatJson(value)}
+        ariaLabel={`View JSON value in ${columnName}`}
+        onContextMenu={handleContextMenu}
+      />
     );
   }
 
@@ -83,13 +69,14 @@ export default function CellRenderer({
     return (
       <Button
         onClick={() => onFkClick(columnName, value)}
-        variant="ghost"
-        compact
-        className="block h-auto truncate p-0 text-left font-normal text-accent underline decoration-accent/40"
+        variant="text"
+        align="start"
+        tone="primary"
+        truncate
         tooltip={`FK: ${foreignKey.to_table}.${foreignKey.to_column}`}
         onContextMenu={handleContextMenu}
       >
-        {String(value)}
+        <span>{String(value)}</span>
       </Button>
     );
   }
@@ -97,7 +84,7 @@ export default function CellRenderer({
   // Object/array
   if (typeof value === "object") {
     return (
-      <span className="block truncate text-accent" onContextMenu={handleContextMenu}>
+      <span className="block truncate text-primary" onContextMenu={handleContextMenu}>
         {JSON.stringify(value)}
       </span>
     );
@@ -107,32 +94,65 @@ export default function CellRenderer({
   const text = String(value);
   if (text.length > 100) {
     return (
-      <span onContextMenu={handleContextMenu}>
-        <Button
-          onClick={() => setExpanded(!expanded)}
-          variant="ghost"
-          compact
-          className={cn(
-            "block h-auto max-w-[280px] p-0 text-left font-normal",
-            expanded ? "whitespace-pre-wrap" : "truncate",
-            isPrimaryKey && "text-text",
-          )}
-          tooltip="Click to expand"
-        >
-          {expanded ? text : truncateText(text, 100)}
-        </Button>
-      </span>
+      <ExpandedCellValue
+        label={truncateText(text, 100)}
+        value={text}
+        ariaLabel={`View full value in ${columnName}`}
+        onContextMenu={handleContextMenu}
+        primary={isPrimaryKey}
+      />
     );
   }
 
   // Default
   return (
     <span
-      className={cn("block truncate font-normal", isPrimaryKey && "text-text")}
+      className={cn("block truncate font-normal", isPrimaryKey && "text-foreground")}
       onContextMenu={handleContextMenu}
     >
       {text}
     </span>
+  );
+}
+
+function ExpandedCellValue({
+  label,
+  value,
+  ariaLabel,
+  onContextMenu,
+  primary = false,
+}: {
+  label: string;
+  value: string;
+  ariaLabel: string;
+  onContextMenu: (event: React.MouseEvent) => void;
+  primary?: boolean;
+}) {
+  return (
+    <Popover>
+      <span className="inline-flex min-w-0 max-w-70">
+        <PopoverTrigger
+          render={
+            <Button
+              type="button"
+              variant="text"
+              align="start"
+              tone={primary ? "foreground" : "primary"}
+              truncate
+              aria-label={ariaLabel}
+              onContextMenu={onContextMenu}
+            />
+          }
+        >
+          <span>{label}</span>
+        </PopoverTrigger>
+      </span>
+      <PopoverContent align="start" size="panel" className="max-h-80">
+        <pre className="overflow-auto whitespace-pre-wrap wrap-break-word font-mono ui-text-sm text-foreground">
+          {value}
+        </pre>
+      </PopoverContent>
+    </Popover>
   );
 }
 

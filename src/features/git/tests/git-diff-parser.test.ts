@@ -1,14 +1,26 @@
 import { describe, expect, test } from "vite-plus/test";
 import type { MultiFileDiff } from "../types/git-diff.types";
 import type { GitDiff } from "../types/git.types";
-import { isDiffFile, parseRawDiffContent } from "../utils/git-diff-parser";
-import { getDiffLineVisualState, getSkippedUnchangedLineCount } from "../utils/git-diff-helpers";
+import { isDiffFile, parseGitPatchLines, parseRawDiffContent } from "../utils/git-diff-parser";
+import { getDiffLineVisualState } from "@/features/git/utils/diff-viewer-visuals";
+import {
+  getImageMimeType,
+  getImgSrc,
+  getSkippedUnchangedLineCount,
+} from "../utils/git-diff-helpers";
 
 function isMultiFileDiff(value: GitDiff | MultiFileDiff): value is MultiFileDiff {
   return "files" in value;
 }
 
 describe("git diff parser", () => {
+  test("uses an SVG data URL for SVG image diffs", () => {
+    expect(getImageMimeType("src/assets/icon.SVG")).toBe("image/svg+xml");
+    expect(getImgSrc("PHN2Zz48L3N2Zz4=", "src/assets/icon.svg")).toBe(
+      "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+    );
+  });
+
   test("recognizes .patch files as diff files", () => {
     expect(isDiffFile("/tmp/fix.patch")).toBe(true);
   });
@@ -68,6 +80,27 @@ describe("git diff parser", () => {
     expect(parsedLines[parsedLines.length - 1]?.content).toBe("--- literal content");
   });
 
+  test("parses provider patch lines with real old and new line numbers", () => {
+    const result = parseGitPatchLines(
+      ["@@ -12,2 +20,3 @@ function run()", " keep();", "-old();", "+new();", "+next();"],
+      "src/app.ts",
+    );
+
+    expect(result.file_path).toBe("src/app.ts");
+    expect(result.lines).toEqual([
+      {
+        line_type: "header",
+        content: "@@ -12,2 +20,3 @@ function run()",
+        old_line_number: undefined,
+        new_line_number: undefined,
+      },
+      { line_type: "context", content: "keep();", old_line_number: 12, new_line_number: 20 },
+      { line_type: "removed", content: "old();", old_line_number: 13, new_line_number: undefined },
+      { line_type: "added", content: "new();", old_line_number: undefined, new_line_number: 21 },
+      { line_type: "added", content: "next();", old_line_number: undefined, new_line_number: 22 },
+    ]);
+  });
+
   test("parses multi-file git patch files as multi-file diffs", () => {
     const result = parseRawDiffContent(
       [
@@ -107,23 +140,23 @@ describe("git diff parser", () => {
     expect(getDiffLineVisualState("added")).toMatchObject({
       lineBackground: "bg-git-added/14",
       gutterBackground: "bg-git-added/18",
-      railClassName: "shadow-[inset_2px_0_0_var(--color-git-added)]",
+      railClassName: "shadow-[inset_2px_0_0_var(--git-added)]",
       gutterTextColor: "text-git-added",
-      contentColor: "text-text",
+      contentColor: "text-foreground",
     });
     expect(getDiffLineVisualState("removed")).toMatchObject({
       lineBackground: "bg-git-deleted/14",
       gutterBackground: "bg-git-deleted/18",
-      railClassName: "shadow-[inset_2px_0_0_var(--color-git-deleted)]",
+      railClassName: "shadow-[inset_2px_0_0_var(--git-deleted)]",
       gutterTextColor: "text-git-deleted",
-      contentColor: "text-text",
+      contentColor: "text-foreground",
     });
     expect(getDiffLineVisualState("header")).toMatchObject({
       lineBackground: "",
-      gutterBackground: "bg-primary-bg",
+      gutterBackground: "bg-background",
       railClassName: "",
-      gutterTextColor: "text-text-lighter",
-      contentColor: "text-text",
+      gutterTextColor: "text-subtle-foreground",
+      contentColor: "text-foreground",
     });
   });
 

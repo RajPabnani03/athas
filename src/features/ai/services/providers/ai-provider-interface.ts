@@ -24,18 +24,20 @@ export interface StreamRequest {
 export interface ProviderModel {
   id: string;
   name: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
   maxTokens?: number;
 }
 
 export abstract class AIProvider {
   constructor(protected config: ProviderConfig) {}
 
-  abstract buildHeaders(apiKey?: string): ProviderHeaders;
-  abstract buildPayload(request: StreamRequest): any;
+  abstract buildHeaders(apiKey?: string): ProviderHeaders | Promise<ProviderHeaders>;
+  abstract buildPayload(request: StreamRequest): any | Promise<any>;
   abstract validateApiKey(apiKey: string): Promise<boolean>;
 
   // Optional: Allows providers to customize the URL (e.g., add API key as query param)
-  buildUrl?(request: StreamRequest): string;
+  buildUrl?(request: StreamRequest): string | Promise<string>;
 
   // Optional: Allows providers to fetch available models dynamically
   async getModels?(apiKey?: string): Promise<ProviderModel[]> {

@@ -14,22 +14,25 @@ describe("terminal slots store", () => {
     const el = slotElement("slot-a");
     const onTerminalExit = vi.fn();
 
-    useTerminalSlotsStore.getState().register("session-a", {
+    useTerminalSlotsStore.getState().actions.register("session-a", {
       el,
       isActive: false,
       isVisible: true,
+      shell: "cmd",
       onTerminalExit,
     });
 
-    useTerminalSlotsStore.getState().update("session-a", {
+    useTerminalSlotsStore.getState().actions.update("session-a", {
       isActive: true,
       isVisible: false,
+      shell: "bash",
     });
 
     expect(useTerminalSlotsStore.getState().slots.get("session-a")).toMatchObject({
       el,
       isActive: true,
       isVisible: false,
+      shell: "bash",
       onTerminalExit,
     });
   });
@@ -38,18 +41,18 @@ describe("terminal slots store", () => {
     const oldEl = slotElement("old-slot");
     const newEl = slotElement("new-slot");
 
-    useTerminalSlotsStore.getState().register("session-a", {
+    useTerminalSlotsStore.getState().actions.register("session-a", {
       el: oldEl,
       isActive: false,
       isVisible: true,
     });
-    useTerminalSlotsStore.getState().register("session-a", {
+    useTerminalSlotsStore.getState().actions.register("session-a", {
       el: newEl,
       isActive: true,
       isVisible: true,
     });
 
-    useTerminalSlotsStore.getState().unregister("session-a", oldEl);
+    useTerminalSlotsStore.getState().actions.unregister("session-a", oldEl);
 
     expect(useTerminalSlotsStore.getState().slots.get("session-a")?.el).toBe(newEl);
   });
@@ -57,13 +60,13 @@ describe("terminal slots store", () => {
   it("unregisters the active slot when the slot element matches", () => {
     const el = slotElement("slot-a");
 
-    useTerminalSlotsStore.getState().register("session-a", {
+    useTerminalSlotsStore.getState().actions.register("session-a", {
       el,
       isActive: false,
       isVisible: true,
     });
 
-    useTerminalSlotsStore.getState().unregister("session-a", el);
+    useTerminalSlotsStore.getState().actions.unregister("session-a", el);
 
     expect(useTerminalSlotsStore.getState().slots.has("session-a")).toBe(false);
   });

@@ -6,9 +6,11 @@ import {
   resetEditorGroupSizes,
   splitActiveEditorGroup,
   toggleActiveEditorGroupLock,
+  toggleActivePaneFullscreen,
 } from "@/features/panes/utils/pane-command-actions";
 import { useUIState } from "@/features/window/stores/ui-state.store";
 import {
+  restartDebugSession,
   startGeneratedDebugSession,
   stopDebugSession,
   toggleActiveBreakpoint,
@@ -17,12 +19,12 @@ import {
 import {
   closeActiveTab,
   closeAllTabs,
+  closeCurrentWindow,
   closeOtherTabs,
   closeSavedTabs,
   closeTabsToLeft,
   closeTabsToRight,
   createNewFile,
-  openLocalHistoryForActiveFile,
   openProjectPicker,
   openQuickOpen,
   reopenClosedTab,
@@ -32,6 +34,7 @@ import {
   saveAllFiles,
   showNewTab,
 } from "./file-command-actions";
+import { openLocalHistoryForActiveFile } from "@/features/local-history/utils/open-local-history";
 import {
   copyActiveEditorLineDown,
   copyActiveEditorLineUp,
@@ -53,6 +56,7 @@ import {
   pasteIntoActiveEditor,
   redoActiveEditor,
   removeActiveEditorBrackets,
+  removeActiveEditorSecondaryCursors,
   runQuickFixForActiveEditor,
   selectAllActiveEditor,
   selectAllEditorOccurrences,
@@ -78,29 +82,36 @@ import {
   goToTypeDefinition,
   openOutlinePicker,
   openOutlineSidebar,
-  promptGoToLine,
+  showCallHierarchy,
+  showTypeHierarchy,
 } from "./navigation-command-actions";
-import { restartAllLanguageServers, stopAllLanguageServers } from "./lsp-command-actions";
+import {
+  organizeJavaImports,
+  refreshJavaProject,
+  restartAllLanguageServers,
+  stopAllLanguageServers,
+} from "./lsp-command-actions";
 import {
   openCommandPalette,
   openDiagnosticsBuffer,
   openGlobalSearchBuffer,
   openKeyboardShortcuts,
+  openNewAgentSession,
   resetZoom,
   showFind,
   showFindReplace,
   showNotifications,
   showThemeSelector,
   showWhatsNew,
-  toggleAgentLauncher,
-  toggleAIChat,
+  toggleActivitySidebar,
+  toggleViewsSidebar,
   toggleFilesSidebar,
+  toggleDockerSidebar,
   toggleGitHubSidebar,
   toggleLineNumbers,
   toggleMinimap,
   toggleRenderWhitespace,
   toggleSidebar,
-  toggleSidebarPosition,
   toggleSourceControlSidebar,
   toggleTerminalPane,
   toggleWordWrap,
@@ -108,6 +119,7 @@ import {
   zoomOut,
 } from "./view-command-actions";
 import {
+  createNewWindow,
   maximizeWindow,
   minimizeWindow,
   minimizeWindowAlt,
@@ -128,6 +140,13 @@ const fileCommands: Command[] = [
     category: "File",
     keybinding: "cmd+n",
     execute: showNewTab,
+  },
+  {
+    id: "workbench.newWindow",
+    title: "New Window",
+    category: "File",
+    keybinding: "cmd+shift+n",
+    execute: createNewWindow,
   },
   {
     id: "file.save",
@@ -162,6 +181,13 @@ const fileCommands: Command[] = [
     category: "File",
     keybinding: "cmd+w",
     execute: closeActiveTab,
+  },
+  {
+    id: "workbench.closeWindow",
+    title: "Close Window",
+    category: "Workbench",
+    keybinding: "cmd+shift+w",
+    execute: closeCurrentWindow,
   },
   {
     id: "file.closeAll",
@@ -248,17 +274,118 @@ const terminalCommands: Command[] = [
     },
   },
   {
+    id: "terminal.find",
+    title: "Find in Terminal",
+    category: "Terminal",
+    keybinding: "cmd+f",
+    execute: () => {
+      window.dispatchEvent(new CustomEvent("terminal-open-search"));
+    },
+  },
+  {
     id: "terminal.split",
-    title: "Split Terminal",
+    title: "Split Terminal Right",
     category: "Terminal",
     keybinding: "cmd+d",
     execute: () => {
-      window.dispatchEvent(new CustomEvent("terminal-split"));
+      window.dispatchEvent(new CustomEvent("terminal-split", { detail: "right" }));
+    },
+  },
+  {
+    id: "terminal.splitDown",
+    title: "Split Terminal Down",
+    category: "Terminal",
+    keybinding: "cmd+shift+d",
+    execute: () => {
+      window.dispatchEvent(new CustomEvent("terminal-split", { detail: "down" }));
+    },
+  },
+  {
+    id: "terminal.previousCommand",
+    title: "Scroll to Previous Command",
+    category: "Terminal",
+    keybinding: "cmd+up",
+    execute: () => {
+      window.dispatchEvent(new CustomEvent("terminal-navigate-command", { detail: "previous" }));
+    },
+  },
+  {
+    id: "terminal.nextCommand",
+    title: "Scroll to Next Command",
+    category: "Terminal",
+    keybinding: "cmd+down",
+    execute: () => {
+      window.dispatchEvent(new CustomEvent("terminal-navigate-command", { detail: "next" }));
+    },
+  },
+  {
+    id: "terminal.unsplit",
+    title: "Unsplit Terminal",
+    category: "Terminal",
+    execute: () => {
+      window.dispatchEvent(new CustomEvent("terminal-unsplit"));
+    },
+  },
+  {
+    id: "terminal.focusNextPane",
+    title: "Focus Next Terminal Pane",
+    category: "Terminal",
+    keybinding: "cmd+alt+right",
+    execute: () => {
+      window.dispatchEvent(new CustomEvent("terminal-focus-pane", { detail: "next" }));
+    },
+  },
+  {
+    id: "terminal.focusPreviousPane",
+    title: "Focus Previous Terminal Pane",
+    category: "Terminal",
+    keybinding: "cmd+alt+left",
+    execute: () => {
+      window.dispatchEvent(new CustomEvent("terminal-focus-pane", { detail: "previous" }));
+    },
+  },
+  {
+    id: "terminal.clear",
+    title: "Clear Terminal",
+    category: "Terminal",
+    keybinding: "cmd+k",
+    execute: () => {
+      window.dispatchEvent(new CustomEvent("terminal-clear"));
+    },
+  },
+  {
+    id: "terminal.selectAll",
+    title: "Select All in Terminal",
+    category: "Terminal",
+    keybinding: "cmd+shift+a",
+    execute: () => {
+      window.dispatchEvent(new CustomEvent("terminal-select-all"));
+    },
+  },
+  {
+    id: "terminal.copyLastCommandOutput",
+    title: "Copy Last Command Output",
+    category: "Terminal",
+    keybinding: "cmd+shift+c",
+    execute: () => {
+      window.dispatchEvent(new CustomEvent("terminal-copy-last-command-output"));
     },
   },
 ];
 
 const lspCommands: Command[] = [
+  {
+    id: "java.organizeImports",
+    title: "Java: Organize Imports",
+    category: "Java",
+    execute: organizeJavaImports,
+  },
+  {
+    id: "java.refreshProject",
+    title: "Java: Refresh Project",
+    category: "Java",
+    execute: refreshJavaProject,
+  },
   {
     id: "lsp.restartAllServers",
     title: "Language Server: Restart All Servers",
@@ -439,6 +566,12 @@ const editCommands: Command[] = [
     execute: insertActiveEditorCursorsAtLineEnds,
   },
   {
+    id: "editor.removeSecondaryCursors",
+    title: "Remove Secondary Cursors",
+    category: "Edit",
+    execute: removeActiveEditorSecondaryCursors,
+  },
+  {
     id: "editor.formatDocument",
     title: "Format Document",
     category: "Edit",
@@ -490,7 +623,7 @@ const editCommands: Command[] = [
   },
   {
     id: "editor.inlineEdit",
-    title: "AI Inline Edit",
+    title: "Agent Inline Edit",
     category: "Edit",
     keybinding: "cmd+i",
     execute: showInlineEditToolbar,
@@ -499,10 +632,17 @@ const editCommands: Command[] = [
 
 const viewCommands: Command[] = [
   {
-    id: "workbench.toggleSidebar",
-    title: "Toggle Sidebar",
+    id: "workbench.toggleActivitySidebar",
+    title: "Toggle Activity Sidebar",
     category: "View",
     keybinding: "cmd+b",
+    execute: toggleActivitySidebar,
+  },
+  {
+    id: "workbench.toggleSidebar",
+    title: "Toggle Secondary Sidebar",
+    category: "View",
+    keybinding: "cmd+e",
     execute: toggleSidebar,
   },
   {
@@ -540,11 +680,25 @@ const viewCommands: Command[] = [
     execute: showNotifications,
   },
   {
+    id: "workbench.hostedAgent",
+    title: "New Athas Agent",
+    category: "Agent",
+    execute: async () => {
+      const { useSettingsStore } = await import("@/features/settings/stores/settings.store");
+      const { openNewAgentChat } = await import("@/features/ai/lib/open-new-agent-chat");
+      const { useAIChatStore } = await import("@/features/ai/stores/ai-chat.store");
+      await useSettingsStore.getState().actions.updateSetting("aiProviderId", "athas");
+      await useSettingsStore.getState().actions.updateSetting("aiModelId", "qwen/qwen3-coder");
+      await useAIChatStore.getState().actions.checkApiKey("athas");
+      openNewAgentChat("custom");
+    },
+  },
+  {
     id: "workbench.agentLauncher",
     title: "New Agent",
-    category: "AI",
+    category: "Agent",
     keybinding: "cmd+shift+space",
-    execute: toggleAgentLauncher,
+    execute: openNewAgentSession,
   },
   {
     id: "workbench.showFind",
@@ -595,6 +749,18 @@ const viewCommands: Command[] = [
     execute: toggleGitHubSidebar,
   },
   {
+    id: "workbench.showViews",
+    title: "Show Views",
+    category: "View",
+    execute: toggleViewsSidebar,
+  },
+  {
+    id: "workbench.showDocker",
+    title: "Show Docker",
+    category: "View",
+    execute: toggleDockerSidebar,
+  },
+  {
     id: "workbench.showDebugger",
     title: "Show Run and Debug",
     category: "View",
@@ -616,18 +782,17 @@ const viewCommands: Command[] = [
     execute: stopDebugSession,
   },
   {
+    id: "debug.restart",
+    title: "Restart Debugging",
+    category: "Debug",
+    execute: restartDebugSession,
+  },
+  {
     id: "debug.toggleBreakpoint",
     title: "Toggle Breakpoint",
     category: "Debug",
     keybinding: "F9",
     execute: toggleActiveBreakpoint,
-  },
-  {
-    id: "workbench.toggleSidebarPosition",
-    title: "Toggle Sidebar Position",
-    category: "View",
-    keybinding: "cmd+shift+b",
-    execute: toggleSidebarPosition,
   },
   {
     id: "workbench.showThemeSelector",
@@ -641,13 +806,6 @@ const viewCommands: Command[] = [
     title: "What's New",
     category: "Help",
     execute: showWhatsNew,
-  },
-  {
-    id: "workbench.toggleAIChat",
-    title: "Toggle AI Chat",
-    category: "View",
-    keybinding: "cmd+r",
-    execute: toggleAIChat,
   },
   {
     id: "workbench.toggleMinimap",
@@ -724,13 +882,6 @@ const switchPrevTab = () => {
 };
 
 const navigationCommands: Command[] = [
-  {
-    id: "editor.goToLine",
-    title: "Go to Line",
-    category: "Navigation",
-    keybinding: "cmd+g",
-    execute: promptGoToLine,
-  },
   {
     id: "editor.showOutline",
     title: "Go to Symbol in Editor",
@@ -829,6 +980,18 @@ const navigationCommands: Command[] = [
     execute: goToReferences,
   },
   {
+    id: "editor.showCallHierarchy",
+    title: "Show Call Hierarchy",
+    category: "Navigation",
+    execute: showCallHierarchy,
+  },
+  {
+    id: "editor.showTypeHierarchy",
+    title: "Show Type Hierarchy",
+    category: "Navigation",
+    execute: showTypeHierarchy,
+  },
+  {
     id: "editor.goToBracket",
     title: "Go to Bracket",
     category: "Navigation",
@@ -886,6 +1049,15 @@ const navigationCommands: Command[] = [
 ];
 
 const paneCommands: Command[] = [
+  {
+    id: "workbench.toggleActivePaneFullscreen",
+    title: "Toggle Active Pane Full Screen",
+    category: "View",
+    keybinding: "cmd+k z",
+    execute: () => {
+      toggleActivePaneFullscreen();
+    },
+  },
   {
     id: "workbench.splitEditorRight",
     title: "Split Editor Right",
@@ -958,14 +1130,31 @@ const databaseCommands: Command[] = [
     title: "Show Databases",
     category: "Database",
     execute: () => {
-      const state = useUIState.getState();
-      state.setActiveRightSidebarView("databases");
-      state.setIsRightSidebarVisible(true);
+      useUIState.getState().openCommandPaletteView("databases");
     },
   },
 ];
 
 const windowCommands: Command[] = [
+  {
+    id: "workbench.openBrowserBilling",
+    title: "Manage Athas Cloud Usage",
+    category: "Window",
+    execute: async () => {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      const { getApiBase } = await import("@/utils/api-base");
+      await openUrl(new URL("/dashboard/settings/billing", getApiBase()).toString());
+    },
+  },
+  {
+    id: "workbench.openSettings",
+    title: "Open Settings",
+    category: "Window",
+    keybinding: "cmd+,",
+    execute: () => {
+      useUIState.getState().setIsSettingsDialogVisible(true);
+    },
+  },
   {
     id: "window.toggleFullscreen",
     title: "Toggle Fullscreen",

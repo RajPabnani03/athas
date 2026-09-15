@@ -3,6 +3,7 @@ import {
   applyTextEditsToContent,
   collectWorkspaceTextEdits,
   filePathFromUri,
+  fileUriFromPath,
   isWorkspaceEdit,
   offsetFromPosition,
 } from "../lsp/workspace-edit";
@@ -10,6 +11,17 @@ import {
 describe("workspace edit utilities", () => {
   it("decodes file URIs into filesystem paths", () => {
     expect(filePathFromUri("file:///tmp/hello%20world.ts")).toBe("/tmp/hello world.ts");
+    expect(filePathFromUri("file:///C:/work/hello%20world.ts")).toBe("C:/work/hello world.ts");
+    expect(filePathFromUri("file://server/share/hello%20world.ts")).toBe(
+      "//server/share/hello world.ts",
+    );
+  });
+
+  it("encodes filesystem paths as file URIs", () => {
+    expect(fileUriFromPath("/tmp/hello world/#Main.java")).toBe(
+      "file:///tmp/hello%20world/%23Main.java",
+    );
+    expect(fileUriFromPath("C:\\work\\Main.java")).toBe("file:///C:/work/Main.java");
   });
 
   it("converts LSP positions into string offsets", () => {
@@ -95,5 +107,18 @@ describe("workspace edit utilities", () => {
 
     expect(isWorkspaceEdit(edit)).toBe(true);
     expect(collectWorkspaceTextEdits(edit).get("/tmp/a.ts")).toHaveLength(2);
+  });
+
+  it("rejects resource operations that the editor cannot apply", () => {
+    expect(
+      isWorkspaceEdit({
+        documentChanges: [
+          {
+            kind: "create",
+            uri: "file:///tmp/New.java",
+          },
+        ],
+      }),
+    ).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import type { Settings } from "@/features/settings/types/settings.types";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { SETTINGS_SCHEMA_VERSION } from "@/features/settings/lib/settings-migrations";
 import {
   useSettingsSyncStore,
   type SettingsSyncSource,
@@ -12,15 +13,12 @@ import {
 } from "@/features/window/services/auth-api";
 
 const SETTINGS_SYNC_META_KEY = "athas.settingsSync.meta";
-const SETTINGS_SYNC_SCHEMA_VERSION = 1;
 const SETTINGS_SYNC_PUSH_DEBOUNCE_MS = 1500;
 
 type SyncableSettingsKey =
   | "autoSave"
-  | "sidebarPosition"
   | "quickOpenPreview"
   | "fontFamily"
-  | "editorEngine"
   | "fontSize"
   | "editorLineHeight"
   | "tabSize"
@@ -30,16 +28,35 @@ type SyncableSettingsKey =
   | "renderIndentGuides"
   | "highlightOccurrences"
   | "showMinimap"
+  | "showOutline"
+  | "editorFontLigatures"
+  | "editorItalicComments"
+  | "editorStickyScroll"
+  | "editorBracketPairColorization"
+  | "editorSmoothScrolling"
+  | "editorScrollBeyondLastLine"
+  | "editorCursorStyle"
+  | "editorCursorBlinking"
   | "terminalFontFamily"
   | "terminalFontSize"
   | "terminalLineHeight"
   | "terminalLetterSpacing"
   | "terminalScrollback"
+  | "terminalMinimumContrastRatio"
+  | "terminalShellIntegration"
+  | "terminalCommandNotifications"
   | "terminalCursorStyle"
   | "terminalCursorBlink"
   | "terminalCursorWidth"
+  | "terminalCursorInactiveStyle"
+  | "terminalAltClickMovesCursor"
+  | "terminalMacOptionIsMeta"
+  | "terminalRightClickSelectsWord"
   | "uiFontFamily"
   | "uiFontSize"
+  | "reduceMotion"
+  | "showTabIcons"
+  | "tabCloseButtonVisibility"
   | "theme"
   | "iconTheme"
   | "syncSystemTheme"
@@ -47,19 +64,14 @@ type SyncableSettingsKey =
   | "autoThemeDark"
   | "compactMenuBar"
   | "windowTransparency"
-  | "sidebarTabsPosition"
-  | "titleBarProjectMode"
-  | "headerTrailingItemsOrder"
   | "sidebarActivityItemsOrder"
-  | "footerLeadingItemsOrder"
-  | "footerTrailingItemsOrder"
+  | "hiddenSidebarActivityItems"
+  | "pinnedSidebarExtensionItems"
   | "openFoldersInNewWindow"
   | "aiProviderId"
   | "aiModelId"
   | "aiCustomBaseUrl"
   | "aiCustomModelId"
-  | "aiChatWidth"
-  | "isAIChatVisible"
   | "aiCompletion"
   | "aiAutocompleteProvider"
   | "aiAutocompleteModelId"
@@ -67,11 +79,23 @@ type SyncableSettingsKey =
   | "aiAutocompleteCustomModelId"
   | "aiDefaultSessionMode"
   | "aiSkills"
+  | "v0DesignSystems"
+  | "activeV0DesignSystemId"
   | "ollamaBaseUrl"
+  | "activityRailExpanded"
+  | "activityRailWidth"
+  | "showActivityRailAgentHistory"
+  | "showActivityRailTerminals"
+  | "showActivityRailProjectIcons"
+  | "collapsedActivityRailSections"
   | "sidebarWidth"
+  | "rightSidebarWidth"
   | "showGitHubPullRequests"
   | "showGitHubIssues"
   | "showGitHubActions"
+  | "showGitHubReleases"
+  | "showGitHubDeployments"
+  | "githubActionNotifications"
   | "keybindingPreset"
   | "vimMode"
   | "vimRelativeLineNumbers"
@@ -82,11 +106,23 @@ type SyncableSettingsKey =
   | "lintOnSave"
   | "autoCompletion"
   | "parameterHints"
+  | "externalEditor"
   | "customEditorCommand"
   | "coreFeatures"
   | "extensionsActiveTab"
   | "maxOpenTabs"
   | "horizontalTabScroll"
+  | "fileTreeSortOrder"
+  | "fileTreeIndentSize"
+  | "compactFoldersInFileTree"
+  | "hideRootFolderInFileTree"
+  | "autoRevealActiveFileInFileTree"
+  | "showFileIconsInFileTree"
+  | "showFolderArrowsInFileTree"
+  | "showIndentGuidesInFileTree"
+  | "confirmBeforeFileDelete"
+  | "showHiddenFilesInFileTree"
+  | "showGitignoredFilesInFileTree"
   | "hiddenFilePatterns"
   | "hiddenDirectoryPatterns"
   | "gitChangesFolderView"
@@ -102,17 +138,15 @@ type SyncableSettingsKey =
   | "rememberLastGitPanelMode"
   | "gitLastPanelMode"
   | "gitSidebarTabOrder"
+  | "hiddenGitSidebarItems"
   | "githubSidebarSectionOrder"
   | "enableInlineGitBlame"
-  | "enableGitGutter"
   | "telemetry";
 
 const SYNCABLE_SETTINGS_KEYS: SyncableSettingsKey[] = [
   "autoSave",
-  "sidebarPosition",
   "quickOpenPreview",
   "fontFamily",
-  "editorEngine",
   "fontSize",
   "editorLineHeight",
   "tabSize",
@@ -122,16 +156,35 @@ const SYNCABLE_SETTINGS_KEYS: SyncableSettingsKey[] = [
   "renderIndentGuides",
   "highlightOccurrences",
   "showMinimap",
+  "showOutline",
+  "editorFontLigatures",
+  "editorItalicComments",
+  "editorStickyScroll",
+  "editorBracketPairColorization",
+  "editorSmoothScrolling",
+  "editorScrollBeyondLastLine",
+  "editorCursorStyle",
+  "editorCursorBlinking",
   "terminalFontFamily",
   "terminalFontSize",
   "terminalLineHeight",
   "terminalLetterSpacing",
   "terminalScrollback",
+  "terminalMinimumContrastRatio",
+  "terminalShellIntegration",
+  "terminalCommandNotifications",
   "terminalCursorStyle",
   "terminalCursorBlink",
   "terminalCursorWidth",
+  "terminalCursorInactiveStyle",
+  "terminalAltClickMovesCursor",
+  "terminalMacOptionIsMeta",
+  "terminalRightClickSelectsWord",
   "uiFontFamily",
   "uiFontSize",
+  "reduceMotion",
+  "showTabIcons",
+  "tabCloseButtonVisibility",
   "theme",
   "iconTheme",
   "syncSystemTheme",
@@ -139,19 +192,14 @@ const SYNCABLE_SETTINGS_KEYS: SyncableSettingsKey[] = [
   "autoThemeDark",
   "compactMenuBar",
   "windowTransparency",
-  "sidebarTabsPosition",
-  "titleBarProjectMode",
-  "headerTrailingItemsOrder",
   "sidebarActivityItemsOrder",
-  "footerLeadingItemsOrder",
-  "footerTrailingItemsOrder",
+  "hiddenSidebarActivityItems",
+  "pinnedSidebarExtensionItems",
   "openFoldersInNewWindow",
   "aiProviderId",
   "aiModelId",
   "aiCustomBaseUrl",
   "aiCustomModelId",
-  "aiChatWidth",
-  "isAIChatVisible",
   "aiCompletion",
   "aiAutocompleteProvider",
   "aiAutocompleteModelId",
@@ -159,11 +207,23 @@ const SYNCABLE_SETTINGS_KEYS: SyncableSettingsKey[] = [
   "aiAutocompleteCustomModelId",
   "aiDefaultSessionMode",
   "aiSkills",
+  "v0DesignSystems",
+  "activeV0DesignSystemId",
   "ollamaBaseUrl",
+  "activityRailExpanded",
+  "activityRailWidth",
+  "showActivityRailAgentHistory",
+  "showActivityRailTerminals",
+  "showActivityRailProjectIcons",
+  "collapsedActivityRailSections",
   "sidebarWidth",
+  "rightSidebarWidth",
   "showGitHubPullRequests",
   "showGitHubIssues",
   "showGitHubActions",
+  "showGitHubReleases",
+  "showGitHubDeployments",
+  "githubActionNotifications",
   "keybindingPreset",
   "vimMode",
   "vimRelativeLineNumbers",
@@ -174,11 +234,23 @@ const SYNCABLE_SETTINGS_KEYS: SyncableSettingsKey[] = [
   "lintOnSave",
   "autoCompletion",
   "parameterHints",
+  "externalEditor",
   "customEditorCommand",
   "coreFeatures",
   "extensionsActiveTab",
   "maxOpenTabs",
   "horizontalTabScroll",
+  "fileTreeSortOrder",
+  "fileTreeIndentSize",
+  "compactFoldersInFileTree",
+  "hideRootFolderInFileTree",
+  "autoRevealActiveFileInFileTree",
+  "showFileIconsInFileTree",
+  "showFolderArrowsInFileTree",
+  "showIndentGuidesInFileTree",
+  "confirmBeforeFileDelete",
+  "showHiddenFilesInFileTree",
+  "showGitignoredFilesInFileTree",
   "hiddenFilePatterns",
   "hiddenDirectoryPatterns",
   "gitChangesFolderView",
@@ -194,9 +266,9 @@ const SYNCABLE_SETTINGS_KEYS: SyncableSettingsKey[] = [
   "rememberLastGitPanelMode",
   "gitLastPanelMode",
   "gitSidebarTabOrder",
+  "hiddenGitSidebarItems",
   "githubSidebarSectionOrder",
   "enableInlineGitBlame",
-  "enableGitGutter",
   "telemetry",
 ];
 
@@ -264,7 +336,7 @@ function getTimestampMs(value: string | null): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export function buildSyncableSettingsSnapshot(settings: Settings): Record<string, unknown> {
+function buildSyncableSettingsSnapshot(settings: Settings): Record<string, unknown> {
   return Object.fromEntries(SYNCABLE_SETTINGS_KEYS.map((key) => [key, settings[key]]));
 }
 
@@ -280,9 +352,18 @@ function hydrateSettingsSyncStore() {
 async function applyRemoteSnapshot(snapshot: CloudSettingsSyncSnapshot) {
   isApplyingRemoteSnapshot = true;
   try {
+    const importPayload =
+      snapshot.schemaVersion > 0
+        ? {
+            format: "athas.settings",
+            version: snapshot.schemaVersion,
+            exportedAt: snapshot.updatedAt,
+            settings: snapshot.settings,
+          }
+        : snapshot.settings;
     const success = useSettingsStore
       .getState()
-      .updateSettingsFromJSON(JSON.stringify(snapshot.settings));
+      .actions.updateSettingsFromJSON(JSON.stringify(importPayload));
     if (!success) {
       throw new Error("Could not apply cloud settings.");
     }
@@ -322,7 +403,7 @@ async function pushLocalSnapshot(source: SettingsSyncSource = "local") {
 
   useSettingsSyncStore.getState().actions.startSync();
   const snapshot = await pushSettingsSyncSnapshot({
-    schemaVersion: SETTINGS_SYNC_SCHEMA_VERSION,
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
     settings: payload,
   });
   lastUploadedPayloadJson = payloadJson;

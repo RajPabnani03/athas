@@ -1,4 +1,4 @@
-export interface GitHubPullRequestLink {
+interface GitHubPullRequestLink {
   kind: "pullRequest";
   owner: string;
   repo: string;
@@ -6,7 +6,7 @@ export interface GitHubPullRequestLink {
   url: string;
 }
 
-export interface GitHubIssueLink {
+interface GitHubIssueLink {
   kind: "issue";
   owner: string;
   repo: string;
@@ -14,7 +14,7 @@ export interface GitHubIssueLink {
   url: string;
 }
 
-export interface GitHubActionRunLink {
+interface GitHubActionRunLink {
   kind: "actionRun";
   owner: string;
   repo: string;
@@ -22,7 +22,45 @@ export interface GitHubActionRunLink {
   url: string;
 }
 
-export type GitHubEntityLink = GitHubPullRequestLink | GitHubIssueLink | GitHubActionRunLink;
+interface GitHubCommitLink {
+  kind: "commit";
+  owner: string;
+  repo: string;
+  sha: string;
+  url: string;
+}
+
+export type GitHubEntityLink =
+  | GitHubPullRequestLink
+  | GitHubIssueLink
+  | GitHubActionRunLink
+  | GitHubCommitLink;
+
+export function isGitHubEntityLinkForRepository(
+  entityLink: GitHubEntityLink,
+  repositoryUrl?: string,
+): boolean {
+  if (!repositoryUrl) return false;
+
+  const repository = parseGitHubRepositoryUrl(repositoryUrl);
+  return (
+    repository?.owner.toLowerCase() === entityLink.owner.toLowerCase() &&
+    repository.repo.toLowerCase() === entityLink.repo.toLowerCase()
+  );
+}
+
+export function parseGitHubRepositoryUrl(value: string): { owner: string; repo: string } | null {
+  const normalized = value.trim();
+  const httpsMatch = normalized.match(
+    /^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i,
+  );
+  if (httpsMatch) return { owner: httpsMatch[1], repo: httpsMatch[2] };
+
+  const sshMatch = normalized.match(/^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/i);
+  if (sshMatch) return { owner: sshMatch[1], repo: sshMatch[2] };
+
+  return null;
+}
 
 export function parseGitHubEntityLink(value: string): GitHubEntityLink | null {
   try {
@@ -64,7 +102,27 @@ export function parseGitHubEntityLink(value: string): GitHubEntityLink | null {
       };
     }
 
+    if (section === "commit" && isCommitSha(id)) {
+      return {
+        kind: "commit",
+        owner,
+        repo,
+        sha: id,
+        url: url.toString(),
+      };
+    }
+
     return null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseGitHubCheckSuiteId(value: string): number | null {
+  try {
+    const url = new URL(value);
+    const match = url.pathname.match(/\/check-suites\/(\d+)(?:\/|$)/);
+    return match ? Number(match[1]) : null;
   } catch {
     return null;
   }
@@ -83,12 +141,98 @@ export function parseSelectedFilePathFromPRBufferPath(path: string): string | nu
   }
 }
 
-export function buildPRBufferPath(prNumber: number, selectedFilePath?: string | null): string {
+export function isPRFilesViewPath(path: string): boolean {
+  try {
+    const url = new URL(path);
+    return url.searchParams.has("file") || url.searchParams.get("view") === "files";
+  } catch {
+    return false;
+  }
+}
+
+export function buildPRBufferPath(
+  prNumber: number,
+  selectedFilePath?: string | null,
+  view: "activity" | "files" = selectedFilePath ? "files" : "activity",
+): string {
   const base = `pr://${prNumber}`;
-  if (!selectedFilePath) return base;
-  return `${base}?file=${encodeURIComponent(selectedFilePath)}`;
+  if (selectedFilePath) return `${base}?file=${encodeURIComponent(selectedFilePath)}`;
+  return view === "files" ? `${base}?view=files` : base;
 }
 
 function isNumericId(value: string | undefined): value is string {
   return typeof value === "string" && /^\d+$/.test(value);
+}
+
+function isCommitSha(value: string | undefined): value is string {
+  return typeof value === "string" && /^[0-9a-f]{7,64}$/i.test(value);
+}
+
+/**
+ * Reduces any github.com entity URL (pull, issue, run, commit, tree) to the
+ * repository URL it belongs to.
+ */
+export function getRepositoryUrlFromEntityUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (!isGitHubHost(url.hostname)) return null;
+    const [owner, repo] = url.pathname.split("/").filter(Boolean);
+    if (!owner || !repo) return null;
+    return `https://github.com/${owner}/${repo.replace(/\.git$/, "")}`;
+  } catch {
+    return null;
+  }
+}
+
+function joinRepositoryUrl(repositoryUrl: string, path: string): string {
+  return `${repositoryUrl.replace(/\/+$/, "")}/${path}`;
+}
+
+export function getGitHubUserUrl(login: string): string {
+  return `https://github.com/${encodeURIComponent(login)}`;
+}
+
+export function getGitHubBranchUrl(repositoryUrl: string, branch: string): string {
+  return joinRepositoryUrl(
+    repositoryUrl,
+    `tree/${branch.split("/").map(encodeURIComponent).join("/")}`,
+  );
+}
+
+export function getGitHubCommitUrl(repositoryUrl: string, sha: string): string {
+  return joinRepositoryUrl(repositoryUrl, `commit/${sha}`);
+}
+
+export function getGitHubLabelUrl(
+  repositoryUrl: string,
+  label: string,
+  kind: "issues" | "pulls" = "issues",
+): string {
+  return joinRepositoryUrl(
+    repositoryUrl,
+    `${kind}?q=${encodeURIComponent(`is:open label:"${label}"`)}`,
+  );
+}
+
+export function getGitHubMilestoneUrl(repositoryUrl: string, milestoneNumber: number): string {
+  return joinRepositoryUrl(repositoryUrl, `milestone/${milestoneNumber}`);
+}
+
+export function getGitHubWorkflowRunsUrl(repositoryUrl: string, workflowName: string): string {
+  return joinRepositoryUrl(
+    repositoryUrl,
+    `actions?query=${encodeURIComponent(`workflow:"${workflowName}"`)}`,
+  );
+}
+
+export function getGitHubCompareUrl(
+  repositoryUrl: string,
+  baseRef: string,
+  headRef: string,
+): string {
+  return joinRepositoryUrl(
+    repositoryUrl,
+    `compare/${encodeURIComponent(baseRef)}...${encodeURIComponent(headRef)}`,
+  );
 }

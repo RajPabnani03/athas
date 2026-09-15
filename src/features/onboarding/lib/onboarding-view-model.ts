@@ -4,24 +4,19 @@ export interface OnboardingViewModel {
   title: string;
   description: string;
   showSettings: boolean;
-  primaryAction: "open-folder" | "open-whats-new";
+  primaryAction: "open-folder" | "finish";
   primaryLabel: string;
-  secondaryLabel: string;
+  secondaryLabel?: string;
 }
 
 export function buildOnboardingViewModel(context: OnboardingContext): OnboardingViewModel {
-  if (context.mode === "updated") {
-    const versionCopy = context.previousVersion
-      ? `Updated from ${context.previousVersion} to ${context.currentVersion}.`
-      : `Athas ${context.currentVersion} is installed.`;
-
+  if (context.mode === "release-notes") {
     return {
-      title: "Athas was updated",
-      description: `${versionCopy} Review the release notes and continue with your existing setup.`,
+      title: `What's new in Athas ${context.currentVersion}`,
+      description: "The latest changes, improvements, and fixes.",
       showSettings: false,
-      primaryAction: "open-whats-new",
-      primaryLabel: "What's New",
-      secondaryLabel: "Done",
+      primaryAction: "finish",
+      primaryLabel: "Done",
     };
   }
 

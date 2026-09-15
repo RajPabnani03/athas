@@ -1,19 +1,13 @@
-import {
-  CaretDownIcon as ChevronDown,
-  CaretRightIcon as ChevronRight,
-  FileCodeIcon as FileCode,
-  ArrowsOutIcon as Maximize2,
-  ArrowsInIcon as Minimize2,
-  XIcon as X,
-} from "@phosphor-icons/react";
+import { ArrowsInIcon, ArrowsOutIcon, FileCodeIcon, XIcon } from "@/ui/icons";
 import { useCallback, useMemo, useState } from "react";
 import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
-import { LoadingIndicator } from "@/ui/loading";
-import {
-  PaneChip,
-  PaneIconButton,
-  paneHeaderClassName,
-} from "@/features/panes/components/pane-chrome";
+import { Empty, EmptyDescription } from "@/ui/empty";
+import { Spinner } from "@/ui/spinner";
+import { ScrollArea } from "@/ui/scroll-area";
+import { PaneContentHeader } from "@/features/panes/components/pane-content-chrome";
+import { Button } from "@/ui/button";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/ui/accordion";
+import { SidebarListItem } from "@/ui/sidebar";
 import { useReferencesStore } from "../stores/references.store";
 import type { Reference } from "../types/reference.types";
 
@@ -56,10 +50,6 @@ const ReferencesPane = ({ onFullScreen, isFullScreen = false }: ReferencesPanePr
       }));
   }, [references]);
 
-  const toggleGroup = useCallback((filePath: string) => {
-    setCollapsedGroups((prev) => ({ ...prev, [filePath]: !prev[filePath] }));
-  }, []);
-
   const handleReferenceClick = useCallback(
     (ref: Reference) => {
       void handleFileSelect?.(ref.filePath, false, ref.line + 1, ref.column + 1, undefined, false);
@@ -69,87 +59,89 @@ const ReferencesPane = ({ onFullScreen, isFullScreen = false }: ReferencesPanePr
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className={paneHeaderClassName("justify-between border-border/70 border-b")}>
-        <div className="flex items-center gap-1.5">
-          <span className="ui-font ui-text-sm font-medium text-text">References</span>
-          {query && <PaneChip>{query.symbol}</PaneChip>}
-          <PaneChip>{isLoading ? "..." : references.length}</PaneChip>
-        </div>
-        <div className="flex items-center gap-0.5">
-          {onFullScreen && (
-            <PaneIconButton
-              onClick={onFullScreen}
-              tooltip={isFullScreen ? "Exit fullscreen" : "Fullscreen"}
+      <PaneContentHeader
+        title="References"
+        detail={`${query ? `${query.symbol} · ` : ""}${isLoading ? "Finding…" : references.length}`}
+        actions={
+          <>
+            {onFullScreen && (
+              <Button
+                onClick={onFullScreen}
+                tooltip={isFullScreen ? "Exit fullscreen" : "Fullscreen"}
+                commandId="workbench.toggleActivePaneFullscreen"
+                variant="ghost"
+                iconOnly
+              >
+                {isFullScreen ? <ArrowsInIcon /> : <ArrowsOutIcon />}
+              </Button>
+            )}
+            <Button
+              onClick={() => useReferencesStore.getState().actions.clear()}
+              tooltip="Clear references"
+              variant="ghost"
+              iconOnly
             >
-              {isFullScreen ? <Minimize2 /> : <Maximize2 />}
-            </PaneIconButton>
-          )}
-          <PaneIconButton
-            onClick={() => useReferencesStore.getState().actions.clear()}
-            tooltip="Clear references"
-          >
-            <X />
-          </PaneIconButton>
-        </div>
-      </div>
+              <XIcon />
+            </Button>
+          </>
+        }
+      />
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
+      <ScrollArea fill="flex">
         {isLoading ? (
-          <div className="flex items-center gap-2 px-3 py-4 text-text-lighter">
-            <LoadingIndicator label="Finding references" showLabel compact />
-          </div>
+          <Empty variant="inline" className="px-3 py-4">
+            <EmptyDescription>
+              <Spinner label="Finding references" showLabel compact />
+            </EmptyDescription>
+          </Empty>
         ) : references.length === 0 ? (
-          <div className="px-3 py-4 text-text-lighter">
-            <span className="ui-font ui-text-sm">
+          <Empty variant="inline" className="px-3 py-4">
+            <EmptyDescription>
               {query ? "No references found" : "Use Shift+F12 to find references"}
-            </span>
-          </div>
+            </EmptyDescription>
+          </Empty>
         ) : (
-          grouped.map((group) => {
-            const isCollapsed = collapsedGroups[group.filePath];
-            return (
-              <div key={group.filePath}>
-                <button
-                  type="button"
-                  onClick={() => toggleGroup(group.filePath)}
-                  className="flex w-full items-center gap-1 px-2 py-1 text-left transition-colors hover:bg-hover/50"
+          <Accordion
+            multiple
+            value={grouped
+              .filter((group) => !collapsedGroups[group.filePath])
+              .map((group) => group.filePath)}
+            onValueChange={(expandedPaths) => {
+              setCollapsedGroups((previous) => ({
+                ...previous,
+                ...Object.fromEntries(
+                  grouped.map((group) => [group.filePath, !expandedPaths.includes(group.filePath)]),
+                ),
+              }));
+            }}
+          >
+            {grouped.map((group) => (
+              <AccordionItem key={group.filePath} value={group.filePath}>
+                <AccordionTrigger
+                  action={<span className="pr-2 tabular-nums">{group.items.length}</span>}
                 >
-                  {isCollapsed ? (
-                    <ChevronRight size={12} className="shrink-0 text-text-lighter" />
-                  ) : (
-                    <ChevronDown size={12} className="shrink-0 text-text-lighter" />
-                  )}
-                  <FileCode size={12} className="shrink-0 text-accent" />
-                  <span className="ui-font ui-text-sm truncate font-medium text-text">
-                    {group.fileName}
+                  <span className="flex min-w-0 items-center gap-1">
+                    <FileCodeIcon />
+                    <span className="truncate">{group.fileName}</span>
                   </span>
-                  <span className="ui-font ui-text-xs shrink-0 text-text-lighter">
-                    {group.items.length}
-                  </span>
-                </button>
-                {!isCollapsed &&
-                  group.items.map((ref, index) => (
-                    <button
-                      type="button"
+                </AccordionTrigger>
+                <AccordionContent className="pl-5">
+                  {group.items.map((ref, index) => (
+                    <SidebarListItem
                       key={`${ref.filePath}:${ref.line}:${ref.column}:${index}`}
                       onClick={() => void handleReferenceClick(ref)}
-                      className="group flex w-full items-baseline gap-2 py-0.5 pr-2 pl-7 text-left transition-colors hover:bg-hover/50"
+                      leading={<span className="tabular-nums">{ref.line + 1}</span>}
                     >
-                      <span className="ui-font ui-text-xs shrink-0 tabular-nums text-text-lighter">
-                        {ref.line + 1}
-                      </span>
-                      <span className="ui-font ui-text-sm truncate text-text-lighter group-hover:text-text">
-                        {ref.lineContent.trim()}
-                      </span>
-                    </button>
+                      {ref.lineContent.trim()}
+                    </SidebarListItem>
                   ))}
-              </div>
-            );
-          })
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
         )}
-      </div>
+      </ScrollArea>
     </div>
   );
 };

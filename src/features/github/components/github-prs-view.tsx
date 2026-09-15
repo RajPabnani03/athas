@@ -1,23 +1,24 @@
+import GitHubDeliveryList from "../delivery/components/github-delivery-list";
+import { RELEASE_FILTERS, DEPLOYMENT_FILTERS } from "../delivery/utils/github-delivery";
+import type { ReleaseFilter, DeploymentFilter } from "../delivery/types/github-delivery.types";
+import { TagIcon, RocketIcon } from "@/ui/icons";
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { GitHubAuthStatusMessage } from "./github-auth-status";
 import {
-  ArrowSquareOutIcon as ArrowSquareOut,
-  ChatCircleTextIcon as ChatCircleText,
-  CheckIcon as Check,
-  CopyIcon as Copy,
-  GitBranchIcon as GitBranch,
-  GitPullRequestIcon as GitPullRequest,
-  LightningIcon as Lightning,
-  MagnifyingGlassIcon as Search,
-  PlusIcon as Plus,
-} from "@phosphor-icons/react";
-import {
-  WarningCircleIcon as AlertCircle,
-  ArrowClockwiseIcon as RefreshCw,
-} from "@phosphor-icons/react";
+  ArrowClockwiseIcon,
+  BoltIcon,
+  ChatBubbleTextIcon,
+  CopyIcon,
+  FilterIcon,
+  GitBranchIcon,
+  GitPullRequestIcon,
+  WindowExpandIcon,
+  PlusIcon,
+} from "@/ui/icons";
+import { GithubMark } from "@/ui/brand-marks";
 import {
   memo,
-  type ReactNode,
   startTransition,
   useCallback,
   useDeferredValue,
@@ -31,34 +32,55 @@ import { getGitStatus } from "@/features/git/api/git-status-api";
 import { isNotGitRepositoryError, resolveRepositoryPath } from "@/features/git/api/git-repo-api";
 import GitProjectSelector from "@/features/git/components/git-project-selector";
 import { useRepositoryStore } from "@/features/git/stores/git-repository.store";
-import { writeSidebarResourceDragData } from "@/features/sidebar-drag/utils/sidebar-resource-drag";
+import {
+  type GitHubActivitySection,
+  useSidebarStore,
+} from "@/features/layout/stores/sidebar.store";
+import { writeSidebarResourceDragData } from "@/features/sidebar/utils/sidebar-resource-drag";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { useUIState } from "@/features/window/stores/ui-state.store";
-import { ContextMenu, useContextMenu, type ContextMenuItem } from "@/ui/context-menu";
-import type { MenuItem } from "@/ui/dropdown";
-import { LoadingIndicator } from "@/ui/loading";
+import { ContextMenuPopup, createContextMenuGroups } from "@/ui/context-menu";
 import {
-  SidebarEmptyActionState,
-  SidebarHeader,
-  SidebarHeaderIconButton,
-  SidebarListItem,
-  SidebarPanel,
-  SidebarSearchFilterRow,
-  SidebarSectionPager,
-  SidebarSectionSwitcher,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+  useDropdownMenu,
+  type MenuItem,
+} from "@/ui/dropdown";
+import { EmptyState } from "@/ui/empty";
+import { Spinner } from "@/ui/spinner";
+import {
+  SidebarIconButton,
+  SidebarSearchPopover,
+  SidebarScrollArea,
+  SidebarSection,
+  SidebarTabBar,
+  SidebarWorkspace,
 } from "@/ui/sidebar";
 import { writeClipboardText } from "@/utils/clipboard";
-import { cn } from "@/utils/cn";
 import { useGitHubStore } from "../stores/github.store";
-import type { IssueFilter, PRFilter, PullRequest, WorkflowRunFilter } from "../types/github.types";
+import { getTimeAgo, getSidebarTime } from "../utils/github-viewer-utils";
+import { getGitHubAvatarUrl } from "../utils/github-avatar-url";
+import { openGitHubContentInNewWindow } from "../utils/open-in-new-window";
+import { groupPullRequests } from "../utils/github-sidebar-groups";
+import type {
+  IssueFilter,
+  IssueListItem,
+  PRFilter,
+  PullRequest,
+  WorkflowRunFilter,
+} from "../types/github.types";
+import { useGitHubActionsStore } from "../stores/github-actions.store";
 import GitHubActionsView from "./github-actions-view";
-import { GitHubCreateCommand, type GitHubCreateKind } from "./github-create-command";
+import { GitHubAvatar } from "./github-avatar";
 import GitHubIssuesView from "./github-issues-view";
-import { GitHubSidebarState } from "./github-sidebar-state";
-import { githubActionListCache, githubIssueListCache } from "../utils/github-data-cache";
+import { GitHubSidebarRow, type GitHubSidebarPreviewBadge } from "./github-sidebar-row";
+import { GITHUB_ISSUE_LIST_TTL_MS, githubIssueListCache } from "../utils/github-data-cache";
 
 const filterLabels: Record<PRFilter, string> = {
-  all: "All PRs",
+  all: "Open PRs",
   "my-prs": "My PRs",
   "review-requests": "Review Requests",
 };
@@ -76,7 +98,7 @@ const actionFilterLabels: Record<WorkflowRunFilter, string> = {
   failed: "Failed",
 };
 
-type GitHubSidebarSection = "pull-requests" | "issues" | "actions";
+type GitHubSidebarSection = GitHubActivitySection;
 type GitHubPaletteAction =
   | { type: "show-section"; section: GitHubSidebarSection }
   | { type: "refresh" };
@@ -85,104 +107,163 @@ interface PRListItemProps {
   pr: PullRequest;
   isActive: boolean;
   onSelect: () => void;
+  onSelectChanges: () => void;
+  onOpenInNewWindow: () => void;
+  onPrefetch?: () => void;
   onContextMenu: (event: React.MouseEvent, pr: PullRequest) => void;
   repoPath?: string | null;
 }
 
-const PRListItem = memo(({ pr, isActive, onSelect, onContextMenu, repoPath }: PRListItemProps) => {
-  return (
-    <SidebarListItem
-      onClick={onSelect}
-      onContextMenu={(event) => onContextMenu(event, pr)}
-      draggable
-      onDragStart={(event) => {
-        writeSidebarResourceDragData(event.dataTransfer, {
-          type: "github-pr",
-          repoPath: repoPath ?? undefined,
-          number: pr.number,
+const PRListItem = memo(
+  ({
+    pr,
+    isActive,
+    onSelect,
+    onSelectChanges,
+    onOpenInNewWindow,
+    onPrefetch,
+    onContextMenu,
+    repoPath,
+  }: PRListItemProps) => {
+    const updatedLabel = getTimeAgo(pr.updatedAt);
+    const branchLabel = pr.baseRef && pr.headRef ? `${pr.baseRef} <- ${pr.headRef}` : undefined;
+    const badges: GitHubSidebarPreviewBadge[] = [
+      { label: pr.isDraft ? "Draft" : pr.state, tone: pr.isDraft ? "muted" : "accent" },
+      ...(pr.reviewDecision
+        ? [
+            {
+              label: pr.reviewDecision.replace(/_/g, " ").toLowerCase(),
+              tone: pr.reviewDecision === "APPROVED" ? "success" : "warning",
+            } satisfies GitHubSidebarPreviewBadge,
+          ]
+        : []),
+    ];
+    const authorAvatar = (
+      <GitHubAvatar
+        login={pr.author.login}
+        avatarUrl={pr.author.avatarUrl}
+        size={48}
+        displaySize="md"
+      />
+    );
+
+    return (
+      <GitHubSidebarRow
+        title={pr.title}
+        description={`#${pr.number} · ${pr.author.login}`}
+        onClick={onSelect}
+        onOpenInNewWindow={onOpenInNewWindow}
+        onPrefetch={onPrefetch}
+        onContextMenu={(event) => onContextMenu(event, pr)}
+        draggable
+        onDragStart={(event) => {
+          writeSidebarResourceDragData(event.dataTransfer, {
+            type: "github-pr",
+            repoPath: repoPath ?? undefined,
+            number: pr.number,
+            title: pr.title,
+            authorAvatarUrl: getGitHubAvatarUrl(pr.author),
+            name: `PR #${pr.number}`,
+          });
+        }}
+        active={isActive}
+        leading={authorAvatar}
+        trailing={getSidebarTime(pr.updatedAt)}
+        preview={{
           title: pr.title,
-          authorAvatarUrl:
-            pr.author.avatarUrl ||
-            `https://github.com/${encodeURIComponent(pr.author.login || "github")}.png?size=32`,
-          name: `PR #${pr.number}`,
-        });
-      }}
-      className={cn(
-        "items-start rounded-md px-2 py-2 transition-[transform,background-color,opacity]",
-      )}
-      active={isActive}
-      leading={
-        <img
-          src={
-            pr.author.avatarUrl ||
-            `https://github.com/${encodeURIComponent(pr.author.login || "github")}.png?size=40`
-          }
-          alt={pr.author.login}
-          className="size-5 rounded-full bg-secondary-bg"
-          loading="lazy"
-        />
-      }
-    >
-      <div className="min-w-0 flex-1">
-        <div className="ui-text-sm truncate text-text leading-4">{pr.title}</div>
-        <div className="ui-text-sm mt-1 text-text-lighter">{`#${pr.number} by ${pr.author.login}`}</div>
-        <div className="mt-1">
-          <span className="ui-text-xs inline-flex min-w-0 max-w-full items-center rounded-md bg-secondary-bg/80 px-1.5 py-0.5 editor-font text-text-lighter">
-            <span className="min-w-0 truncate">{pr.baseRef}</span>
-            <span className="shrink-0 px-1">&larr;</span>
-            <span className="min-w-0 truncate">{pr.headRef}</span>
-          </span>
-        </div>
-      </div>
-    </SidebarListItem>
-  );
-});
+          subtitle: `#${pr.number} by ${pr.author.login}`,
+          icon: authorAvatar,
+          badges,
+          details: [
+            { label: "Updated", value: updatedLabel },
+            { label: "Created", value: getTimeAgo(pr.createdAt) },
+            { label: "Branches", value: branchLabel, mono: true },
+            {
+              label: "Changes",
+              value: `+${pr.additions} / -${pr.deletions}`,
+              mono: true,
+              onClick: onSelectChanges,
+              actionLabel: `Open changed files for pull request #${pr.number}`,
+            },
+          ],
+        }}
+      />
+    );
+  },
+);
 
 PRListItem.displayName = "PRListItem";
 
 const GitHubPRsView = memo(() => {
   const rootFolderPath = useFileSystemStore.use.rootFolderPath?.();
-  const { prs, isLoading, error, currentFilter, isAuthenticated } = useGitHubStore();
-  const { fetchPRs, setFilter, checkAuth, setActiveRepoPath, openPRInBrowser, checkoutPR } =
-    useGitHubStore().actions;
+  const prs = useGitHubStore.use.prs();
+  const isLoading = useGitHubStore.use.isLoading();
+  const error = useGitHubStore.use.error();
+  const currentFilter = useGitHubStore.use.currentFilter();
+  const isAuthenticated = useGitHubStore.use.isAuthenticated();
+  const {
+    fetchPRs,
+    setFilter,
+    checkAuth,
+    setActiveRepoPath,
+    openPRInBrowser,
+    checkoutPR,
+    prefetchPR,
+  } = useGitHubStore.use.actions();
   const activeRepoPath = useRepositoryStore.use.activeRepoPath();
   const { syncWorkspaceRepositories, setManualRepository } = useRepositoryStore.use.actions();
-  const buffers = useBufferStore.use.buffers();
-  const activeBufferId = useBufferStore.use.activeBufferId();
-  const { openPRBuffer, openGitHubIssueBuffer } = useBufferStore.use.actions();
-  const settings = useSettingsStore((state) => state.settings);
+  const { openPRBuffer, openGitHubFormBuffer } = useBufferStore.use.actions();
+  const showGitHubPullRequests = useSettingsStore((state) => state.settings.showGitHubPullRequests);
+  const showGitHubIssues = useSettingsStore((state) => state.settings.showGitHubIssues);
+  const showGitHubReleases = useSettingsStore((state) => state.settings.showGitHubReleases);
+  const showGitHubDeployments = useSettingsStore((state) => state.settings.showGitHubDeployments);
+  const showGitHubActions = useSettingsStore((state) => state.settings.showGitHubActions);
+  const githubSidebarSectionOrder = useSettingsStore(
+    (state) => state.settings.githubSidebarSectionOrder,
+  );
   const isGitHubPRsViewActive = useUIState((state) => state.isGitHubPRsViewActive);
   const effectiveRepoPath = activeRepoPath ?? rootFolderPath ?? null;
 
-  const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isSelectingRepo, setIsSelectingRepo] = useState(false);
   const [repoSelectionError, setRepoSelectionError] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<GitHubSidebarSection>("pull-requests");
+  const activeSection = useSidebarStore.use.githubSection();
+  const setActiveSection = useSidebarStore.use.actions().setGitHubSection;
   const [sectionRefreshNonce, setSectionRefreshNonce] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [issueFilter, setIssueFilter] = useState<IssueFilter>("open");
   const [actionFilter, setActionFilter] = useState<WorkflowRunFilter>("all");
-  const [createKind, setCreateKind] = useState<GitHubCreateKind | null>(null);
+  const [releaseFilter, setReleaseFilter] = useState<ReleaseFilter>("all");
+  const [deploymentFilter, setDeploymentFilter] = useState<DeploymentFilter>("all");
   const [currentBranch, setCurrentBranch] = useState("");
-  const prContextMenu = useContextMenu<PullRequest>();
-  const sectionContextMenu = useContextMenu<null>();
+  const prContextMenu = useDropdownMenu<PullRequest>();
+  const sectionContextMenu = useDropdownMenu<null>();
 
   const isRepoError = !!error && isNotGitRepositoryError(error);
-  const activePRNumber = useMemo(() => {
-    const activeBuffer = buffers.find((buffer) => buffer.id === activeBufferId);
+  const activePRNumber = useBufferStore((state) => {
+    const activeBuffer = state.activeBufferId
+      ? state.buffers.find((buffer) => buffer.id === state.activeBufferId)
+      : null;
     return activeBuffer?.type === "pullRequest" ? activeBuffer.prNumber : null;
-  }, [activeBufferId, buffers]);
+  });
   const deferredPrs = useDeferredValue(prs);
   const deferredSearchQuery = useDeferredValue(searchQuery);
-  const availableSections = useMemo(
-    () =>
-      [
-        settings.showGitHubPullRequests ? "pull-requests" : null,
-        settings.showGitHubIssues ? "issues" : null,
-        settings.showGitHubActions ? "actions" : null,
-      ].filter((section): section is GitHubSidebarSection => !!section),
-    [settings.showGitHubActions, settings.showGitHubIssues, settings.showGitHubPullRequests],
-  );
+  const availableSections = useMemo(() => {
+    const visibility: Record<GitHubSidebarSection, boolean> = {
+      "pull-requests": showGitHubPullRequests,
+      issues: showGitHubIssues,
+      actions: showGitHubActions,
+      releases: showGitHubReleases,
+      deployments: showGitHubDeployments,
+    };
+    return githubSidebarSectionOrder.filter((section) => visibility[section]);
+  }, [
+    githubSidebarSectionOrder,
+    showGitHubActions,
+    showGitHubIssues,
+    showGitHubPullRequests,
+    showGitHubReleases,
+    showGitHubDeployments,
+  ]);
 
   useEffect(() => {
     if (isGitHubPRsViewActive) {
@@ -251,6 +332,64 @@ const GitHubPRsView = memo(() => {
     };
   }, [effectiveRepoPath, fetchPRs, isAuthenticated, isGitHubPRsViewActive, currentFilter]);
 
+  useEffect(() => {
+    if (!isGitHubPRsViewActive || !effectiveRepoPath || !isAuthenticated) return;
+
+    let cancelled = false;
+    const idleApi = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+
+    const prefetchSecondaryLists = () => {
+      if (cancelled) return;
+
+      if (showGitHubIssues) {
+        const issueCacheKey = `${effectiveRepoPath}::${issueFilter}`;
+        void githubIssueListCache
+          .load(
+            issueCacheKey,
+            () =>
+              invoke<IssueListItem[]>("github_list_issues", {
+                repoPath: effectiveRepoPath,
+                state: issueFilter,
+              }),
+            { ttlMs: GITHUB_ISSUE_LIST_TTL_MS },
+          )
+          .catch(() => undefined);
+      }
+
+      if (showGitHubActions) {
+        void useGitHubActionsStore.getState().actions.loadRuns(effectiveRepoPath, { quiet: true });
+      }
+    };
+
+    let idleId: number | null = null;
+    const timeoutId = window.setTimeout(() => {
+      if (typeof idleApi.requestIdleCallback === "function") {
+        idleId = idleApi.requestIdleCallback(prefetchSecondaryLists, { timeout: 1000 });
+        return;
+      }
+
+      prefetchSecondaryLists();
+    }, 600);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      if (idleId !== null) {
+        idleApi.cancelIdleCallback?.(idleId);
+      }
+    };
+  }, [
+    effectiveRepoPath,
+    isAuthenticated,
+    isGitHubPRsViewActive,
+    issueFilter,
+    showGitHubActions,
+    showGitHubIssues,
+  ]);
+
   const handleRefresh = useCallback(() => {
     if (effectiveRepoPath) {
       void fetchPRs(effectiveRepoPath, { force: true });
@@ -266,8 +405,11 @@ const GitHubPRsView = memo(() => {
       return;
     }
 
-    if (activeSection === "actions") {
-      githubActionListCache.clear(effectiveRepoPath);
+    if (
+      activeSection === "actions" ||
+      activeSection === "releases" ||
+      activeSection === "deployments"
+    ) {
       setSectionRefreshNonce((value) => value + 1);
       return;
     }
@@ -318,22 +460,14 @@ const GitHubPRsView = memo(() => {
     }
   }, [setManualRepository]);
 
-  const handleFilterChange = useCallback(
-    (filter: PRFilter) => {
-      setFilter(filter);
-      setIsFilterOpen(false);
-    },
-    [setFilter],
-  );
+  const handleFilterChange = useCallback((filter: PRFilter) => setFilter(filter), [setFilter]);
 
   const handleIssueFilterChange = useCallback((filter: IssueFilter) => {
     setIssueFilter(filter);
-    setIsFilterOpen(false);
   }, []);
 
   const handleActionFilterChange = useCallback((filter: WorkflowRunFilter) => {
     setActionFilter(filter);
-    setIsFilterOpen(false);
   }, []);
 
   const handleSelectPR = useCallback(
@@ -341,13 +475,47 @@ const GitHubPRsView = memo(() => {
       startTransition(() => {
         openPRBuffer(pr.number, {
           title: pr.title,
-          authorAvatarUrl:
-            pr.author.avatarUrl ||
-            `https://github.com/${encodeURIComponent(pr.author.login || "github")}.png?size=32`,
+          repoPath: effectiveRepoPath ?? undefined,
+          authorAvatarUrl: getGitHubAvatarUrl(pr.author),
         });
       });
     },
-    [openPRBuffer],
+    [effectiveRepoPath, openPRBuffer],
+  );
+
+  const handleOpenPRInNewWindow = useCallback(
+    (pr: PullRequest) => {
+      openGitHubContentInNewWindow(effectiveRepoPath, {
+        type: "pullRequest",
+        prNumber: pr.number,
+        repoPath: effectiveRepoPath ?? undefined,
+        authorAvatarUrl: getGitHubAvatarUrl(pr.author),
+        name: pr.title,
+      });
+    },
+    [effectiveRepoPath],
+  );
+
+  const handleSelectPRChanges = useCallback(
+    (pr: PullRequest) => {
+      startTransition(() => {
+        openPRBuffer(pr.number, {
+          title: pr.title,
+          repoPath: effectiveRepoPath ?? undefined,
+          authorAvatarUrl: getGitHubAvatarUrl(pr.author),
+          initialView: "files",
+        });
+      });
+    },
+    [effectiveRepoPath, openPRBuffer],
+  );
+
+  const handlePrefetchPR = useCallback(
+    (pr: PullRequest) => {
+      if (!effectiveRepoPath) return;
+      void prefetchPR(effectiveRepoPath, pr.number);
+    },
+    [effectiveRepoPath, prefetchPR],
   );
 
   const handlePRContextMenu = useCallback(
@@ -360,20 +528,28 @@ const GitHubPRsView = memo(() => {
 
   const selectedPR = prContextMenu.data;
 
-  const prContextMenuItems: ContextMenuItem[] = selectedPR
+  const prContextMenuItems: MenuItem[] = selectedPR
     ? [
         {
           id: "open-pr",
           label: "Open PR",
-          icon: <GitPullRequest />,
+          icon: <GitPullRequestIcon />,
           onClick: () => {
             handleSelectPR(selectedPR);
           },
         },
         {
+          id: "open-pr-new-window",
+          label: "Open in New Window",
+          icon: <WindowExpandIcon />,
+          onClick: () => {
+            handleOpenPRInNewWindow(selectedPR);
+          },
+        },
+        {
           id: "open-on-github",
           label: "Open on GitHub",
-          icon: <ArrowSquareOut />,
+          icon: <GithubMark />,
           onClick: () => {
             if (effectiveRepoPath) {
               void openPRInBrowser(effectiveRepoPath, selectedPR.number);
@@ -383,7 +559,7 @@ const GitHubPRsView = memo(() => {
         {
           id: "checkout-branch",
           label: "Checkout Branch",
-          icon: <GitBranch />,
+          icon: <GitBranchIcon />,
           onClick: () => {
             if (effectiveRepoPath) {
               void checkoutPR(effectiveRepoPath, selectedPR.number);
@@ -393,14 +569,14 @@ const GitHubPRsView = memo(() => {
         {
           id: "copy-title",
           label: "Copy Title",
-          icon: <Copy />,
+          icon: <CopyIcon />,
           onClick: () => {
             void writeClipboardText(selectedPR.title);
           },
         },
       ]
     : [];
-  const sectionContextMenuItems: ContextMenuItem[] = [
+  const sectionContextMenuItems: MenuItem[] = [
     {
       id: "refresh",
       label:
@@ -408,92 +584,77 @@ const GitHubPRsView = memo(() => {
           ? "Refresh Pull Requests"
           : activeSection === "issues"
             ? "Refresh Issues"
-            : "Refresh Workflow Runs",
-      icon: <RefreshCw />,
+            : activeSection === "releases"
+              ? "Refresh Releases"
+              : activeSection === "deployments"
+                ? "Refresh Deployments"
+                : "Refresh Workflow Runs",
+      icon: <ArrowClockwiseIcon />,
       disabled: isLoading || !effectiveRepoPath,
       onClick: handleRefreshActiveSection,
     },
     {
       id: "select-repository",
       label: "Browse Repository",
-      icon: <GitBranch />,
+      icon: <GitBranchIcon />,
       disabled: isSelectingRepo,
       onClick: () => void handleSelectRepository(),
     },
   ];
 
-  const allSectionTabs = useMemo(() => {
-    const tabMap: Record<
-      GitHubSidebarSection,
-      { id: GitHubSidebarSection; label: string; icon: ReactNode }
-    > = {
-      "pull-requests": {
-        id: "pull-requests",
-        label: "Pull Requests",
-        icon: <GitPullRequest size={16} weight="duotone" />,
-      },
-      issues: {
-        id: "issues",
-        label: "Issues",
-        icon: <ChatCircleText size={16} weight="duotone" />,
-      },
-      actions: {
-        id: "actions",
-        label: "Actions",
-        icon: <Lightning size={16} weight="duotone" />,
-      },
-    };
-
-    return settings.githubSidebarSectionOrder.map((id) => tabMap[id]).filter(Boolean);
-  }, [settings.githubSidebarSectionOrder]);
-
-  const sectionTabs = allSectionTabs.filter((tab) => availableSections.includes(tab.id));
   const activeFilterLabel =
-    activeSection === "pull-requests"
-      ? filterLabels[currentFilter]
-      : activeSection === "issues"
-        ? issueFilterLabels[issueFilter]
-        : actionFilterLabels[actionFilter];
+    activeSection === "releases"
+      ? RELEASE_FILTERS[releaseFilter]
+      : activeSection === "deployments"
+        ? DEPLOYMENT_FILTERS[deploymentFilter]
+        : activeSection === "pull-requests"
+          ? filterLabels[currentFilter]
+          : activeSection === "issues"
+            ? issueFilterLabels[issueFilter]
+            : actionFilterLabels[actionFilter];
   const isActiveFilterDefault =
-    activeSection === "pull-requests"
-      ? currentFilter === "all"
-      : activeSection === "issues"
-        ? issueFilter === "open"
-        : actionFilter === "all";
-  const filterMenuItems = useMemo<MenuItem[]>(() => {
-    if (activeSection === "issues") {
-      return (Object.keys(issueFilterLabels) as IssueFilter[]).map((filter) => ({
-        id: filter,
-        label: issueFilterLabels[filter],
-        keybinding: issueFilter === filter ? <Check className="size-3.5 text-accent" /> : null,
-        onClick: () => handleIssueFilterChange(filter),
-      }));
+    activeSection === "releases"
+      ? releaseFilter === "all"
+      : activeSection === "deployments"
+        ? deploymentFilter === "all"
+        : activeSection === "pull-requests"
+          ? currentFilter === "all"
+          : activeSection === "issues"
+            ? issueFilter === "open"
+            : actionFilter === "all";
+  const activeFilterOptions =
+    activeSection === "releases"
+      ? Object.entries(RELEASE_FILTERS)
+      : activeSection === "deployments"
+        ? Object.entries(DEPLOYMENT_FILTERS)
+        : activeSection === "issues"
+          ? Object.entries(issueFilterLabels)
+          : activeSection === "actions"
+            ? Object.entries(actionFilterLabels)
+            : Object.entries(filterLabels);
+  const activeFilterValue =
+    activeSection === "releases"
+      ? releaseFilter
+      : activeSection === "deployments"
+        ? deploymentFilter
+        : activeSection === "issues"
+          ? issueFilter
+          : activeSection === "actions"
+            ? actionFilter
+            : currentFilter;
+  const handleActiveFilterChange = (filter: string) => {
+    if (activeSection === "releases") {
+      setReleaseFilter(filter as ReleaseFilter);
+    } else if (activeSection === "deployments") {
+      setDeploymentFilter(filter as DeploymentFilter);
+    } else if (activeSection === "issues") {
+      handleIssueFilterChange(filter as IssueFilter);
+    } else if (activeSection === "actions") {
+      handleActionFilterChange(filter as WorkflowRunFilter);
+    } else {
+      handleFilterChange(filter as PRFilter);
     }
-
-    if (activeSection === "actions") {
-      return (Object.keys(actionFilterLabels) as WorkflowRunFilter[]).map((filter) => ({
-        id: filter,
-        label: actionFilterLabels[filter],
-        keybinding: actionFilter === filter ? <Check className="size-3.5 text-accent" /> : null,
-        onClick: () => handleActionFilterChange(filter),
-      }));
-    }
-
-    return (Object.keys(filterLabels) as PRFilter[]).map((filter) => ({
-      id: filter,
-      label: filterLabels[filter],
-      keybinding: currentFilter === filter ? <Check className="size-3.5 text-accent" /> : null,
-      onClick: () => handleFilterChange(filter),
-    }));
-  }, [
-    actionFilter,
-    activeSection,
-    currentFilter,
-    handleActionFilterChange,
-    handleFilterChange,
-    handleIssueFilterChange,
-    issueFilter,
-  ]);
+  };
   const filteredPrs = useMemo(() => {
     const query = deferredSearchQuery.trim().toLowerCase();
     if (!query) return deferredPrs;
@@ -511,243 +672,308 @@ const GitHubPRsView = memo(() => {
       ].some((value) => value.toLowerCase().includes(query)),
     );
   }, [deferredPrs, deferredSearchQuery]);
+  const groupedPrs = useMemo(
+    () => groupPullRequests(filteredPrs, currentFilter),
+    [currentFilter, filteredPrs],
+  );
+
+  useEffect(() => {
+    if (
+      !isGitHubPRsViewActive ||
+      activeSection !== "pull-requests" ||
+      !effectiveRepoPath ||
+      filteredPrs.length === 0
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const idleApi = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    const prefetchVisiblePRs = () => {
+      if (cancelled) return;
+      filteredPrs.slice(0, 4).forEach((pr) => {
+        void prefetchPR(effectiveRepoPath, pr.number);
+      });
+    };
+    const usesIdleCallback = typeof idleApi.requestIdleCallback === "function";
+    const idleId = usesIdleCallback
+      ? idleApi.requestIdleCallback?.(prefetchVisiblePRs, { timeout: 1200 })
+      : window.setTimeout(prefetchVisiblePRs, 500);
+
+    return () => {
+      cancelled = true;
+      if (usesIdleCallback && idleId !== undefined) {
+        idleApi.cancelIdleCallback(idleId);
+      } else if (idleId !== undefined) {
+        window.clearTimeout(idleId);
+      }
+    };
+  }, [activeSection, effectiveRepoPath, filteredPrs, isGitHubPRsViewActive, prefetchPR]);
 
   if (!isAuthenticated) {
     return (
-      <SidebarPanel className="gap-2 p-2">
-        <SidebarHeader className="bg-transparent p-0 backdrop-blur-none">
-          <span className="ui-text-sm font-medium text-text">GitHub</span>
-        </SidebarHeader>
-        <GitHubAuthStatusMessage />
-      </SidebarPanel>
+      <SidebarWorkspace title="GitHub">
+        <GitHubAuthStatusMessage layout="sidebar" />
+      </SidebarWorkspace>
     );
   }
 
   return (
     <>
-      <SidebarPanel
-        className="ui-font select-none gap-2 p-2"
-        onContextMenu={(event) => {
-          sectionContextMenu.open(event, null);
-        }}
-      >
-        {availableSections.length === 0 ? (
-          <SidebarEmptyActionState
-            className="h-full"
-            message="Enable GitHub sidebar sections in Settings -> Appearance."
-          />
-        ) : (
-          <>
-            <SidebarSectionSwitcher
-              items={sectionTabs}
-              value={activeSection}
-              onChange={(section) => setActiveSection(section as GitHubSidebarSection)}
-            />
-
-            <SidebarSearchFilterRow
-              value={searchQuery}
-              onChange={setSearchQuery}
-              searchIcon={Search}
-              placeholder="Search"
-              searchContainerClassName="min-w-0 flex-1 pl-1"
-              filterOpen={isFilterOpen}
-              onFilterOpenChange={setIsFilterOpen}
-              filterItems={filterMenuItems}
-              filterActive={!isActiveFilterDefault}
-              filterTooltip={`Filter: ${activeFilterLabel}`}
-              filterCloseOnSelect={false}
-              filterMenuClassName="w-fit min-w-fit"
-              leading={
-                <GitProjectSelector
-                  className="min-w-0 max-w-[34%] shrink-0"
-                  onRepositoryChange={() => setRepoSelectionError(null)}
-                />
-              }
-              actions={
-                <SidebarHeaderIconButton
-                  className="shrink-0"
+      <SidebarWorkspace
+        title={
+          availableSections.length > 0 ? (
+            <GitProjectSelector onRepositoryChange={() => setRepoSelectionError(null)} />
+          ) : (
+            "GitHub"
+          )
+        }
+        actions={
+          availableSections.length > 0 ? (
+            <>
+              <SidebarSearchPopover
+                value={searchQuery}
+                onChange={setSearchQuery}
+                aria-label="Search GitHub"
+              />
+              {activeSection !== "deployments" && (
+                <SidebarIconButton
                   disabled={!effectiveRepoPath}
                   tooltip={
-                    activeSection === "pull-requests"
-                      ? "New Pull Request"
-                      : activeSection === "issues"
-                        ? "New Issue"
-                        : "Run Workflow"
+                    activeSection === "releases"
+                      ? "New Release"
+                      : activeSection === "pull-requests"
+                        ? "New Pull Request"
+                        : activeSection === "issues"
+                          ? "New Issue"
+                          : "Run Workflow"
                   }
-                  tooltipSide="bottom"
                   onClick={() => {
+                    if (activeSection === "releases" && effectiveRepoPath) {
+                      useBufferStore.getState().actions.openContent({
+                        type: "githubDelivery",
+                        kind: "releases",
+                        repoPath: effectiveRepoPath,
+                      });
+                      return;
+                    }
                     const nextKind =
                       activeSection === "pull-requests"
                         ? "pull-request"
                         : activeSection === "issues"
                           ? "issue"
                           : "action";
-                    setCreateKind(nextKind);
+                    if (effectiveRepoPath) {
+                      openGitHubFormBuffer({
+                        repoPath: effectiveRepoPath,
+                        formKind: nextKind,
+                        defaultHead: currentBranch,
+                      });
+                    }
                   }}
                 >
-                  <Plus />
-                </SidebarHeaderIconButton>
-              }
-            />
-
-            <SidebarSectionPager
-              className="flex-1"
-              items={[
-                {
-                  id: "pull-requests",
-                  content: (
-                    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-                      <div className="scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-1">
-                        {!effectiveRepoPath ? (
-                          <GitHubSidebarState
-                            icon={<GitBranch className="size-4" />}
-                            title="No repository selected"
-                            actionLabel={isSelectingRepo ? "Selecting..." : "Browse Repository"}
-                            onAction={() => void handleSelectRepository()}
-                            isActionDisabled={isSelectingRepo}
-                          />
-                        ) : error ? (
-                          <GitHubSidebarState
-                            icon={<AlertCircle className="size-4" />}
-                            title={isRepoError ? "Repository is not a Git repository" : error}
-                            description={
-                              isRepoError
-                                ? "Select another folder that contains a `.git` repository."
-                                : repoSelectionError || undefined
-                            }
-                            actionLabel={
-                              isRepoError
-                                ? isSelectingRepo
-                                  ? "Selecting..."
-                                  : "Browse Repository"
-                                : "Try again"
-                            }
-                            onAction={
-                              isRepoError ? () => void handleSelectRepository() : handleRefresh
-                            }
-                            isActionDisabled={isSelectingRepo}
-                            tone="error"
-                          />
-                        ) : isLoading && deferredPrs.length === 0 ? (
-                          <div className="flex items-center justify-center p-4">
-                            <LoadingIndicator label="Loading pull requests" showLabel compact />
-                          </div>
-                        ) : deferredPrs.length === 0 ? (
-                          <GitHubSidebarState
-                            icon={<GitPullRequest className="size-4" />}
-                            title="No pull requests"
-                          />
-                        ) : filteredPrs.length === 0 ? (
-                          <GitHubSidebarState
-                            icon={<GitPullRequest className="size-4" />}
-                            title="No matching pull requests"
-                          />
-                        ) : (
-                          <div className="space-y-px overflow-x-hidden">
-                            {isLoading ? (
-                              <div className="flex items-center px-2 py-1.5">
-                                <LoadingIndicator label="Refreshing" compact />
-                              </div>
-                            ) : null}
-                            {filteredPrs.map((pr) => (
+                  <PlusIcon />
+                </SidebarIconButton>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <SidebarIconButton
+                      active={!isActiveFilterDefault}
+                      tooltip={`Filter: ${activeFilterLabel}`}
+                      aria-label={`Filter GitHub ${activeSection}`}
+                    />
+                  }
+                >
+                  <FilterIcon />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuRadioGroup
+                    value={activeFilterValue}
+                    onValueChange={handleActiveFilterChange}
+                  >
+                    {activeFilterOptions.map(([value, label]) => (
+                      <DropdownMenuRadioItem key={value} value={value} closeOnClick>
+                        {label}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          ) : undefined
+        }
+        className="font-sans select-none"
+        onContextMenu={(event) => {
+          sectionContextMenu.open(event, null);
+        }}
+      >
+        {availableSections.length === 0 ? (
+          <EmptyState
+            layout="sidebar"
+            message="Enable GitHub sidebar sections in Settings -> Appearance."
+          />
+        ) : (
+          <SidebarTabBar
+            label="GitHub sections"
+            items={availableSections.map((section) => ({
+              id: section,
+              label:
+                section === "pull-requests"
+                  ? "PRs"
+                  : section === "issues"
+                    ? "Issues"
+                    : section === "releases"
+                      ? "Releases"
+                      : section === "deployments"
+                        ? "Deployments"
+                        : "Actions",
+              icon:
+                section === "releases" ? (
+                  <TagIcon />
+                ) : section === "deployments" ? (
+                  <RocketIcon />
+                ) : section === "pull-requests" ? (
+                  <GitPullRequestIcon />
+                ) : section === "issues" ? (
+                  <ChatBubbleTextIcon />
+                ) : (
+                  <BoltIcon />
+                ),
+              badge: section === "pull-requests" && prs.length > 0 ? prs.length : undefined,
+              ariaLabel:
+                section === "pull-requests"
+                  ? `GitHub Pull Requests, ${prs.length}`
+                  : section === "issues"
+                    ? "GitHub Issues"
+                    : section === "releases"
+                      ? "GitHub Releases"
+                      : section === "deployments"
+                        ? "GitHub Deployments"
+                        : "GitHub Actions",
+            }))}
+            value={activeSection}
+            onChange={setActiveSection}
+          >
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {activeSection === "pull-requests" ? (
+                <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                  <SidebarScrollArea>
+                    {!effectiveRepoPath ? (
+                      <EmptyState
+                        layout="sidebar"
+                        message="No repository selected"
+                        action={{
+                          label: isSelectingRepo ? "Selecting..." : "Browse Repository",
+                          onClick: () => void handleSelectRepository(),
+                          disabled: isSelectingRepo,
+                        }}
+                      />
+                    ) : error ? (
+                      <EmptyState
+                        layout="sidebar"
+                        title={isRepoError ? "Repository is not a Git repository" : error}
+                        message={
+                          isRepoError
+                            ? "Select another folder that contains a `.git` repository."
+                            : repoSelectionError
+                        }
+                        tone="error"
+                        role="alert"
+                        action={{
+                          label: isRepoError
+                            ? isSelectingRepo
+                              ? "Selecting..."
+                              : "Browse Repository"
+                            : "Try again",
+                          disabled: isSelectingRepo,
+                          onClick: isRepoError
+                            ? () => void handleSelectRepository()
+                            : handleRefresh,
+                        }}
+                      />
+                    ) : isLoading && deferredPrs.length === 0 ? (
+                      <EmptyState
+                        layout="sidebar"
+                        message={<Spinner label="Loading pull requests" showLabel compact />}
+                      />
+                    ) : deferredPrs.length === 0 ? (
+                      <EmptyState layout="sidebar" message="No pull requests" />
+                    ) : filteredPrs.length === 0 ? (
+                      <EmptyState layout="sidebar" message="No matching pull requests" />
+                    ) : (
+                      <div className="min-w-0 space-y-1">
+                        {groupedPrs.map((group) => (
+                          <SidebarSection
+                            forceExpanded={searchQuery.trim().length > 0}
+                            key={group.id}
+                            title={group.title}
+                            count={group.items.length}
+                          >
+                            {group.items.map((pr) => (
                               <PRListItem
                                 key={pr.number}
                                 pr={pr}
                                 isActive={activePRNumber === pr.number}
                                 onSelect={() => handleSelectPR(pr)}
+                                onSelectChanges={() => handleSelectPRChanges(pr)}
+                                onOpenInNewWindow={() => handleOpenPRInNewWindow(pr)}
+                                onPrefetch={() => handlePrefetchPR(pr)}
                                 onContextMenu={handlePRContextMenu}
                                 repoPath={effectiveRepoPath}
                               />
                             ))}
-                          </div>
-                        )}
+                          </SidebarSection>
+                        ))}
                       </div>
-                    </div>
-                  ),
-                },
-                {
-                  id: "issues",
-                  content: (
-                    <GitHubIssuesView
-                      refreshNonce={sectionRefreshNonce}
-                      searchQuery={searchQuery}
-                      filter={issueFilter}
-                    />
-                  ),
-                },
-                {
-                  id: "actions",
-                  content: (
-                    <GitHubActionsView
-                      refreshNonce={sectionRefreshNonce}
-                      searchQuery={searchQuery}
-                      filter={actionFilter}
-                    />
-                  ),
-                },
-              ].filter((item) => sectionTabs.some((tab) => tab.id === item.id))}
-              value={activeSection}
-              onChange={(section) => setActiveSection(section as GitHubSidebarSection)}
-            />
-          </>
+                    )}
+                  </SidebarScrollArea>
+                </div>
+              ) : activeSection === "issues" ? (
+                <GitHubIssuesView
+                  refreshNonce={sectionRefreshNonce}
+                  searchQuery={searchQuery}
+                  filter={issueFilter}
+                />
+              ) : activeSection === "releases" || activeSection === "deployments" ? (
+                effectiveRepoPath ? (
+                  <GitHubDeliveryList
+                    key={`${effectiveRepoPath}:${activeSection}`}
+                    kind={activeSection}
+                    repoPath={effectiveRepoPath}
+                    refreshNonce={sectionRefreshNonce}
+                    searchQuery={searchQuery}
+                    filter={activeSection === "releases" ? releaseFilter : deploymentFilter}
+                  />
+                ) : (
+                  <EmptyState layout="sidebar" message="No repository selected" />
+                )
+              ) : (
+                <GitHubActionsView
+                  refreshNonce={sectionRefreshNonce}
+                  searchQuery={searchQuery}
+                  filter={actionFilter}
+                />
+              )}
+            </div>
+          </SidebarTabBar>
         )}
-        <ContextMenu
+        <ContextMenuPopup
           isOpen={prContextMenu.isOpen}
-          position={prContextMenu.position}
-          items={prContextMenuItems}
+          point={prContextMenu.position}
+          groups={createContextMenuGroups(prContextMenuItems)}
           onClose={prContextMenu.close}
         />
-        <ContextMenu
+        <ContextMenuPopup
           isOpen={sectionContextMenu.isOpen}
-          position={sectionContextMenu.position}
-          items={sectionContextMenuItems}
+          point={sectionContextMenu.position}
+          groups={createContextMenuGroups(sectionContextMenuItems)}
           onClose={sectionContextMenu.close}
         />
-      </SidebarPanel>
-      <GitHubCreateCommand
-        kind={createKind}
-        repoPath={effectiveRepoPath}
-        defaultHead={currentBranch}
-        onClose={() => setCreateKind(null)}
-        onIssueCreated={(issue) => {
-          githubIssueListCache.clear();
-          setActiveSection("issues");
-          setIssueFilter("open");
-          setSectionRefreshNonce((value) => value + 1);
-          startTransition(() => {
-            openGitHubIssueBuffer({
-              issueNumber: issue.number,
-              repoPath: effectiveRepoPath ?? undefined,
-              title: issue.title,
-              authorAvatarUrl:
-                issue.author.avatarUrl ||
-                `https://github.com/${encodeURIComponent(issue.author.login || "github")}.png?size=32`,
-              url: issue.url,
-            });
-          });
-        }}
-        onPullRequestCreated={(pullRequest) => {
-          setActiveSection("pull-requests");
-          if (effectiveRepoPath) {
-            void fetchPRs(effectiveRepoPath, { force: true });
-          }
-          startTransition(() => {
-            openPRBuffer(pullRequest.number, {
-              title: pullRequest.title,
-              authorAvatarUrl:
-                pullRequest.author.avatarUrl ||
-                `https://github.com/${encodeURIComponent(pullRequest.author.login || "github")}.png?size=32`,
-            });
-          });
-        }}
-        onWorkflowDispatched={() => {
-          if (effectiveRepoPath) {
-            githubActionListCache.clear(effectiveRepoPath);
-          }
-          setActiveSection("actions");
-          setSectionRefreshNonce((value) => value + 1);
-        }}
-      />
+      </SidebarWorkspace>
     </>
   );
 });

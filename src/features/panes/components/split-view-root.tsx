@@ -1,20 +1,27 @@
-import { useEffect, useMemo } from "react";
-import { IS_MAC } from "@/utils/platform";
+import { memo, useEffect, useMemo, useState } from "react";
+import { WorkbenchFullscreenSurface } from "@/features/window/components/workbench-fullscreen-surface";
+import { workspaceRuntimeRegistry } from "@/features/workspace/runtime/workspace-runtime-registry";
+import { WorkspaceStoreScopeContext } from "@/features/workspace/stores/create-workspace-scoped-store";
+import { useWorkspaceTabsStore } from "@/features/window/stores/workspace-tabs.store";
+import { cn } from "@/utils/cn";
 import { usePaneStore } from "../stores/pane.store";
+import { findPaneGroup } from "../utils/pane-tree";
 import { PaneContainer } from "./pane-container";
 import { PaneNodeRenderer } from "./pane-node-renderer";
 
-export function SplitViewRoot() {
+const SplitViewRoot = memo(function SplitViewRoot({
+  activeSurface = true,
+}: {
+  activeSurface?: boolean;
+}) {
   const root = usePaneStore.use.root();
-  const bottomRoot = usePaneStore.use.bottomRoot();
   const fullscreenPaneId = usePaneStore.use.fullscreenPaneId();
-  const { exitPaneFullscreen, getAllPaneGroups } = usePaneStore.use.actions();
-  const fullscreenPane = useMemo(
-    () =>
-      fullscreenPaneId
-        ? (getAllPaneGroups().find((pane) => pane.id === fullscreenPaneId) ?? null)
-        : null,
-    [fullscreenPaneId, getAllPaneGroups, root, bottomRoot],
+  const exitPaneFullscreen = usePaneStore((state) => state.actions.exitPaneFullscreen);
+  const fullscreenPane = usePaneStore((state) =>
+    state.fullscreenPaneId
+      ? (findPaneGroup(state.root, state.fullscreenPaneId) ??
+        findPaneGroup(state.bottomRoot, state.fullscreenPaneId))
+      : null,
   );
 
   useEffect(() => {
@@ -23,28 +30,95 @@ export function SplitViewRoot() {
     }
   }, [exitPaneFullscreen, fullscreenPane, fullscreenPaneId]);
 
-  const titleBarHeight = IS_MAC ? 44 : 28;
-  const footerHeight = 32;
-
   return (
     <>
       <div className="size-full overflow-hidden">
         <PaneNodeRenderer node={root} hiddenPaneId={fullscreenPaneId} />
       </div>
 
-      {fullscreenPane && (
-        <div
-          className="fixed inset-x-2 z-[10040]"
-          style={{
-            top: `${titleBarHeight + 8}px`,
-            bottom: `${footerHeight + 8}px`,
-          }}
-        >
-          <div className="h-full overflow-hidden rounded-xl border border-border/80 bg-primary-bg shadow-[var(--shadow-dialog)]">
-            <PaneContainer pane={fullscreenPane} />
-          </div>
-        </div>
+      {activeSurface && fullscreenPane && (
+        <WorkbenchFullscreenSurface>
+          <PaneContainer pane={fullscreenPane} />
+        </WorkbenchFullscreenSurface>
       )}
     </>
+  );
+});
+
+const MAX_CACHED_WORKSPACES = 3;
+
+export function CachedWorkspaceSplitViews() {
+  const projectTabs = useWorkspaceTabsStore.use.projectTabs();
+  const activeWorkspaceId =
+    projectTabs.find((projectTab) => projectTab.isActive)?.id ??
+    workspaceRuntimeRegistry.getActiveWorkspaceId();
+  const eligibleWorkspaceIds = useMemo(
+    () =>
+      projectTabs
+        .filter(
+          (projectTab) =>
+            projectTab.id === activeWorkspaceId ||
+            workspaceRuntimeRegistry.isWorkspaceReady(projectTab.id),
+        )
+        .map((projectTab) => projectTab.id),
+    [activeWorkspaceId, projectTabs],
+  );
+  const [recentWorkspaceIds, setRecentWorkspaceIds] = useState<string[]>([]);
+  const renderedWorkspaceIds = useMemo(
+    () =>
+      [activeWorkspaceId, ...recentWorkspaceIds, ...eligibleWorkspaceIds]
+        .filter(
+          (workspaceId, index, workspaceIds) =>
+            workspaceId !== "workspace:welcome" &&
+            eligibleWorkspaceIds.includes(workspaceId) &&
+            workspaceIds.indexOf(workspaceId) === index,
+        )
+        .slice(0, MAX_CACHED_WORKSPACES),
+    [activeWorkspaceId, eligibleWorkspaceIds, recentWorkspaceIds],
+  );
+
+  useEffect(() => {
+    setRecentWorkspaceIds((currentWorkspaceIds) => {
+      const nextWorkspaceIds = [activeWorkspaceId, ...currentWorkspaceIds, ...eligibleWorkspaceIds]
+        .filter(
+          (workspaceId, index, workspaceIds) =>
+            workspaceId !== "workspace:welcome" &&
+            eligibleWorkspaceIds.includes(workspaceId) &&
+            workspaceIds.indexOf(workspaceId) === index,
+        )
+        .slice(0, MAX_CACHED_WORKSPACES);
+
+      return nextWorkspaceIds.length === currentWorkspaceIds.length &&
+        nextWorkspaceIds.every((workspaceId, index) => workspaceId === currentWorkspaceIds[index])
+        ? currentWorkspaceIds
+        : nextWorkspaceIds;
+    });
+  }, [activeWorkspaceId, eligibleWorkspaceIds]);
+
+  if (renderedWorkspaceIds.length === 0) {
+    return <SplitViewRoot />;
+  }
+
+  return (
+    <div className="relative size-full overflow-hidden">
+      {renderedWorkspaceIds.map((workspaceId) => {
+        const isActive = workspaceId === activeWorkspaceId;
+
+        return (
+          <WorkspaceStoreScopeContext.Provider key={workspaceId} value={workspaceId}>
+            <div
+              aria-hidden={!isActive}
+              inert={!isActive}
+              className={cn(
+                "absolute inset-0 overflow-hidden",
+                isActive ? "visible z-10" : "invisible pointer-events-none",
+              )}
+            >
+              <SplitViewRoot activeSurface={isActive} />
+            </div>
+          </WorkspaceStoreScopeContext.Provider>
+        );
+      })}
+    </div>
   );
 }

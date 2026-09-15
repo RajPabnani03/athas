@@ -1,12 +1,20 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import { getDefaultSetting, useSettingsStore } from "@/features/settings/stores/settings.store";
+import { getDefaultSetting } from "@/features/settings/config/default-settings";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import type { IconThemeContribution, ThemeContribution } from "../types/extension-manifest";
+import { resolveBundledIconThemeAsset } from "../icon-themes/bundled-icon-theme-assets";
 import { iconThemeRegistry } from "../icon-themes/icon-theme-registry";
-import type { IconResult, IconThemeDefinition } from "../icon-themes/types";
+import type { IconResult, IconThemeDefinition } from "../icon-themes/icon-theme.types";
 import { themeRegistry } from "../themes/theme-registry";
-import type { ThemeDefinition } from "../themes/types";
+import { toThemeDefinition as convertThemeToDefinition } from "../themes/theme-file";
+import type { ThemeDefinition } from "../themes/theme.types";
 import type { ExtensionManifest } from "../types/extension-manifest";
 import { getManifestIconContributions } from "../types/extension-contributions";
+import { isRetiredExtensionId } from "../registry/retired-extensions";
+import { uiExtensionHost } from "../ui/services/ui-extension-host";
+
+const activeExtensionIds = new Set<string>();
+const activationPromises = new Map<string, Promise<void>>();
 
 function getThemeContributions(manifest: ExtensionManifest): ThemeContribution[] {
   return [...(manifest.themes ?? []), ...(manifest.contributes?.themes ?? [])];
@@ -16,48 +24,8 @@ function getIconThemeContributions(manifest: ExtensionManifest): IconThemeContri
   return getManifestIconContributions(manifest);
 }
 
-function toCssVariables(colors: Record<string, string>): Record<string, string> {
-  const variables: Record<string, string> = {};
-
-  for (const [key, value] of Object.entries(colors)) {
-    const normalizedKey = key.startsWith("--") ? key : `--${key}`;
-    variables[normalizedKey] = value;
-
-    if (!normalizedKey.startsWith("--color-")) {
-      variables[`--color-${normalizedKey.slice(2)}`] = value;
-    }
-  }
-
-  return variables;
-}
-
-function toSyntaxVariables(syntax: Record<string, string> | undefined): Record<string, string> {
-  const variables: Record<string, string> = {};
-
-  for (const [key, value] of Object.entries(syntax ?? {})) {
-    const normalizedKey = key.startsWith("--") ? key : `--syntax-${key}`;
-    variables[normalizedKey] = value;
-
-    if (!normalizedKey.startsWith("--color-")) {
-      variables[`--color-${normalizedKey.slice(2)}`] = value;
-    }
-  }
-
-  return variables;
-}
-
 function toThemeDefinition(contribution: ThemeContribution): ThemeDefinition {
-  const isDark = contribution.appearance === "dark";
-
-  return {
-    id: contribution.id,
-    name: contribution.name,
-    description: contribution.description || "",
-    category: isDark ? "Dark" : "Light",
-    cssVariables: toCssVariables(contribution.colors),
-    syntaxTokens: toSyntaxVariables(contribution.syntax),
-    isDark,
-  };
+  return convertThemeToDefinition(contribution);
 }
 
 function normalizeLookupMap(map: Record<string, string> | undefined, withDot = false) {
@@ -74,6 +42,7 @@ function normalizeLookupMap(map: Record<string, string> | undefined, withDot = f
 function resolveIcon(
   definitions: Record<string, string>,
   iconKey: string | undefined,
+  extensionId: string,
   extensionPath?: string,
 ): IconResult {
   if (!iconKey) return {};
@@ -93,6 +62,11 @@ function resolveIcon(
     return { url: definition };
   }
 
+  const bundledAsset = resolveBundledIconThemeAsset(extensionId, definition);
+  if (bundledAsset) {
+    return { url: bundledAsset };
+  }
+
   if (definition.startsWith("./") && extensionPath) {
     return { url: convertFileSrc(`${extensionPath}/${definition.slice(2)}`) };
   }
@@ -102,6 +76,18 @@ function resolveIcon(
   }
 
   return {};
+}
+
+function getIconDefinitionsForAppearance(contribution: IconThemeContribution) {
+  const currentThemeId =
+    themeRegistry.getCurrentTheme() || useSettingsStore.getState().settings.theme;
+  const currentTheme = themeRegistry.getTheme(currentThemeId);
+
+  if (currentTheme && !currentTheme.isDark) {
+    return contribution.lightIconDefinitions ?? contribution.iconDefinitions;
+  }
+
+  return contribution.iconDefinitions;
 }
 
 function getFileExtensionCandidates(fileName: string): string[] {
@@ -114,6 +100,7 @@ function getFileExtensionCandidates(fileName: string): string[] {
 }
 
 function toIconThemeDefinition(
+  extensionId: string,
   contribution: IconThemeContribution,
   extensionPath?: string,
 ): IconThemeDefinition {
@@ -126,7 +113,14 @@ function toIconThemeDefinition(
     id: contribution.id,
     name: contribution.name,
     description: contribution.description || "",
+    preview: contribution.preview
+      ? {
+          fileName: contribution.preview.fileName,
+          isDirectory: contribution.preview.kind === "folder",
+        }
+      : undefined,
     getFileIcon: (fileName, isDir, isExpanded = false) => {
+      const iconDefinitions = getIconDefinitionsForAppearance(contribution);
       const normalizedName = fileName.split(/[\\/]/).pop()?.toLowerCase() || fileName.toLowerCase();
 
       if (isDir) {
@@ -136,7 +130,7 @@ function toIconThemeDefinition(
           (isExpanded ? contribution.defaultFolderOpen : undefined) ||
           contribution.defaultFolder;
 
-        return resolveIcon(contribution.iconDefinitions, folderIcon, extensionPath);
+        return resolveIcon(iconDefinitions, folderIcon, extensionId, extensionPath);
       }
 
       const icon =
@@ -146,14 +140,16 @@ function toIconThemeDefinition(
           .find(Boolean) ||
         contribution.defaultFile;
 
-      return resolveIcon(contribution.iconDefinitions, icon, extensionPath);
+      return resolveIcon(iconDefinitions, icon, extensionId, extensionPath);
     },
   };
 }
 
 function iconThemeUsesRelativePaths(iconThemes: IconThemeContribution[]): boolean {
   return iconThemes.some((theme) =>
-    Object.values(theme.iconDefinitions).some((definition) => definition.startsWith("./")),
+    [theme.iconDefinitions, theme.lightIconDefinitions].some((definitions) =>
+      Object.values(definitions ?? {}).some((definition) => definition.startsWith("./")),
+    ),
   );
 }
 
@@ -169,7 +165,7 @@ async function resolveContributionExtensionPath(
   try {
     return await invoke<string>("get_extension_path", { extensionId });
   } catch (error) {
-    console.warn(`Failed to resolve extension path for ${extensionId}:`, error);
+    console.warn(`Failed to resolve integration path for ${extensionId}:`, error);
     return undefined;
   }
 }
@@ -183,7 +179,7 @@ function fallbackThemeIfNeeded(themes: ThemeContribution[]) {
 
   const fallback = getDefaultSetting("theme");
   themeRegistry.applyTheme(fallback);
-  void useSettingsStore.getState().updateSetting("theme", fallback);
+  void useSettingsStore.getState().actions.updateSetting("theme", fallback);
 }
 
 function fallbackIconThemeIfNeeded(iconThemes: IconThemeContribution[]) {
@@ -192,10 +188,32 @@ function fallbackIconThemeIfNeeded(iconThemes: IconThemeContribution[]) {
     return;
   }
 
-  void useSettingsStore.getState().updateSetting("iconTheme", getDefaultSetting("iconTheme"));
+  void useSettingsStore
+    .getState()
+    .actions.updateSetting("iconTheme", getDefaultSetting("iconTheme"));
 }
 
 export async function activateExtensionContributions(
+  extensionId: string,
+  manifest: ExtensionManifest,
+  extensionPath?: string,
+): Promise<void> {
+  if (isRetiredExtensionId(extensionId) || activeExtensionIds.has(extensionId)) return;
+  const existingActivation = activationPromises.get(extensionId);
+  if (existingActivation) return existingActivation;
+
+  const activation = activateExtensionContributionsOnce(extensionId, manifest, extensionPath);
+  activationPromises.set(extensionId, activation);
+
+  try {
+    await activation;
+    activeExtensionIds.add(extensionId);
+  } finally {
+    activationPromises.delete(extensionId);
+  }
+}
+
+async function activateExtensionContributionsOnce(
   extensionId: string,
   manifest: ExtensionManifest,
   extensionPath?: string,
@@ -207,14 +225,28 @@ export async function activateExtensionContributions(
     extensionPath,
   );
 
-  for (const theme of getThemeContributions(manifest)) {
-    themeRegistry.registerTheme(toThemeDefinition(theme), { extensionId });
-  }
+  try {
+    for (const theme of getThemeContributions(manifest)) {
+      themeRegistry.registerTheme(toThemeDefinition(theme), { extensionId });
+    }
 
-  for (const iconTheme of iconThemes) {
-    iconThemeRegistry.registerTheme(toIconThemeDefinition(iconTheme, resolvedExtensionPath), {
-      extensionId,
-    });
+    for (const iconTheme of iconThemes) {
+      iconThemeRegistry.registerTheme(
+        toIconThemeDefinition(extensionId, iconTheme, resolvedExtensionPath),
+        {
+          extensionId,
+        },
+      );
+    }
+
+    if (manifest.main) {
+      await uiExtensionHost.loadExtension(manifest, resolvedExtensionPath);
+    }
+  } catch (error) {
+    await uiExtensionHost.unloadExtension(extensionId).catch(() => undefined);
+    themeRegistry.unregisterThemesByExtension(extensionId);
+    iconThemeRegistry.unregisterThemesByExtension(extensionId);
+    throw error;
   }
 }
 
@@ -222,8 +254,20 @@ export async function deactivateExtensionContributions(
   extensionId: string,
   manifest: ExtensionManifest,
 ): Promise<void> {
-  fallbackThemeIfNeeded(getThemeContributions(manifest));
-  fallbackIconThemeIfNeeded(getIconThemeContributions(manifest));
-  themeRegistry.unregisterThemesByExtension(extensionId);
-  iconThemeRegistry.unregisterThemesByExtension(extensionId);
+  await activationPromises.get(extensionId)?.catch(() => undefined);
+
+  try {
+    await uiExtensionHost.unloadExtension(extensionId);
+    fallbackThemeIfNeeded(getThemeContributions(manifest));
+    fallbackIconThemeIfNeeded(getIconThemeContributions(manifest));
+    themeRegistry.unregisterThemesByExtension(extensionId);
+    iconThemeRegistry.unregisterThemesByExtension(extensionId);
+  } finally {
+    activeExtensionIds.delete(extensionId);
+    activationPromises.delete(extensionId);
+  }
+}
+
+export function isExtensionContributionActive(extensionId: string): boolean {
+  return activeExtensionIds.has(extensionId);
 }

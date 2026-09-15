@@ -1,70 +1,74 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import {
-  BookOpenIcon as BookOpen,
-  CreditCardIcon as CreditCard,
-  CurrencyDollarIcon as CurrencyDollar,
-  SignInIcon as SignIn,
-  SignOutIcon as SignOut,
-  UserCircleIcon as UserCircle,
-  GearSixIcon as GearSix,
-  ArrowSquareOutIcon as ArrowSquareOut,
-  UsersThreeIcon as UsersThree,
-} from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
-import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
-import {
-  chromeControl,
-  chromeControlGroup,
-} from "@/features/layout/components/chrome-control-styles";
-import {
-  extractAutocompleteUsage,
-  formatUsageDate,
-  formatUsdFromCents,
-  getAccountPlanLabel,
-  getAiUsageModeLabel,
-  getUsageProgress,
-} from "@/features/window/lib/account-usage";
+import { memo, useEffect, useState } from "react";
+import { getServiceUrls } from "@/config/services";
+import { useGitHubStore } from "@/features/github/stores/github.store";
+import { useCommandShortcut } from "@/features/keymaps/hooks/use-command-shortcut";
+import { useWhatsNewStore } from "@/features/settings/stores/whats-new.store";
+import { useDesktopSignIn } from "@/features/window/hooks/use-desktop-sign-in";
+import { getAccountIdentity } from "@/features/window/lib/account-identity";
+import { getAccountPlanLabel } from "@/features/window/lib/account-usage";
 import { useAuthStore } from "@/features/window/stores/auth.store";
 import { useUIState } from "@/features/window/stores/ui-state.store";
+import { Avatar } from "@/ui/avatar";
 import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
-import { Dropdown, MenuItemsList, type MenuItem } from "@/ui/dropdown";
-import { TabsList } from "@/ui/tabs";
-import Tooltip from "@/ui/tooltip";
-import { useDesktopSignIn } from "@/features/window/hooks/use-desktop-sign-in";
-import { getApiBase } from "@/utils/api-base";
-import { cn } from "@/utils/cn";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItems,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  type DropdownSection,
+  type MenuItem,
+} from "@/ui/dropdown";
+import {
+  BookOpenIcon,
+  ChatBubbleTextIcon,
+  CreditCardIcon,
+  HistoryIcon,
+  MegaphoneIcon,
+  SettingsIcon,
+  SignInIcon,
+  SignOutIcon,
+  UserIcon,
+  UsersIcon,
+} from "@/ui/icons";
+import { GithubMark } from "@/ui/brand-marks";
 
-interface AccountMenuProps {
-  className?: string;
+const COMMUNITY_URL = "https://discord.gg/DD8F38wFMv";
+
+function isBlockingModalOpen() {
+  const state = useUIState.getState();
+  return (
+    state.isQuickOpenVisible ||
+    state.isCommandPaletteVisible ||
+    state.isGlobalSearchVisible ||
+    state.isSettingsDialogVisible ||
+    state.isProjectPickerVisible ||
+    state.isDatabaseConnectionVisible
+  );
 }
 
-export const AccountMenu = ({ className }: AccountMenuProps) => {
+export const AccountMenu = memo(function AccountMenu() {
+  const services = getServiceUrls();
   const user = useAuthStore((s) => s.user);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const subscription = useAuthStore((s) => s.subscription);
-  const logout = useAuthStore((s) => s.logout);
-  const checkAllProviderApiKeys = useAIChatStore((state) => state.checkAllProviderApiKeys);
-  const hasOpenRouterKey = useAIChatStore(
-    (state) => state.providerApiKeys.get("openrouter") || false,
-  );
+  const logout = useAuthStore((s) => s.actions.logout);
+  const githubAccountStatus = useGitHubStore((state) => state.githubAccountStatus);
+  const githubCurrentUser = useGitHubStore((state) => state.currentUser);
+  const checkGitHubAuth = useGitHubStore((state) => state.actions.checkAuth);
+  const openWhatsNew = useWhatsNewStore((state) => state.actions.open);
   const setIsSettingsDialogVisible = useUIState((state) => state.setIsSettingsDialogVisible);
   const openSettingsDialog = useUIState((state) => state.openSettingsDialog);
-  const hasBlockingModalOpen = useUIState(
-    (state) =>
-      state.isQuickOpenVisible ||
-      state.isCommandPaletteVisible ||
-      state.isGlobalSearchVisible ||
-      state.isSettingsDialogVisible ||
-      state.isProjectPickerVisible ||
-      state.isDatabaseConnectionVisible,
-  );
 
   const [isOpen, setIsOpen] = useState(false);
-  const buttonRef = useRef<HTMLButtonElement>(null);
   const { signIn, isSigningIn } = useDesktopSignIn({
     onSuccess: () => setIsOpen(false),
   });
+  const settingsShortcut = useCommandShortcut("workbench.openSettings");
 
   const handleSignIn = async () => {
     if (import.meta.env.DEV) {
@@ -78,16 +82,27 @@ export const AccountMenu = ({ className }: AccountMenuProps) => {
   };
 
   const handleManageAccount = async () => {
-    await openUrl(new URL("/dashboard", getApiBase()).toString());
+    await openUrl(services.dashboardUrl);
   };
 
   const handleOpenBillingDashboard = async () => {
-    const apiBase = getApiBase();
-    await openUrl(new URL("/dashboard/billing", apiBase).toString());
+    await openUrl(services.dashboardBillingUrl);
   };
 
   const handleOpenDocs = async () => {
-    await openUrl("https://athas.dev/docs");
+    await openUrl(services.docsUrl);
+  };
+
+  const handleOpenChangelog = async () => {
+    await openUrl(services.githubReleasesBaseUrl);
+  };
+
+  const handleOpenCommunity = async () => {
+    await openUrl(COMMUNITY_URL);
+  };
+
+  const handleOpenWhatsNew = async () => {
+    await openWhatsNew();
   };
 
   const handleOpenSettings = () => {
@@ -98,225 +113,189 @@ export const AccountMenu = ({ className }: AccountMenuProps) => {
     openSettingsDialog("collaboration");
   };
 
-  const subscriptionStatus = subscription?.status ?? "free";
-  const isEnterprise = subscription?.subscription?.plan === "enterprise";
   const isTeams = Boolean(subscription?.collaboration?.enabled);
-  const isPro = subscriptionStatus === "pro";
   const planLabel = getAccountPlanLabel(subscription, isAuthenticated);
-  const modeLabel = getAiUsageModeLabel({ isAuthenticated, subscription, hasOpenRouterKey });
-  const autocompleteUsage = extractAutocompleteUsage(subscription);
-  const usageProgress = getUsageProgress(autocompleteUsage);
+  const connectedGitHubLogin =
+    githubAccountStatus === "connected" ? githubCurrentUser || user?.github_username : null;
+  const {
+    name: accountName,
+    detail: accountDetail,
+    githubLogin,
+    avatarUrl: accountAvatarUrl,
+  } = getAccountIdentity(user, connectedGitHubLogin);
 
-  const signedOutItems: MenuItem[] = [
+  const signedOutAccountItems: MenuItem[] = [
     {
       id: "settings",
       label: "Settings",
-      icon: <GearSix weight="duotone" />,
+      icon: <SettingsIcon />,
+      shortcut: settingsShortcut,
       onClick: handleOpenSettings,
-    },
-    {
-      id: "docs",
-      label: "Docs",
-      icon: <BookOpen weight="duotone" />,
-      onClick: handleOpenDocs,
-    },
-    {
-      id: "settings-separator",
-      label: "",
-      separator: true,
-      onClick: () => {},
-    },
-    {
-      id: "sign-in",
-      label: isSigningIn ? "Signing In..." : "Sign In",
-      icon: <SignIn weight="duotone" />,
-      onClick: handleSignIn,
-      disabled: isSigningIn,
     },
   ];
 
-  const signedInItems: MenuItem[] = [
+  const sessionItems: MenuItem[] = [
     {
-      id: "user-info",
-      label: user?.name || user?.email || "Account",
-      icon: user?.avatar_url ? (
-        <img src={user.avatar_url} alt="" className="size-3 rounded-full" />
-      ) : (
-        <UserCircle weight="duotone" />
-      ),
-      onClick: () => {},
-      disabled: true,
+      id: isAuthenticated ? "sign-out" : "sign-in",
+      label: isAuthenticated ? "Sign Out" : isSigningIn ? "Signing In..." : "Sign In",
+      icon: isAuthenticated ? <SignOutIcon /> : <SignInIcon />,
+      onClick: isAuthenticated ? handleSignOut : handleSignIn,
+      disabled: !isAuthenticated && isSigningIn,
     },
+  ];
+
+  const signedInAccountItems: MenuItem[] = [
     {
-      id: "plan-separator",
-      label: "",
-      separator: true,
-      onClick: () => {},
+      id: "profile",
+      label: "Profile",
+      icon: <UserIcon />,
+      onClick: handleManageAccount,
     },
     {
       id: "subscription",
-      label: `Plan: ${planLabel}`,
-      icon: <CreditCard weight="duotone" />,
+      label: "Plan & Billing",
+      icon: <CreditCardIcon />,
+      trailing: { type: "text", label: planLabel },
       onClick: handleOpenBillingDashboard,
     },
+    ...(githubLogin
+      ? [
+          {
+            id: "github-profile",
+            label: "GitHub Profile",
+            icon: <GithubMark />,
+            trailing: { type: "text" as const, label: "Connected" },
+            onClick: () => openUrl(`https://github.com/${encodeURIComponent(githubLogin)}`),
+          },
+        ]
+      : [
+          {
+            id: "github-connect",
+            label: "Connect GitHub",
+            icon: <GithubMark />,
+            onClick: () => openUrl(services.dashboardIntegrationsUrl),
+          },
+        ]),
     ...(isTeams
       ? [
           {
             id: "collaboration",
             label: "Collaboration",
-            icon: <UsersThree weight="duotone" />,
+            icon: <UsersIcon />,
             onClick: handleOpenCollaboration,
           },
         ]
       : []),
     {
-      id: "manage-account",
-      label: "Manage Account",
-      icon: <ArrowSquareOut weight="duotone" />,
-      onClick: handleManageAccount,
-    },
-    {
       id: "settings",
       label: "Settings",
-      icon: <GearSix weight="duotone" />,
+      icon: <SettingsIcon />,
+      shortcut: settingsShortcut,
       onClick: handleOpenSettings,
-    },
-    {
-      id: "docs",
-      label: "Docs",
-      icon: <BookOpen weight="duotone" />,
-      onClick: handleOpenDocs,
-    },
-    {
-      id: "sign-out-separator",
-      label: "",
-      separator: true,
-      onClick: () => {},
-    },
-    {
-      id: "sign-out",
-      label: "Sign Out",
-      icon: <SignOut weight="duotone" />,
-      onClick: handleSignOut,
     },
   ];
 
-  const tooltipLabel = isAuthenticated ? user?.name || user?.email || "Account" : "Account";
+  const resourceItems: MenuItem[] = [
+    {
+      id: "whats-new",
+      label: "What's New",
+      icon: <MegaphoneIcon />,
+      onClick: handleOpenWhatsNew,
+    },
+    {
+      id: "changelog",
+      label: "Changelog",
+      icon: <HistoryIcon />,
+      onClick: handleOpenChangelog,
+    },
+    {
+      id: "docs",
+      label: "Documentation",
+      icon: <BookOpenIcon />,
+      onClick: handleOpenDocs,
+    },
+    {
+      id: "community",
+      label: "Community",
+      icon: <ChatBubbleTextIcon />,
+      onClick: handleOpenCommunity,
+    },
+  ];
 
-  useEffect(() => {
-    if (!isOpen || !hasBlockingModalOpen) return;
-    setIsOpen(false);
-  }, [hasBlockingModalOpen, isOpen]);
+  const sections: DropdownSection[] = [
+    {
+      id: "account",
+      label: isAuthenticated ? undefined : "Account",
+      items: isAuthenticated ? signedInAccountItems : signedOutAccountItems,
+    },
+    {
+      id: "resources",
+      label: "Resources",
+      items: resourceItems,
+    },
+    {
+      id: "session",
+      items: sessionItems,
+    },
+  ];
 
-  useEffect(() => {
-    void checkAllProviderApiKeys();
-  }, [checkAllProviderApiKeys]);
+  const tooltipLabel = isAuthenticated ? accountName : "Account";
 
   useEffect(() => {
     if (!isOpen) return;
-    void checkAllProviderApiKeys();
-  }, [checkAllProviderApiKeys, isOpen]);
+
+    const closeForBlockingModal = () => {
+      if (isBlockingModalOpen()) setIsOpen(false);
+    };
+
+    closeForBlockingModal();
+    return useUIState.subscribe(closeForBlockingModal);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    void checkGitHubAuth();
+  }, [checkGitHubAuth, isOpen]);
 
   return (
     <>
-      <Tooltip content={tooltipLabel} side="bottom">
-        <TabsList variant="segmented" className={cn(chromeControlGroup(), className)}>
-          <Button
-            ref={buttonRef}
-            onClick={() => setIsOpen((open) => !open)}
-            type="button"
-            variant="ghost"
-            compact
-            active={isOpen}
-            className={chromeControl()}
-            aria-expanded={isOpen}
-            aria-haspopup="menu"
-            aria-label="Account"
-          >
-            {isAuthenticated && user?.avatar_url ? (
-              <img src={user.avatar_url} alt="" className="size-4 rounded-full object-cover" />
-            ) : (
-              <UserCircle className="size-4" weight="duotone" />
-            )}
-          </Button>
-        </TabsList>
-      </Tooltip>
-      <Dropdown
-        isOpen={isOpen}
-        anchorRef={buttonRef}
-        anchorAlign="end"
-        onClose={() => setIsOpen(false)}
-        className="w-[320px] overflow-hidden rounded-xl p-0"
-      >
-        <div className="p-1">
-          {isAuthenticated ? (
-            <button
+      <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
+        <DropdownMenuTrigger
+          render={
+            <Button
               type="button"
-              onClick={() => {
-                setIsOpen(false);
-                void handleOpenBillingDashboard();
-              }}
-              className="ui-font block w-full rounded-lg p-2.5 text-left transition-colors hover:bg-hover/50"
-            >
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="ui-text-sm font-medium text-text">AI usage</span>
-                  <Badge
-                    variant="default"
-                    size="compact"
-                    className={cn(
-                      isPro || isEnterprise
-                        ? "border-accent/30 bg-accent/10 text-accent"
-                        : "border-border/60 bg-primary-bg/50 text-text-lighter",
-                    )}
-                  >
-                    {planLabel}
-                  </Badge>
-                </div>
-                <span className="ui-text-xs text-text-lighter">{modeLabel}</span>
+              variant="ghost"
+              iconOnly
+              size="chrome"
+              tooltip={tooltipLabel}
+              aria-label="Account"
+            />
+          }
+        >
+          <Avatar name={accountName} src={accountAvatarUrl} size="xs" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" size="wide">
+          {isAuthenticated ? (
+            <div role="presentation" className="flex min-w-0 items-center gap-2.5 px-2.5 py-2">
+              <Avatar name={accountName} src={accountAvatarUrl} className="size-9" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium text-foreground">{accountName}</div>
+                {accountDetail ? (
+                  <div className="truncate text-subtle-foreground">{accountDetail}</div>
+                ) : null}
               </div>
-              {autocompleteUsage ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="ui-text-xs text-text-lighter">Hosted AI</span>
-                    <span className="ui-text-xs font-medium text-text">
-                      {formatUsdFromCents(autocompleteUsage.spendCents)} /{" "}
-                      {formatUsdFromCents(autocompleteUsage.budgetCents)}
-                    </span>
-                  </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-primary-bg/80">
-                    <div
-                      className="h-full rounded-full bg-accent transition-[width] duration-[var(--app-duration-normal)] ease-[var(--app-ease-smooth)]"
-                      style={{ width: `${usageProgress}%` }}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="ui-text-xs text-text-lighter/70">
-                      {formatUsageDate(autocompleteUsage.periodStart)} -{" "}
-                      {formatUsageDate(autocompleteUsage.periodEnd)}
-                    </span>
-                    <span className="ui-text-xs text-text-lighter/70">
-                      Resets {formatUsageDate(autocompleteUsage.periodEnd)}
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 text-text-lighter ui-text-xs">
-                  <CurrencyDollar weight="duotone" />
-                  <span>Usage unavailable</span>
-                </div>
-              )}
-            </button>
+              <Badge variant="muted">{planLabel}</Badge>
+            </div>
           ) : null}
-
-          {isAuthenticated ? <div className="my-0.5 border-border/70 border-t" /> : null}
-
-          <MenuItemsList
-            items={isAuthenticated ? signedInItems : signedOutItems}
-            onItemSelect={() => setIsOpen(false)}
-          />
-        </div>
-      </Dropdown>
+          {sections.map((section, index) => (
+            <DropdownMenuGroup key={section.id}>
+              {index > 0 ? <DropdownMenuSeparator /> : null}
+              {section.label ? <DropdownMenuLabel>{section.label}</DropdownMenuLabel> : null}
+              <DropdownMenuItems items={section.items} />
+            </DropdownMenuGroup>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </>
   );
-};
+});

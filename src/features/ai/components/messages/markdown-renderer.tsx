@@ -1,134 +1,37 @@
-import { invoke } from "@tauri-apps/api/core";
 import {
-  CaretDownIcon as ChevronDown,
-  CaretRightIcon as ChevronRight,
-  CopyIcon as Copy,
-  TerminalWindowIcon as Terminal,
-} from "@phosphor-icons/react";
+  ChevronDownIcon,
+  ChevronRightIcon,
+  CopyIcon,
+  TerminalWindowIcon,
+  WarningCircleIcon,
+} from "@/ui/icons";
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+import { getAcpAuthenticationCommand } from "@/features/ai/lib/acp-authentication";
+import { AcpStreamHandler } from "@/features/ai/services/acp-stream-handler";
 import type { MarkdownRendererProps } from "@/features/ai/types/ai-chat.types";
+import {
+  isExternalMarkdownLink,
+  resolveWorkspaceFileLink,
+} from "@/features/ai/lib/workspace-file-links";
+import {
+  normalizeImplicitCodeFences,
+  normalizePlainTextFence,
+} from "@/features/ai/lib/assistant-markdown";
 import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import {
   type CodeHighlightSegment,
   getCodeHighlightSegments,
 } from "@/features/editor/markdown/code-highlight";
-import {
-  normalizeCodeFenceLanguage,
-  normalizeLanguage,
-} from "@/features/editor/markdown/language-map";
+import { normalizeCodeFenceLanguage } from "@/features/editor/markdown/language-map";
 import { Button } from "@/ui/button";
+import { Marker, MarkerContent, MarkerIcon } from "@/ui/marker";
+import { TextLink } from "@/ui/text-link";
 import { writeClipboardText } from "@/utils/clipboard";
-
-const LANGUAGE_HINTS = new Set([
-  "bash",
-  "c",
-  "cpp",
-  "csharp",
-  "css",
-  "dart",
-  "diff",
-  "docker",
-  "elixir",
-  "erlang",
-  "go",
-  "graphql",
-  "haskell",
-  "html",
-  "java",
-  "javascript",
-  "json",
-  "jsx",
-  "kotlin",
-  "lua",
-  "makefile",
-  "markdown",
-  "markup",
-  "nginx",
-  "objectivec",
-  "perl",
-  "php",
-  "python",
-  "r",
-  "ruby",
-  "rust",
-  "scala",
-  "scss",
-  "shell",
-  "sql",
-  "swift",
-  "toml",
-  "tsx",
-  "typescript",
-  "vim",
-  "xml",
-  "yaml",
-]);
-
-const CODE_LINE_PATTERN =
-  /[{}()[\];]|=>|::|->|:=|==|!=|<=|>=|&&|\|\||^\s{2,}\S|^(let|const|var|fn|def|class|import|export|if|for|while|match|return|use|pub|impl|SELECT|FROM|INSERT|UPDATE|DELETE)\b/i;
-
-function stripQuoteWrappers(line: string): string {
-  const trimmed = line.trim();
-  return trimmed
-    .replace(/^(["'`“”‘’])+/, "")
-    .replace(/(["'`“”‘’])+$/, "")
-    .replace(/[:;,]$/, "")
-    .trim();
-}
-
-function extractLanguageHint(line: string): string | null {
-  const candidate = stripQuoteWrappers(line);
-  if (!/^[A-Za-z][A-Za-z0-9+#._-]{0,19}$/.test(candidate)) return null;
-
-  const normalized = normalizeLanguage(candidate);
-  if (!LANGUAGE_HINTS.has(normalized)) return null;
-  return normalized;
-}
-
-function isLikelyCodeLine(line: string): boolean {
-  const trimmed = line.trim();
-  if (!trimmed) return false;
-  if (/^(#{1,6}\s|[-*+]\s|\d+\.\s|>)/.test(trimmed)) return false;
-  return CODE_LINE_PATTERN.test(line);
-}
-
-function normalizeImplicitCodeFences(text: string): string {
-  const lines = text.split("\n");
-  const output: string[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const languageHint = extractLanguageHint(lines[i]);
-    const nextLine = lines[i + 1];
-
-    if (!languageHint || nextLine === undefined || !isLikelyCodeLine(nextLine)) {
-      output.push(lines[i]);
-      continue;
-    }
-
-    output.push(`\`\`\`${languageHint}`);
-    i += 1;
-
-    while (i < lines.length) {
-      const current = lines[i];
-      const trimmed = current.trim();
-      if (!trimmed || trimmed === '"' || trimmed === "'") {
-        break;
-      }
-      output.push(current);
-      i += 1;
-    }
-
-    output.push("```");
-
-    if (i < lines.length && lines[i].trim() === "") {
-      output.push("");
-    }
-  }
-
-  return output.join("\n");
-}
+import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
+import { useProjectStore } from "@/features/window/stores/project.store";
 
 function inferCodeLanguage(code: string): string {
   const trimmed = code.trim();
@@ -157,6 +60,33 @@ function inferCodeLanguage(code: string): string {
 
 async function copyTextToClipboard(text: string) {
   await writeClipboardText(text);
+}
+
+async function openMarkdownLink(href: string, label: string) {
+  if (isExternalMarkdownLink(href)) {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    await openUrl(href);
+    return;
+  }
+
+  const fileSystem = useFileSystemStore.getState();
+  const files = await fileSystem.getAllProjectFiles();
+  const target = resolveWorkspaceFileLink(href, label, files, fileSystem.rootFolderPath);
+
+  if (target) {
+    await fileSystem.handleFileSelect(
+      target.path,
+      false,
+      target.line,
+      target.column,
+      undefined,
+      false,
+    );
+    return;
+  }
+
+  const { openUrl } = await import("@tauri-apps/plugin-opener");
+  await openUrl(href);
 }
 
 function renderHighlightedCode(code: string, segments: CodeHighlightSegment[]): React.ReactNode {
@@ -225,28 +155,28 @@ function CodeBlock({
 
   return (
     <div className="group relative my-2">
-      <pre className="editor-font max-w-full overflow-x-auto rounded border border-border bg-secondary-bg p-2">
+      <pre className="font-mono max-w-full overflow-x-auto rounded border border-border bg-surface p-2">
         <div className="mb-1 flex items-center justify-between">
           {languageLabel && (
-            <div className="editor-font text-text-lighter ui-text-xs">{languageLabel}</div>
+            <div className="font-mono text-subtle-foreground ui-text-sm">{languageLabel}</div>
           )}
           {code.trim() && (
             <div className="ml-auto flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
               <Button
                 type="button"
                 variant="ghost"
-                className="rounded"
                 onClick={() => void copyTextToClipboard(code)}
                 tooltip="Copy code"
+                iconOnly
               >
-                <Copy className="text-text-lighter" size={12} />
+                <CopyIcon className="text-subtle-foreground" size={12} />
               </Button>
               {onApplyCode && (
                 <Button
                   type="button"
                   variant="default"
                   onClick={() => onApplyCode(code)}
-                  className="h-5 px-1.5 ui-text-xs"
+                  size="compact"
                   tooltip="Apply this code to current buffer"
                 >
                   Apply
@@ -255,7 +185,7 @@ function CodeBlock({
             </div>
           )}
         </div>
-        <code className="editor-font block whitespace-pre-wrap break-all text-text ui-text-xs">
+        <code className="font-mono block whitespace-pre-wrap break-all text-foreground ui-text-sm">
           {renderedCode}
         </code>
       </pre>
@@ -264,15 +194,19 @@ function CodeBlock({
 }
 
 // Error Block Component
-function ErrorBlock({ errorData }: { errorData: string }) {
+function ErrorBlock({ errorData, chatId }: { errorData: string; chatId?: string | null }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isRestartingSession, setIsRestartingSession] = useState(false);
+  const [isOpeningTerminal, setIsOpeningTerminal] = useState(false);
   const openTerminalBuffer = useBufferStore((state) => state.actions.openTerminalBuffer);
-  const currentChatId = useAIChatStore((state) => state.currentChatId);
-  const setChatAcpSessionId = useAIChatStore((state) => state.setChatAcpSessionId);
-  const setAvailableSlashCommands = useAIChatStore((state) => state.setAvailableSlashCommands);
-  const setSessionModeState = useAIChatStore((state) => state.setSessionModeState);
-  const setSessionConfigOptions = useAIChatStore((state) => state.setSessionConfigOptions);
+  const setActiveBuffer = useBufferStore((state) => state.actions.setActiveBuffer);
+  const rootFolderPath = useProjectStore((state) => state.rootFolderPath);
+  const agentId = useAIChatStore((state) => {
+    const chatAgentId = chatId
+      ? state.chats.find((chat) => chat.id === chatId)?.agentId
+      : undefined;
+    return chatAgentId ?? state.selectedAgentId;
+  });
 
   const lines = errorData.split("\n");
   const title =
@@ -298,134 +232,120 @@ function ErrorBlock({ errorData }: { errorData: string }) {
   const summary = title || message || "Error";
   const normalizedDetails = details && details !== message ? details : "";
   const isAuthRequired = code === "AUTH_REQUIRED";
-
-  const suggestedCommand = useMemo(() => {
-    const normalizedText = `${summary} ${message} ${normalizedDetails}`.toLowerCase();
-
-    if (normalizedText.includes("claude code")) {
-      return "claude auth login";
-    }
-    if (normalizedText.includes("codex")) {
-      return "codex";
-    }
-    if (normalizedText.includes("gemini")) {
-      return "gemini";
-    }
-    if (normalizedText.includes("opencode")) {
-      return "opencode";
-    }
-    if (normalizedText.includes("qwen")) {
-      return "qwen";
-    }
-    if (normalizedText.includes("kimi")) {
-      return "kimi";
-    }
-
-    return null;
-  }, [summary, message, normalizedDetails]);
+  const isConfigurationRequired = code === "CONFIG_REQUIRED";
+  const canRecoverAgent = isAuthRequired || isConfigurationRequired;
 
   const handleRestartAgentSession = async () => {
     setIsRestartingSession(true);
     try {
-      await invoke("stop_acp_agent");
-      if (currentChatId) {
-        setChatAcpSessionId(currentChatId, null);
-      }
-      setAvailableSlashCommands([]);
-      setSessionModeState(null, []);
-      setSessionConfigOptions([]);
+      await AcpStreamHandler.restartAgent(agentId, chatId);
+      toast.success("Agent session restarted");
     } catch (error) {
       console.error("Failed to restart ACP agent session:", error);
+      toast.error("Couldn't restart the agent session", {
+        description: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setIsRestartingSession(false);
     }
   };
 
+  const handleOpenAuthenticationTerminal = async () => {
+    setIsOpeningTerminal(true);
+    try {
+      const agents = await AcpStreamHandler.getAvailableAgents().catch(() => []);
+      const command = getAcpAuthenticationCommand(agentId, agents);
+      const bufferId = openTerminalBuffer({
+        command: command ?? undefined,
+        name: command ?? "Agent setup",
+        workingDirectory: rootFolderPath ?? undefined,
+      });
+      setActiveBuffer(bufferId);
+    } catch (error) {
+      toast.error("Couldn't open the agent terminal", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsOpeningTerminal(false);
+    }
+  };
+
   return (
-    <div className="my-1 rounded-lg border border-error/25 bg-error/8 px-2.5 py-2">
-      <div className="ui-text-xs flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-medium text-error">Error</span>
-        <span className="text-text">{summary}</span>
-        {code ? <span className="text-text-lighter">({code})</span> : null}
-        {normalizedDetails && (
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="h-auto px-1 text-error/70 hover:bg-transparent hover:text-error"
-          >
-            {isExpanded ? <ChevronDown /> : <ChevronRight />}
-            {isExpanded ? "Hide details" : "Details"}
-          </Button>
-        )}
-      </div>
-      {isAuthRequired && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="default"
-            onClick={() => void handleRestartAgentSession()}
-            disabled={isRestartingSession}
-            className="h-auto gap-1.5"
-          >
-            <Terminal size={12} />
-            {isRestartingSession ? "Restarting..." : "Restart Agent Session"}
-          </Button>
-          {suggestedCommand ? (
+    <Marker role="alert" tone="error" className="my-1 items-start">
+      <MarkerIcon>
+        <WarningCircleIcon />
+      </MarkerIcon>
+      <MarkerContent className="flex min-w-0 flex-col gap-1">
+        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+          <span className="font-medium">{summary}</span>
+          {code ? <span className="text-destructive/70">({code})</span> : null}
+          {normalizedDetails ? (
+            <Button
+              type="button"
+              variant="text"
+              onClick={() => setIsExpanded(!isExpanded)}
+              tone="danger"
+            >
+              {isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+              {isExpanded ? "Hide details" : "Details"}
+            </Button>
+          ) : null}
+        </span>
+        {message && message !== summary ? (
+          <span className="text-destructive/80">{message}</span>
+        ) : null}
+        {canRecoverAgent && (
+          <span className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
               variant="default"
-              onClick={() =>
-                openTerminalBuffer({
-                  command: suggestedCommand,
-                  name: suggestedCommand,
-                })
-              }
-              className="h-auto gap-1.5"
+              onClick={() => void handleRestartAgentSession()}
+              disabled={isRestartingSession}
             >
-              <Terminal size={12} />
-              Open Login Terminal
+              <TerminalWindowIcon size={12} />
+              {isRestartingSession ? "Restarting..." : "Restart Agent Session"}
             </Button>
-          ) : (
             <Button
               type="button"
               variant="default"
-              onClick={() => openTerminalBuffer({ name: "Agent authentication" })}
-              className="h-auto gap-1.5"
+              onClick={() => void handleOpenAuthenticationTerminal()}
+              disabled={isOpeningTerminal}
             >
-              <Terminal size={12} />
-              Open Terminal
+              <TerminalWindowIcon size={12} />
+              {isOpeningTerminal ? "Opening..." : "Open Agent Terminal"}
             </Button>
-          )}
-          <span className="ui-text-xs text-error/70">
-            Complete login in the agent CLI, then retry.
+            <span className="text-destructive/70">
+              {isConfigurationRequired
+                ? "Finish the agent setup, then restart the session."
+                : "Complete login in the agent CLI, then restart the session."}
+            </span>
           </span>
-        </div>
-      )}
-      {normalizedDetails && isExpanded && (
-        <pre className="ui-text-xs editor-font mt-2 overflow-x-auto rounded border border-error/20 bg-error/8 p-2 text-error/90">
-          {(() => {
-            try {
-              const parsed = JSON.parse(normalizedDetails);
-              return JSON.stringify(parsed, null, 2);
-            } catch {
-              return normalizedDetails;
-            }
-          })()}
-        </pre>
-      )}
-    </div>
+        )}
+        {normalizedDetails && isExpanded && (
+          <pre className="max-w-full overflow-x-auto rounded-md bg-destructive/8 p-2 font-mono text-destructive/90 ui-text-sm">
+            {(() => {
+              try {
+                const parsed = JSON.parse(normalizedDetails);
+                return JSON.stringify(parsed, null, 2);
+              } catch {
+                return normalizedDetails;
+              }
+            })()}
+          </pre>
+        )}
+      </MarkerContent>
+    </Marker>
   );
 }
 
 // Header classes scaled for sidebar context
 const headerClasses: Record<number, string> = {
-  1: "mt-3 mb-1.5 font-semibold ui-text-sm text-text",
-  2: "ui-text-sm mt-2.5 mb-1 font-semibold text-text",
-  3: "mt-2 mb-1 font-semibold text-text ui-text-xs",
-  4: "mt-2 mb-0.5 font-medium text-text ui-text-xs",
-  5: "mt-1.5 mb-0.5 font-medium text-text-light ui-text-xs",
-  6: "mt-1.5 mb-0.5 font-medium text-text-lighter ui-text-xs",
+  1: "mt-3 mb-1.5 font-semibold ui-text-sm text-foreground",
+  2: "ui-text-sm mt-2.5 mb-1 font-semibold text-foreground",
+  3: "mt-2 mb-1 font-semibold text-foreground ui-text-sm",
+  4: "mt-2 mb-0.5 font-medium text-foreground ui-text-sm",
+  5: "mt-1.5 mb-0.5 font-medium text-muted-foreground ui-text-sm",
+  6: "mt-1.5 mb-0.5 font-medium text-subtle-foreground ui-text-sm",
 };
 
 function renderHeader(level: number, text: string, key: string): React.ReactNode {
@@ -481,9 +401,7 @@ type MarkdownTable = {
 };
 
 const INLINE_CODE_CLASS_NAME =
-  "editor-font inline whitespace-break-spaces rounded bg-secondary-bg/80 px-1 py-0 text-[0.95em] leading-[inherit] text-text align-baseline";
-const INLINE_LINK_CLASS_NAME =
-  "inline cursor-pointer break-words font-[inherit] leading-[inherit] text-accent hover:underline";
+  "font-mono inline whitespace-break-spaces rounded bg-surface/80 px-1 py-0 text-[0.95em] leading-[inherit] text-foreground align-baseline";
 
 function splitMarkdownTableRow(line: string): string[] {
   let value = line.trim();
@@ -585,13 +503,13 @@ function getTableAlignmentClass(alignment: TableAlignment): string {
 function renderTable(table: MarkdownTable, key: string): React.ReactNode {
   return (
     <div key={key} className="my-2 max-w-full overflow-x-auto">
-      <table className="w-full min-w-max border-collapse ui-text-xs">
+      <table className="w-full min-w-max border-collapse ui-text-sm">
         <thead>
           <tr className="border-border border-b">
             {table.headers.map((header, index) => (
               <th
                 key={index}
-                className={`bg-secondary-bg px-2 py-1.5 font-medium text-text ${getTableAlignmentClass(table.alignments[index])}`}
+                className={`bg-surface px-2 py-1.5 font-medium text-foreground ${getTableAlignmentClass(table.alignments[index])}`}
               >
                 {renderInlineFormatting(header)}
               </th>
@@ -604,7 +522,7 @@ function renderTable(table: MarkdownTable, key: string): React.ReactNode {
               {row.map((cell, cellIndex) => (
                 <td
                   key={cellIndex}
-                  className={`px-2 py-1.5 text-text-light align-top ${getTableAlignmentClass(table.alignments[cellIndex])}`}
+                  className={`px-2 py-1.5 text-muted-foreground align-top ${getTableAlignmentClass(table.alignments[cellIndex])}`}
                 >
                   {renderInlineFormatting(cell)}
                 </td>
@@ -658,7 +576,7 @@ function renderInlineFormatting(text: string): React.ReactNode {
       elements.push(
         <del
           key={getInlineKey("strike", strikeMatch[0])}
-          className="text-text-lighter line-through"
+          className="text-subtle-foreground line-through"
         >
           {strikeMatch[1]}
         </del>,
@@ -695,18 +613,18 @@ function renderInlineFormatting(text: string): React.ReactNode {
     const linkMatch = remaining.match(/^\[([^\]]+)\]\(([^)]+)\)/);
     if (linkMatch) {
       const url = linkMatch[2];
+      const label = linkMatch[1];
       elements.push(
-        <a
+        <TextLink
           key={getInlineKey("link", linkMatch[0])}
           href={url}
           onClick={(e) => {
             e.preventDefault();
-            import("@tauri-apps/plugin-opener").then(({ openUrl }) => openUrl(url));
+            void openMarkdownLink(url, label);
           }}
-          className={INLINE_LINK_CLASS_NAME}
         >
-          {linkMatch[1]}
-        </a>,
+          {label}
+        </TextLink>,
       );
       remaining = remaining.slice(linkMatch[0].length);
       continue;
@@ -717,17 +635,16 @@ function renderInlineFormatting(text: string): React.ReactNode {
     if (urlMatch) {
       const url = urlMatch[1];
       elements.push(
-        <a
+        <TextLink
           key={getInlineKey("url", urlMatch[0])}
           href={url}
           onClick={(e) => {
             e.preventDefault();
             import("@tauri-apps/plugin-opener").then(({ openUrl }) => openUrl(url));
           }}
-          className={INLINE_LINK_CLASS_NAME}
         >
           {url.length > 60 ? `${url.slice(0, 60)}...` : url}
-        </a>,
+        </TextLink>,
       );
       remaining = remaining.slice(urlMatch[0].length);
       continue;
@@ -794,7 +711,7 @@ function renderContent(
             className="my-2 ml-5 list-decimal space-y-0.5"
           >
             {currentList.items.map((item, idx) => (
-              <li key={idx} className="pl-1 text-text">
+              <li key={idx} className="pl-1 text-foreground">
                 {renderInlineFormatting(item)}
               </li>
             ))}
@@ -807,7 +724,7 @@ function renderContent(
             className="my-2 ml-5 list-disc space-y-0.5"
           >
             {currentList.items.map((item, idx) => (
-              <li key={idx} className="pl-1 text-text">
+              <li key={idx} className="pl-1 text-foreground">
                 {renderInlineFormatting(item)}
               </li>
             ))}
@@ -895,7 +812,7 @@ function renderContent(
       elements.push(
         <blockquote
           key={`quote-${i}-${quoteContent.length}`}
-          className="my-2 border-border border-l-2 pl-3 text-text-light italic"
+          className="my-2 border-border border-l-2 pl-3 text-muted-foreground italic"
         >
           {renderInlineFormatting(quoteContent)}
         </blockquote>,
@@ -955,14 +872,16 @@ function renderContent(
 }
 
 // Simple markdown renderer for AI responses
-export default function MarkdownRenderer({ content, onApplyCode }: MarkdownRendererProps) {
+export default function MarkdownRenderer({ content, onApplyCode, chatId }: MarkdownRendererProps) {
+  const normalizedContent = normalizePlainTextFence(content);
+
   // Check for error blocks first
-  if (content.includes("[ERROR_BLOCK]")) {
-    const errorMatch = content.match(/\[ERROR_BLOCK\]([\s\S]*?)\[\/ERROR_BLOCK\]/);
+  if (normalizedContent.includes("[ERROR_BLOCK]")) {
+    const errorMatch = normalizedContent.match(/\[ERROR_BLOCK\]([\s\S]*?)\[\/ERROR_BLOCK\]/);
     if (errorMatch) {
-      return <ErrorBlock errorData={errorMatch[1]} />;
+      return <ErrorBlock errorData={errorMatch[1]} chatId={chatId} />;
     }
   }
 
-  return <div>{renderContent(content, onApplyCode)}</div>;
+  return <div>{renderContent(normalizedContent, onApplyCode)}</div>;
 }

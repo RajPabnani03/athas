@@ -4,7 +4,6 @@
  */
 
 import type {
-  ExtensionCategory,
   ExtensionManifest,
   FormatterConfiguration,
   LinterConfiguration,
@@ -12,11 +11,13 @@ import type {
   PlatformExecutable,
   ToolRuntime,
 } from "../types/extension-manifest";
+import { normalizeExtensionCategories } from "../manifest/extension-package-contract";
 import { getManifestLanguageContributions } from "../types/extension-contributions";
+import { loadExtensionCatalog } from "../marketplace/extension-catalog";
 import { registerLanguageAssetOverride } from "@/features/editor/lib/wasm-parser/extension-assets";
+import { getServiceUrls } from "@/config/services";
 
-const CDN_BASE_URL = import.meta.env.VITE_PARSER_CDN_URL || "https://athas.dev/extensions";
-const MANIFESTS_URL = `${CDN_BASE_URL}/manifests.json`;
+const CDN_BASE_URL = getServiceUrls().extensionsCdnBaseUrl;
 const BUNDLED_PARSER_BASE_URL = "/tree-sitter/parsers";
 
 interface ExternalLanguageContribution {
@@ -35,6 +36,7 @@ interface ExternalToolConfig {
   downloadUrl?: string;
   args?: string[];
   env?: Record<string, string>;
+  initializationOptions?: Record<string, unknown>;
 }
 
 interface ExternalLanguageManifest {
@@ -45,6 +47,7 @@ interface ExternalLanguageManifest {
   version?: string;
   publisher?: string;
   categories?: string[];
+  icon?: string;
   languages?: ExternalLanguageContribution[];
   contributes?: {
     languages?: ExternalLanguageContribution[];
@@ -61,31 +64,17 @@ interface ExternalLanguageManifest {
   };
 }
 
+const BUNDLED_LANGUAGE_MANIFESTS = import.meta.glob<ExternalLanguageManifest>(
+  "../../../extensions/official/*/extension.json",
+  { eager: true, import: "default" },
+);
+
 type PackagedLanguageEntry = {
   manifest: ExtensionManifest;
   languageIds: string[];
   wasmUrl: string;
   highlightQueryUrl: string;
 };
-
-function toExtensionCategories(rawCategories: string[] | undefined): ExtensionCategory[] {
-  if (!rawCategories || rawCategories.length === 0) return ["Language"];
-
-  return rawCategories.map((category) => {
-    const normalized = category.trim().toLowerCase();
-    if (normalized === "language") return "Language";
-    if (normalized === "database") return "Database";
-    if (normalized === "icon theme" || normalized === "icon-theme" || normalized === "icontheme") {
-      return "Icon Theme";
-    }
-    if (normalized === "linter") return "Linter";
-    if (normalized === "formatter") return "Formatter";
-    if (normalized === "theme") return "Theme";
-    if (normalized === "keymaps") return "Keymaps";
-    if (normalized === "snippets") return "Snippets";
-    return "Other";
-  });
-}
 
 function normalizeExtensions(extensions: string[]): string[] {
   return extensions.map((ext) => (ext.startsWith(".") ? ext : `.${ext}`));
@@ -101,6 +90,20 @@ function defaultCommand(name?: string): PlatformExecutable {
 
 function isAbsoluteAssetUrl(value: string): boolean {
   return /^(?:[a-z]+:)?\/\//i.test(value) || value.startsWith("/");
+}
+
+function resolveExtensionAssetUrl(
+  folder: string,
+  assetPath: string | undefined,
+  fallbackFilename: string,
+): string {
+  const normalized = assetPath?.trim() || fallbackFilename;
+
+  if (isAbsoluteAssetUrl(normalized)) {
+    return normalized;
+  }
+
+  return `${CDN_BASE_URL}/${folder}/${normalized.replace(/^\.?\//, "")}`;
 }
 
 export function resolveLanguageAssetUrl(
@@ -137,6 +140,7 @@ function createLspConfig(manifest: ExternalLanguageManifest): LspConfiguration |
     server: defaultCommand(lsp.name),
     args: lsp.args || [],
     env: lsp.env,
+    initializationOptions: lsp.initializationOptions,
     fileExtensions,
     languageIds,
   };
@@ -187,11 +191,11 @@ function convertLanguageManifest(
   path: string,
   manifest: ExternalLanguageManifest,
 ): PackagedLanguageEntry {
-  const folderMatch = path.match(/\/extensions\/([^/]+)\/extension\.json$/);
+  const folderMatch = path.match(/(?:^|\/)([^/]+)\/extension\.json$/);
   const folder = folderMatch?.[1];
 
   if (!folder) {
-    throw new Error(`Could not resolve extension folder from path: ${path}`);
+    throw new Error(`Could not resolve integration folder from path: ${path}`);
   }
 
   const languages = getExternalLanguages(manifest).map((language) => ({
@@ -225,7 +229,8 @@ function convertLanguageManifest(
     description: manifest.description || `${manifest.name} language support`,
     version: manifest.version || "1.0.0",
     publisher: manifest.publisher || "Athas",
-    categories: toExtensionCategories(manifest.categories),
+    categories: normalizeExtensionCategories(manifest.categories, "Language"),
+    icon: resolveExtensionAssetUrl(folder, manifest.icon, "icon.svg"),
     languages,
     contributes: {
       languages,
@@ -264,21 +269,26 @@ let packagedExtensions: ExtensionManifest[] = [];
 let initialized = false;
 let initPromise: Promise<void> | null = null;
 
-function processManifests(manifests: Record<string, ExternalLanguageManifest>) {
+function processManifests(
+  manifests: Record<string, ExternalLanguageManifest>,
+  markInitialized = true,
+) {
   packagedEntries = [];
   manifestByLanguageId.clear();
   wasmUrlByLanguageId.clear();
   highlightUrlByLanguageId.clear();
   highlightUrlByExtensionId.clear();
 
-  for (const [folder, manifest] of Object.entries(manifests)) {
+  for (const [pathOrFolder, manifest] of Object.entries(manifests)) {
     try {
       if (getExternalLanguages(manifest).length === 0) {
         continue;
       }
 
-      const syntheticPath = `/extensions/${folder}/extension.json`;
-      const entry = convertLanguageManifest(syntheticPath, manifest);
+      const manifestPath = pathOrFolder.endsWith("/extension.json")
+        ? pathOrFolder
+        : `/extensions/${pathOrFolder}/extension.json`;
+      const entry = convertLanguageManifest(manifestPath, manifest);
       packagedEntries.push(entry);
 
       highlightUrlByExtensionId.set(entry.manifest.id, entry.highlightQueryUrl);
@@ -293,13 +303,15 @@ function processManifests(manifests: Record<string, ExternalLanguageManifest>) {
         });
       }
     } catch (error) {
-      console.error(`Failed to convert language manifest for ${folder}:`, error);
+      console.error(`Failed to convert language manifest for ${pathOrFolder}:`, error);
     }
   }
 
   packagedExtensions = packagedEntries.map((entry) => entry.manifest);
-  initialized = true;
+  initialized = markInitialized;
 }
+
+processManifests(BUNDLED_LANGUAGE_MANIFESTS, false);
 
 /**
  * Initialize the language packager by fetching manifests from the CDN.
@@ -311,15 +323,10 @@ export async function initializeLanguagePackager(): Promise<void> {
 
   initPromise = (async () => {
     try {
-      const response = await fetch(MANIFESTS_URL);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch manifests: ${response.status} ${response.statusText}`);
-      }
-      const manifests: Record<string, ExternalLanguageManifest> = await response.json();
+      const manifests = await loadExtensionCatalog<ExternalLanguageManifest>();
       processManifests(manifests);
     } catch (error) {
-      console.warn("Failed to load extension manifests from CDN:", error);
-      // Initialize with empty state so the editor can still function
+      console.warn("Failed to load integration manifests from CDN:", error);
       initialized = true;
     }
   })();

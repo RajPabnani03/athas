@@ -1,18 +1,15 @@
-import type { ReactNode } from "react";
-import { createElement } from "react";
-import type { HighlightToken } from "@/features/editor/types/wasm-parser/wasm-parser.types";
 import type {
   Commit,
+  DiffSectionRef,
   DiffSectionIndex,
   FileDiff,
   FilePatchData,
 } from "../types/github-pr-viewer.types";
-import type { PullRequestFile } from "../types/github.types";
+import type { VariantProps } from "class-variance-authority";
+import { badgeVariants } from "@/ui/badge";
+import type { PullRequestDetails, PullRequestFile } from "../types/github.types";
 
-export const EXPAND_ALL_EAGER_PATCH_LIMIT = 10;
-export const EXPANDED_PATCH_BACKGROUND_BATCH = 4;
-
-export function inferFileStatus(additions: number, deletions: number): FileDiff["status"] {
+function inferFileStatus(additions: number, deletions: number): FileDiff["status"] {
   if (additions > 0 && deletions === 0) return "added";
   if (deletions > 0 && additions === 0) return "deleted";
   return "modified";
@@ -35,9 +32,7 @@ export function buildDiffSectionIndex(diffText: string): DiffSectionIndex {
   if (!diffText) return {};
 
   const headerRegex = /^diff --git a\/(.+?) b\/(.+)$/gm;
-  const headers: Array<
-    Pick<import("../types/github-pr-viewer.types").DiffSectionRef, "start" | "oldPath" | "newPath">
-  > = [];
+  const headers: Array<Pick<DiffSectionRef, "start" | "oldPath" | "newPath">> = [];
   for (let match = headerRegex.exec(diffText); match !== null; match = headerRegex.exec(diffText)) {
     headers.push({
       start: match.index,
@@ -136,14 +131,6 @@ export function resolveSafeRepoFilePath(repoPath: string, relativePath: string):
   return `${normalizedBase}${separator}${segments.join(separator)}`;
 }
 
-export function getCommentKey(comment: {
-  author: { login: string };
-  createdAt: string;
-  body: string;
-}): string {
-  return `${comment.author.login}:${comment.createdAt}:${comment.body.slice(0, 32)}`;
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null) return null;
   return value as Record<string, unknown>;
@@ -213,51 +200,29 @@ export function normalizeCommit(raw: unknown, index: number): Commit | null {
   };
 }
 
-export function renderTokenizedContent(content: string, tokens: HighlightToken[]): ReactNode[] {
-  if (!content || tokens.length === 0) {
-    return [content];
-  }
+export type PullRequestStatus = "open" | "draft" | "merged" | "closed";
 
-  const sortedTokens = [...tokens].sort((a, b) => {
-    const startDiff = a.startPosition.column - b.startPosition.column;
-    if (startDiff !== 0) return startDiff;
-    const aSize = a.endPosition.column - a.startPosition.column;
-    const bSize = b.endPosition.column - b.startPosition.column;
-    return aSize - bSize;
-  });
+export const PR_STATUS_BADGE_VARIANT: Record<
+  PullRequestStatus,
+  VariantProps<typeof badgeVariants>["variant"]
+> = {
+  open: "success",
+  draft: "muted",
+  merged: "accent",
+  closed: "error",
+};
 
-  const result: ReactNode[] = [];
-  let currentPos = 0;
+export const PULL_REQUEST_STATUS_LABEL: Record<PullRequestStatus, string> = {
+  open: "Open",
+  draft: "Draft",
+  merged: "Merged",
+  closed: "Closed",
+};
 
-  for (const token of sortedTokens) {
-    const start = token.startPosition.column;
-    const end = token.endPosition.column;
-
-    if (start >= content.length) continue;
-    if (start < currentPos) continue;
-
-    if (start > currentPos) {
-      result.push(content.slice(currentPos, start));
-    }
-
-    const tokenEnd = Math.min(end, content.length);
-    if (tokenEnd > start) {
-      const tokenText = content.slice(start, tokenEnd);
-      if (token.type === "token-text") {
-        result.push(tokenText);
-      } else {
-        result.push(
-          createElement("span", { key: `${start}-${tokenEnd}`, className: token.type }, tokenText),
-        );
-      }
-    }
-
-    currentPos = Math.max(currentPos, tokenEnd);
-  }
-
-  if (currentPos < content.length) {
-    result.push(content.slice(currentPos));
-  }
-
-  return result;
+export function getPullRequestStatus(
+  pr: Pick<PullRequestDetails, "state" | "isDraft" | "mergedAt">,
+): PullRequestStatus {
+  if (pr.mergedAt) return "merged";
+  if (pr.state.toLowerCase() === "closed") return "closed";
+  return pr.isDraft ? "draft" : "open";
 }

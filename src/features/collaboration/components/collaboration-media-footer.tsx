@@ -1,5 +1,4 @@
-import { MicrophoneIcon as Mic, MonitorIcon as Monitor } from "@phosphor-icons/react";
-import { chatComposerIconButtonClassName } from "@/features/ai/components/input/chat-composer-control-styles";
+import { MicrophoneIcon, MonitorIcon } from "@/ui/icons";
 import { Button } from "@/ui/button";
 import { SidebarFooter } from "@/ui/sidebar";
 
@@ -27,50 +26,41 @@ export function CollaborationMediaFooter({
   onStopFollowing: () => void;
 }) {
   return (
-    <SidebarFooter surface className="mx-0 mb-0 pb-0">
+    <SidebarFooter>
       <div className="flex min-w-0 items-center gap-1 px-1 py-1">
         <Button
           type="button"
-          variant="ghost"
+          variant={micState === "error" ? "danger" : "ghost"}
           active={micState === "active"}
-          className={chatComposerIconButtonClassName(
-            micState === "error" ? "text-error hover:text-error" : undefined,
-          )}
           tooltip={micState === "active" ? "Stop Mic" : "Start Mic"}
-          tooltipSide="top"
           onClick={onToggleMic}
+          iconOnly
         >
-          <Mic />
+          <MicrophoneIcon />
         </Button>
         <Button
           type="button"
-          variant="ghost"
+          variant={screenState === "error" ? "danger" : "ghost"}
           active={screenState === "active"}
-          className={chatComposerIconButtonClassName(
-            screenState === "error" ? "text-error hover:text-error" : undefined,
-          )}
           tooltip={screenState === "active" ? "Stop Screen Share" : "Share Screen"}
-          tooltipSide="top"
           onClick={onToggleScreenShare}
+          iconOnly
         >
-          <Monitor />
+          <MonitorIcon />
         </Button>
-        <div className="ui-text-xs min-w-0 flex-1 truncate px-1">
-          <span className="font-medium text-text">{workspaceName}</span>
-          <span className="px-1 text-text-lighter">·</span>
-          <span className="text-text-lighter">{onlineCount} online</span>
-          <span className="px-1 text-text-lighter">·</span>
-          <span className="text-text-lighter">{streamStatus}</span>
+        <div className="ui-text-sm min-w-0 flex-1 truncate px-1">
+          <span className="font-medium text-foreground">{workspaceName}</span>
+          <span className="px-1 text-subtle-foreground">·</span>
+          <span className="text-subtle-foreground">{onlineCount} online</span>
+          <span className="px-1 text-subtle-foreground">·</span>
+          <span className="text-subtle-foreground">{streamStatus}</span>
         </div>
         {isFollowing ? (
-          <Button
-            type="button"
-            variant="ghost"
-            className="ui-text-xs ml-auto h-6 px-2"
-            onClick={onStopFollowing}
-          >
-            Stop
-          </Button>
+          <span className="inline-flex min-w-0 ml-auto">
+            <Button type="button" variant="ghost" onClick={onStopFollowing}>
+              Stop
+            </Button>
+          </span>
         ) : null}
       </div>
     </SidebarFooter>

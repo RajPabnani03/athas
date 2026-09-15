@@ -1,12 +1,17 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react";
 import { cva } from "class-variance-authority";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { ArrowClockwiseIcon as RefreshCwIcon, XIcon as X } from "@phosphor-icons/react";
-import { useCallback, useRef } from "react";
+import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
+import { ArrowClockwiseIcon, DotsIcon, XIcon } from "@/ui/icons";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import type React from "react";
 import { useActionsStore } from "@/features/command-palette/stores/action-history.store";
-import { Button, type ButtonProps, type ButtonVariant } from "@/ui/button";
-import { instantTransition, overlayTransition, motionEase, motionDuration } from "@/ui/motion";
+import Badge from "@/ui/badge";
+import { Button, buttonVariants, type ButtonProps } from "@/ui/button";
+import { instantTransition, quickTransition } from "@/utils/motion";
+import { ScrollArea } from "@/ui/scroll-area";
+import { Tabs, TabsList, TabsTrigger } from "@/ui/tabs";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/ui/dropdown";
 import { cn } from "@/utils/cn";
 
 interface CommandProps {
@@ -14,7 +19,6 @@ interface CommandProps {
   children: React.ReactNode;
   className?: string;
   onClose?: () => void;
-  placement?: "top" | "bottom";
   title?: string;
   autoFocus?: boolean;
 }
@@ -22,16 +26,16 @@ interface CommandProps {
 const commandInputSelector = "[data-command-input]";
 
 const commandContentVariants = cva(
-  "relative z-10 flex max-h-80 w-[520px] flex-col overflow-hidden rounded-xl border border-border bg-primary-bg shadow-[var(--shadow-dialog)] focus:outline-none",
+  "relative z-10 flex max-h-[min(72vh,38rem)] w-[min(50rem,calc(100vw-2rem))] flex-col overflow-hidden",
 );
 
 const commandItemVariants = cva(
-  "ui-font mb-1 flex min-h-7 w-full cursor-pointer items-center justify-start gap-2 rounded-lg px-2.5 py-1.5 text-left text-[length:var(--ui-text-xs)] leading-[1.35] transition-colors",
+  "group/command-item font-sans ui-text-sm mb-0.5 flex h-auto min-h-10 w-full items-center justify-start gap-2.5 rounded-chrome px-2.5 py-2 text-left leading-row transition-colors",
   {
     variants: {
       selected: {
-        true: "bg-selected text-text",
-        false: "bg-transparent text-text hover:bg-hover",
+        true: "bg-selected text-foreground",
+        false: "bg-transparent text-foreground hover:bg-accent",
       },
     },
     defaultVariants: {
@@ -40,49 +44,88 @@ const commandItemVariants = cva(
   },
 );
 
-const commandHeaderContentVariants = cva("flex items-center gap-2", {
-  variants: {
-    density: {
-      compact: "px-3 py-2",
-      comfortable: "px-4 py-3",
-    },
-  },
-  defaultVariants: {
-    density: "compact",
-  },
-});
+const commandHeaderContentClassName = "flex items-center gap-2 px-3 py-2.5";
 
-const commandInputVariants = cva(
-  "ui-font min-w-0 flex-1 bg-transparent text-text placeholder-text-lighter outline-none",
+const commandInputClassName = cva(
+  "font-sans ui-text-sm min-w-0 flex-1 leading-[1.4] text-foreground placeholder-subtle-foreground outline-none",
   {
     variants: {
-      size: {
-        sm: "h-6 text-[length:var(--ui-text-xs)] leading-[1.35]",
-        md: "h-7 text-[length:var(--ui-text-sm)] leading-[1.4]",
+      variant: {
+        /** Borderless input that sits inside a command header. */
+        inline: "h-8 bg-transparent",
+        /** Standalone bordered field, for a search box in a toolbar. */
+        field: "h-7 rounded-md border border-border/70 bg-background/65 px-2",
+        /** Same shape as `field`, on a raised surface. */
+        surface: "h-7 rounded-md bg-surface px-2",
       },
     },
     defaultVariants: {
-      size: "sm",
+      variant: "inline",
     },
   },
 );
+
+type CommandHeaderActionProps = Omit<ButtonProps, "className" | "variant">;
+
+export const CommandHeaderAction = (props: CommandHeaderActionProps) => (
+  <Button variant="ghost" iconOnly {...props} />
+);
+
+CommandHeaderAction.displayName = "CommandHeaderAction";
+
+type CommandHeaderBadgeProps = React.ComponentProps<typeof Badge>;
+
+export const CommandHeaderBadge = (props: CommandHeaderBadgeProps) => <Badge truncate {...props} />;
+
+CommandHeaderBadge.displayName = "CommandHeaderBadge";
+
+type CommandItemActionProps = Omit<ButtonProps, "className" | "variant" | "tone"> & {
+  tone?: "neutral" | "danger";
+};
+
+export const CommandItemAction = ({ tone = "neutral", ...props }: CommandItemActionProps) => (
+  <span className="inline-flex shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/command-item:opacity-100 sm:group-focus-within/command-item:opacity-100">
+    <Button variant={tone === "danger" ? "danger" : "ghost"} iconOnly {...props} />
+  </span>
+);
+
+CommandItemAction.displayName = "CommandItemAction";
+
+export const CommandItemMenu = ({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) => (
+  <DropdownMenu>
+    <DropdownMenuTrigger
+      render={
+        <CommandItemAction
+          type="button"
+          aria-label={label}
+          onClick={(event) => event.stopPropagation()}
+        />
+      }
+    >
+      <DotsIcon />
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="end">{children}</DropdownMenuContent>
+  </DropdownMenu>
+);
+
+CommandItemMenu.displayName = "CommandItemMenu";
 
 const Command = ({
   isVisible,
   children,
   className,
   onClose,
-  placement = "top",
   title = "Command palette",
   autoFocus = true,
 }: CommandProps) => {
   const popupRef = useRef<HTMLDivElement>(null);
-  const prefersReducedMotion = useReducedMotion();
-  const containerClassName =
-    placement === "bottom"
-      ? "fixed inset-0 z-[10060] flex items-end justify-center px-4 pb-12"
-      : "fixed inset-0 z-[10060] flex items-start justify-center pt-16";
-  const motionY = placement === "bottom" ? 8 : -8;
+  const prefersReducedMotion = useReducedMotionConfig();
   const getInitialFocusTarget = useCallback(
     () => popupRef.current?.querySelector<HTMLElement>(commandInputSelector) ?? true,
     [],
@@ -93,21 +136,15 @@ const Command = ({
       {isVisible && (
         <DialogPrimitive.Root open={isVisible} onOpenChange={(open) => !open && onClose?.()}>
           <DialogPrimitive.Portal>
-            <div className={containerClassName}>
-              <DialogPrimitive.Backdrop
-                render={
-                  <motion.button
-                    type="button"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={prefersReducedMotion ? instantTransition : overlayTransition}
-                  />
-                }
-                className="absolute inset-0 z-0 cursor-default bg-black/20"
-                aria-label="Close command palette"
-                tabIndex={-1}
-              />
+            <div
+              className="fixed inset-0 z-10060 flex items-start justify-center bg-black/10 pt-[10vh]"
+              onMouseDown={(event) => {
+                if (event.target !== event.currentTarget) return;
+                event.preventDefault();
+                event.stopPropagation();
+                onClose?.();
+              }}
+            >
               <DialogPrimitive.Popup
                 ref={popupRef}
                 aria-describedby={undefined}
@@ -117,22 +154,24 @@ const Command = ({
                     initial={
                       prefersReducedMotion
                         ? false
-                        : { opacity: 0, scale: 0.98, y: motionY, filter: "blur(2px)" }
+                        : { opacity: 0, scale: 1, y: -4, filter: "blur(0px)" }
                     }
                     animate={{ opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
                     exit={
                       prefersReducedMotion
                         ? { opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }
-                        : { opacity: 0, scale: 0.98, y: motionY, filter: "blur(2px)" }
+                        : { opacity: 0, scale: 1, y: -4, filter: "blur(0px)" }
                     }
-                    transition={
-                      prefersReducedMotion
-                        ? instantTransition
-                        : { duration: motionDuration.fast, ease: motionEase.smooth }
-                    }
+                    transition={prefersReducedMotion ? instantTransition : quickTransition}
                   />
                 }
-                className={cn(commandContentVariants(), className)}
+                className={cn(
+                  "rounded-xl bg-background text-foreground shadow-(--shadow-dialog) ring-1 ring-border/70 outline-none",
+                  commandContentVariants(),
+                  "pointer-events-auto",
+                  className,
+                )}
+                data-command-surface=""
               >
                 <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
                 {children}
@@ -151,62 +190,144 @@ interface CommandHeaderProps {
   children: React.ReactNode;
   onClose: () => void;
   showClearButton?: boolean;
-  density?: "compact" | "comfortable";
   className?: string;
-  contentClassName?: string;
 }
 
 export const CommandHeader = ({
   children,
   onClose,
   showClearButton = false,
-  density = "compact",
   className,
-  contentClassName,
 }: CommandHeaderProps) => {
-  const clearActionsStack = useActionsStore.use.clearStack();
+  const clearActionsStack = useActionsStore.use.actions().clearStack;
 
   return (
-    <div data-command-header className={cn("border-border border-b", className)}>
-      <div className={cn(commandHeaderContentVariants({ density }), contentClassName)}>
+    <div
+      data-command-header
+      className={cn(
+        "relative z-20 shrink-0 overflow-clip border-border border-b bg-background",
+        className,
+      )}
+    >
+      <div className={commandHeaderContentClassName}>
         {children}
-        <Button
-          aria-label="Close command palette"
-          onClick={onClose}
-          variant="ghost"
-          className="rounded"
-          compact
-        >
-          <X className="text-text-lighter" />
-        </Button>
         {showClearButton && (
-          <Button
-            aria-label="Clear persisted actions"
-            onClick={clearActionsStack}
-            variant="ghost"
-            className="rounded"
-            compact
-          >
-            <RefreshCwIcon className="text-text-lighter" />
-          </Button>
+          <CommandHeaderAction aria-label="Clear persisted actions" onClick={clearActionsStack}>
+            <ArrowClockwiseIcon />
+          </CommandHeaderAction>
         )}
+        <CommandHeaderAction aria-label="Close command palette" onClick={onClose}>
+          <XIcon />
+        </CommandHeaderAction>
       </div>
     </div>
   );
 };
 
-interface CommandListProps {
-  children: React.ReactNode;
+type CommandListProps = React.ComponentProps<"div"> & {
+  padding?: "default" | "spacious";
   ref?: React.Ref<HTMLDivElement>;
+};
+
+export const CommandList = ({
+  children,
+  ref,
+  className,
+  padding = "default",
+  ...props
+}: CommandListProps) => (
+  <ScrollArea
+    className={cn("isolate flex min-h-0 flex-1", className)}
+    viewportClassName="h-auto min-h-0 flex-1 overscroll-none"
+    contentPadding={padding === "spacious" ? "xl" : "sm"}
+    viewportProps={{ ref, ...props }}
+  >
+    {children}
+  </ScrollArea>
+);
+
+CommandList.displayName = "CommandList";
+
+interface CommandFormProps {
+  title: React.ReactNode;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+  columns?: 1 | 2;
+  submitLabel: string;
+  pendingLabel?: string;
+  isPending?: boolean;
+  submitDisabled?: boolean;
+  onSubmit: React.FormEventHandler<HTMLFormElement>;
+  onCancel?: () => void;
 }
 
-export const CommandList = ({ children, ref }: CommandListProps) => (
-  <div ref={ref} className="custom-scrollbar-thin flex-1 overflow-y-auto p-1">
+export const CommandForm = ({
+  title,
+  icon,
+  children,
+  columns = 1,
+  submitLabel,
+  pendingLabel,
+  isPending = false,
+  submitDisabled = false,
+  onSubmit,
+  onCancel,
+}: CommandFormProps) => (
+  <div className="shrink-0 p-2 pb-0">
+    <form data-command-form="" className="rounded-chrome bg-surface/55 p-2" onSubmit={onSubmit}>
+      <div className="mb-2 flex min-w-0 items-center gap-2">
+        {icon ? <CommandItemIcon>{icon}</CommandItemIcon> : null}
+        <span className="min-w-0 flex-1 truncate font-medium text-foreground ui-text-sm">
+          {title}
+        </span>
+        {onCancel ? (
+          <Button
+            type="button"
+            variant="ghost"
+            iconOnly
+            onClick={onCancel}
+            aria-label={`Cancel ${submitLabel.toLowerCase()}`}
+          >
+            <XIcon />
+          </Button>
+        ) : null}
+        <Button type="submit" variant="accent" disabled={submitDisabled || isPending}>
+          {isPending ? (pendingLabel ?? submitLabel) : submitLabel}
+        </Button>
+      </div>
+      <div className={cn("grid min-w-0 gap-2", columns === 2 && "grid-cols-1 sm:grid-cols-2")}>
+        {children}
+      </div>
+    </form>
+  </div>
+);
+
+CommandForm.displayName = "CommandForm";
+
+interface CommandFormFieldProps {
+  label?: React.ReactNode;
+  htmlFor?: string;
+  span?: "single" | "full";
+  children: React.ReactNode;
+}
+
+export const CommandFormField = ({
+  label,
+  htmlFor,
+  span = "single",
+  children,
+}: CommandFormFieldProps) => (
+  <div className={cn("min-w-0 space-y-1", span === "full" && "col-span-full")}>
+    {label ? (
+      <label htmlFor={htmlFor} className="block truncate text-subtle-foreground ui-text-sm">
+        {label}
+      </label>
+    ) : null}
     {children}
   </div>
 );
 
-CommandList.displayName = "CommandList";
+CommandFormField.displayName = "CommandFormField";
 
 interface CommandFooterProps {
   children: React.ReactNode;
@@ -215,23 +336,24 @@ interface CommandFooterProps {
 export const CommandFooter = ({ children }: CommandFooterProps) => (
   <div
     data-command-footer
-    className="sticky bottom-0 border-border border-t bg-primary-bg px-2 py-2"
+    className="relative z-20 shrink-0 overflow-clip border-border border-t bg-background p-2"
   >
-    <div className="flex items-center gap-1">{children}</div>
+    <div className="flex flex-wrap items-center gap-1.5">{children}</div>
   </div>
 );
 
 CommandFooter.displayName = "CommandFooter";
 
-interface CommandInputProps {
+type CommandInputProps = Omit<React.ComponentProps<"input">, "onChange" | "size"> & {
   value: string;
   onChange: (value: string) => void;
   onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
   placeholder: string;
   className?: string;
-  size?: "sm" | "md";
+  /** How the input is framed. See `commandInputClassName`. */
+  variant?: "inline" | "field" | "surface";
   ref?: React.Ref<HTMLInputElement>;
-}
+};
 
 export const CommandInput = ({
   value,
@@ -239,8 +361,9 @@ export const CommandInput = ({
   onKeyDown,
   placeholder,
   className,
-  size = "sm",
+  variant = "inline",
   ref,
+  ...props
 }: CommandInputProps) => (
   <input
     ref={ref}
@@ -249,91 +372,348 @@ export const CommandInput = ({
     onChange={(e) => onChange(e.target.value)}
     onKeyDown={onKeyDown}
     placeholder={placeholder}
-    className={cn(commandInputVariants({ size }), className)}
+    className={cn(commandInputClassName({ variant }), className)}
     data-command-input=""
+    {...props}
   />
 );
 
 CommandInput.displayName = "CommandInput";
 
-interface CommandItemProps {
+export interface CommandItemProps {
   children: React.ReactNode;
   isSelected?: boolean;
+  as?: "button" | "div";
   onClick?: () => void;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
   className?: string;
+  disabled?: boolean;
+  type?: React.ComponentProps<"button">["type"];
 }
 
 export const CommandItem = ({
   children,
   isSelected = false,
+  as = "button",
   onClick,
   onMouseEnter,
   onMouseLeave,
   className,
+  disabled = false,
+  type,
   ...props
 }: CommandItemProps &
   Omit<
-    React.ComponentProps<typeof Button>,
-    "children" | "className" | "onClick" | "onMouseEnter" | "onMouseLeave" | "size" | "variant"
-  >) => (
-  <Button
-    onClick={onClick}
-    onMouseEnter={onMouseEnter}
-    onMouseLeave={onMouseLeave}
-    {...props}
-    variant="ghost"
-    className={cn(commandItemVariants({ selected: isSelected }), className)}
-    compact
-  >
-    {children}
-  </Button>
-);
+    React.ComponentProps<"button">,
+    | "children"
+    | "className"
+    | "disabled"
+    | "ref"
+    | "onClick"
+    | "onKeyDown"
+    | "onMouseEnter"
+    | "onMouseLeave"
+    | "size"
+    | "type"
+    | "variant"
+  >) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (disabled || event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onClick?.();
+  };
+
+  if (as === "div") {
+    const divProps = props as React.HTMLAttributes<HTMLDivElement>;
+
+    return (
+      <div
+        role={onClick ? "button" : undefined}
+        tabIndex={onClick && !disabled ? 0 : undefined}
+        aria-disabled={disabled || undefined}
+        onClick={disabled ? undefined : onClick}
+        onKeyDown={handleKeyDown}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+        {...divProps}
+        className={cn(
+          commandItemVariants({ selected: isSelected }),
+          disabled && "pointer-events-none opacity-50",
+          className,
+        )}
+      >
+        {children}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      disabled={disabled}
+      type={type ?? "button"}
+      {...props}
+      className={cn(
+        buttonVariants({ variant: "ghost" }),
+        commandItemVariants({ selected: isSelected }),
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+};
 
 CommandItem.displayName = "CommandItem";
 
+interface CommandTabsItem {
+  id: string;
+  label: React.ReactNode;
+  icon?: React.ReactNode;
+  isActive: boolean;
+  onSelect: () => void;
+}
+
+interface CommandTabsProps {
+  items: CommandTabsItem[];
+  ariaLabel: string;
+  className?: string;
+}
+
+export const CommandTabs = ({ items, ariaLabel, className }: CommandTabsProps) => {
+  const activeItemId = items.find((item) => item.isActive)?.id;
+
+  return (
+    <Tabs
+      value={activeItemId}
+      onValueChange={(value) => items.find((item) => item.id === value)?.onSelect()}
+      className={cn(
+        "relative z-20 shrink-0 gap-0 overflow-clip bg-background px-2 pt-2",
+        className,
+      )}
+    >
+      <TabsList variant="bare" aria-label={ariaLabel}>
+        {items.map((item) => (
+          <TabsTrigger key={item.id} value={item.id} className="w-fit flex-none justify-start">
+            {item.icon}
+            <span className="truncate">{item.label}</span>
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
+  );
+};
+
+CommandTabs.displayName = "CommandTabs";
+
 export const CommandItemTitle = ({ className, ...props }: React.ComponentProps<"span">) => (
-  <span className={cn("min-w-0 truncate text-text", className)} {...props} />
+  <span className={cn("min-w-0 truncate text-foreground", className)} {...props} />
 );
 
 CommandItemTitle.displayName = "CommandItemTitle";
 
+export const CommandItemContent = ({ className, ...props }: React.ComponentProps<"div">) => (
+  <div className={cn("min-w-0 flex-1 text-left", className)} {...props} />
+);
+
+CommandItemContent.displayName = "CommandItemContent";
+
 export const CommandItemMeta = ({ className, ...props }: React.ComponentProps<"span">) => (
-  <span className={cn("ml-1.5 min-w-0 truncate text-text-lighter/70", className)} {...props} />
+  <span className={cn("ml-1.5 min-w-0 truncate text-subtle-foreground/70", className)} {...props} />
 );
 
 CommandItemMeta.displayName = "CommandItemMeta";
 
-type CommandFooterActionProps = Omit<ButtonProps, "compact" | "variant"> & {
-  variant?: ButtonVariant;
-};
-
-export const CommandFooterAction = ({
-  className,
-  variant = "ghost",
-  ...props
-}: CommandFooterActionProps) => (
-  <Button
-    variant={variant}
-    compact
+export const CommandItemDescription = ({ className, ...props }: React.ComponentProps<"span">) => (
+  <span
     className={cn(
-      "h-6 min-w-0 justify-start px-2 text-[length:var(--ui-text-xs)] leading-[1.35]",
-      variant === "ghost" && "text-text-lighter hover:text-text",
+      "mt-0.5 block min-w-0 truncate text-subtle-foreground/70 [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
       className,
     )}
     {...props}
   />
 );
 
-CommandFooterAction.displayName = "CommandFooterAction";
+CommandItemDescription.displayName = "CommandItemDescription";
 
-interface CommandEmptyProps {
-  children: React.ReactNode;
+type CommandItemIconProps = React.ComponentProps<"span">;
+
+export const CommandItemIcon = ({ className, ...props }: CommandItemIconProps) => (
+  <span
+    className={cn(
+      "inline-flex size-6 shrink-0 items-center justify-center text-subtle-foreground [&_svg:not([class*='size-'])]:size-4",
+      className,
+    )}
+    {...props}
+  />
+);
+
+CommandItemIcon.displayName = "CommandItemIcon";
+
+export const CommandItemBadge = (props: React.ComponentProps<typeof Badge>) => (
+  <Badge size="compact" truncate {...props} />
+);
+
+CommandItemBadge.displayName = "CommandItemBadge";
+
+export const CommandItemTrailing = ({ className, ...props }: React.ComponentProps<"span">) => (
+  <span
+    className={cn(
+      "flex shrink-0 items-center gap-1.5 [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
+      className,
+    )}
+    {...props}
+  />
+);
+
+CommandItemTrailing.displayName = "CommandItemTrailing";
+
+interface CommandItemRowProps
+  extends
+    Omit<CommandItemProps, "children">,
+    Omit<
+      React.ComponentProps<"button">,
+      | "children"
+      | "className"
+      | "disabled"
+      | "ref"
+      | "onClick"
+      | "onKeyDown"
+      | "onMouseEnter"
+      | "onMouseLeave"
+      | "size"
+      | "title"
+      | "type"
+      | "variant"
+    > {
+  icon?: React.ReactNode;
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  accessory?: React.ReactNode;
+  action?: React.ReactNode;
+  contentLayout?: "inline" | "stacked";
 }
 
-export const CommandEmpty = ({ children }: CommandEmptyProps) => (
-  <div className="ui-text-sm p-3 text-center leading-[1.35] text-text-lighter">{children}</div>
+export const CommandItemRow = ({
+  icon,
+  title,
+  description,
+  accessory,
+  action,
+  contentLayout = "inline",
+  ...props
+}: CommandItemRowProps) => (
+  <CommandItem {...props}>
+    {icon ? <CommandItemIcon>{icon}</CommandItemIcon> : null}
+    <CommandItemContent className={cn(contentLayout === "inline" && "flex items-center gap-1.5")}>
+      <CommandItemTitle>{title}</CommandItemTitle>
+      {description ? (
+        <CommandItemDescription
+          className={cn(
+            contentLayout === "inline" &&
+              "mt-0 flex min-w-0 shrink items-center gap-1.5 text-subtle-foreground/80",
+          )}
+        >
+          {description}
+        </CommandItemDescription>
+      ) : null}
+    </CommandItemContent>
+    {accessory ? <CommandItemTrailing>{accessory}</CommandItemTrailing> : null}
+    {action}
+  </CommandItem>
+);
+
+CommandItemRow.displayName = "CommandItemRow";
+
+export function clampCommandListIndex(index: number, itemCount: number): number {
+  return Math.min(Math.max(index, 0), Math.max(itemCount - 1, 0));
+}
+
+export function moveCommandListIndex(
+  index: number,
+  itemCount: number,
+  direction: "next" | "previous",
+): number {
+  const currentIndex = clampCommandListIndex(index, itemCount);
+  return clampCommandListIndex(currentIndex + (direction === "next" ? 1 : -1), itemCount);
+}
+
+interface UseCommandListNavigationOptions {
+  itemCount: number;
+  resetKey?: string;
+  onSelect: (index: number) => void;
+}
+
+export function useCommandListNavigation({
+  itemCount,
+  resetKey,
+  onSelect,
+}: UseCommandListNavigationOptions) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [resetKey]);
+
+  useEffect(() => {
+    setSelectedIndex((index) => clampCommandListIndex(index, itemCount));
+  }, [itemCount]);
+
+  const onInputKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSelectedIndex((index) => moveCommandListIndex(index, itemCount, "next"));
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSelectedIndex((index) => moveCommandListIndex(index, itemCount, "previous"));
+        return;
+      }
+
+      if (event.key === "Home") {
+        event.preventDefault();
+        setSelectedIndex(0);
+        return;
+      }
+
+      if (event.key === "End") {
+        event.preventDefault();
+        setSelectedIndex(clampCommandListIndex(itemCount - 1, itemCount));
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        onSelect(selectedIndex);
+      }
+    },
+    [itemCount, onSelect, selectedIndex],
+  );
+
+  return { selectedIndex, setSelectedIndex, onInputKeyDown };
+}
+
+type CommandFooterActionProps = Omit<ButtonProps, "className" | "variant">;
+
+export const CommandFooterAction = (props: CommandFooterActionProps) => (
+  <Button variant="default" {...props} />
+);
+
+CommandFooterAction.displayName = "CommandFooterAction";
+
+export const CommandEmpty = ({ className, ...props }: React.ComponentProps<"div">) => (
+  <div
+    data-slot="command-empty"
+    className={cn("ui-text-sm p-3 text-center leading-row text-subtle-foreground", className)}
+    {...props}
+  />
 );
 
 export default Command;

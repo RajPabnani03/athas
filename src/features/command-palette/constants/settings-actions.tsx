@@ -1,34 +1,55 @@
 import {
-  WarningCircleIcon as AlertCircle,
-  CaretRightIcon as ChevronRight,
-  CloudIcon as Cloud,
-  CodeIcon as Code2,
-  GitBranchIcon as GitBranch,
-  HashIcon as Hash,
-  InfoIcon as Info,
-  ListBulletsIcon as ListBullets,
-  TranslateIcon as Languages,
-  LightbulbIcon as Lightbulb,
-  ChatCircleTextIcon as MessageSquare,
-  PaletteIcon as Palette,
-  FloppyDiskIcon as Save,
-  MagnifyingGlassIcon as Search,
-  GearSixIcon as Settings,
-  SparkleIcon as Sparkles,
-  TerminalWindowIcon as Terminal,
-  TextAlignJustifyIcon as WrapText,
-} from "@phosphor-icons/react";
+  ChatBubbleTextIcon,
+  ChevronRightIcon,
+  CloudIcon,
+  CodeIcon,
+  GitBranchIcon,
+  GridIcon,
+  HashIcon,
+  InfoIcon,
+  LightbulbIcon,
+  ListIcon,
+  PaletteIcon,
+  SaveIcon,
+  SearchIcon,
+  SettingsIcon,
+  SparkleIcon,
+  TerminalWindowIcon,
+  TextAlignJustifyIcon,
+  TranslateIcon,
+  WarningCircleIcon,
+} from "@/ui/icons";
 import { settingsSearchIndex } from "@/features/settings/config/search-index";
-import type { Settings as AppSettings } from "@/features/settings/stores/settings.store";
-import type { SettingsTab } from "@/features/window/stores/ui-state.store";
-import { writeClipboardText } from "@/utils/clipboard";
+import { openProductFeedback } from "@/features/feedback/services/product-feedback";
+import type { Settings as AppSettings } from "@/features/settings/types/settings.types";
+import type { SettingsTab } from "@/features/window/stores/ui-state/types/ui-state.types";
 import { scoreSearchQuery } from "@/utils/search-match";
 import type { Action } from "../types/action.types";
 import type { CommandPaletteViewId } from "../types/view.types";
 
+type CommandPaletteSettings = Pick<
+  AppSettings,
+  | "aiCompletion"
+  | "autoCompletion"
+  | "autoDetectLanguage"
+  | "autoSave"
+  | "codeLens"
+  | "coreFeatures"
+  | "formatOnSave"
+  | "inlayHints"
+  | "lineNumbers"
+  | "parameterHints"
+  | "semanticTokens"
+  | "showMinimap"
+  | "telemetry"
+  | "vimMode"
+  | "vimRelativeLineNumbers"
+  | "wordWrap"
+>;
+
 interface SettingsActionsParams {
   query: string;
-  settings: AppSettings;
+  settings: CommandPaletteSettings;
   setIsSettingsDialogVisible: (v: boolean) => void;
   openSettingsDialog: (tab?: SettingsTab) => void;
   setSettingsSearchQuery: (query: string) => void;
@@ -43,16 +64,15 @@ interface SettingsActionsParams {
 
 const settingsTabLabels: Record<SettingsTab, string> = {
   account: "Account",
+  sharing: "Cloud",
+  notifications: "Notifications",
   general: "General",
   editor: "Editor",
   git: "Git",
   appearance: "Appearance",
-  databases: "Database",
-  extensions: "Extensions",
   ai: "AI",
   keyboard: "Keybindings",
   language: "Editor",
-  features: "Features",
   collaboration: "Collaboration",
   enterprise: "Enterprise",
   advanced: "Advanced",
@@ -110,7 +130,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
     id: `open-settings-tab-${tab}`,
     label: `Preferences: Open ${label} Settings`,
     description: `Open the ${label.toLowerCase()} settings tab`,
-    icon: <Settings />,
+    icon: <SettingsIcon />,
     category: "Settings",
     action: () => {
       onClose();
@@ -123,7 +143,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
     id: `open-setting-${record.id}`,
     label: `Settings: ${record.label}`,
     description: `Open ${settingsTabLabels[record.tab]} > ${record.label}`,
-    icon: <Settings />,
+    icon: <SettingsIcon />,
     category: "Settings",
     action: () => {
       onClose();
@@ -137,7 +157,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       id: "open-settings",
       label: "Preferences: Open Settings",
       description: "Open settings dialog",
-      icon: <Settings />,
+      icon: <SettingsIcon />,
       category: "Settings",
       action: () => {
         onClose();
@@ -145,42 +165,21 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       },
     },
     {
-      id: "report-bug",
-      label: "Help: Report a Bug",
-      description: "Copy environment details and open the bug report page",
-      icon: <AlertCircle />,
+      id: "send-product-feedback",
+      label: "Help: Send Product Feedback",
+      description: "Describe your intent, what happened, and what you expected",
+      icon: <ChatBubbleTextIcon />,
       category: "Settings",
-      action: async () => {
-        try {
-          onClose();
-          const { getVersion } = await import("@tauri-apps/api/app");
-          const version = await getVersion();
-          let osSummary = "";
-          try {
-            const os = await import("@tauri-apps/plugin-os");
-            const plat = os.platform();
-            const ver = os.version();
-            osSummary = `${plat} ${ver}`;
-          } catch {
-            osSummary = navigator.userAgent;
-          }
-
-          const text = `Environment\n\n- App: Athas ${version}\n- OS: ${osSummary}\n\nProblem\n\nDescribe the issue here. Steps to reproduce, expected vs actual.\n`;
-
-          await writeClipboardText(text);
-
-          const { openUrl } = await import("@tauri-apps/plugin-opener");
-          await openUrl("https://github.com/athasdev/athas/issues/new?template=01-bug.yml");
-        } catch (e) {
-          console.error("Failed to prepare bug report:", e);
-        }
+      action: () => {
+        onClose();
+        openProductFeedback();
       },
     },
     {
       id: "show-whats-new",
       label: "Help: What's New",
       description: "Open the latest release notes for this version",
-      icon: <Sparkles />,
+      icon: <SparkleIcon />,
       category: "Settings",
       action: () => {
         onClose();
@@ -191,7 +190,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       id: "open-onboarding",
       label: "Help: Open Onboarding",
       description: "Open the onboarding flow again",
-      icon: <Sparkles />,
+      icon: <SparkleIcon />,
       category: "Settings",
       action: () => {
         onClose();
@@ -202,7 +201,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       id: "open-settings-json",
       label: "Preferences: Open Settings JSON file",
       description: "Open settings JSON file",
-      icon: <Settings />,
+      icon: <SettingsIcon />,
       category: "Settings",
       action: () => {
         onClose();
@@ -217,7 +216,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       id: "color-theme",
       label: "Preferences: Color Theme",
       description: "Choose a color theme",
-      icon: <Palette />,
+      icon: <PaletteIcon />,
       category: "Theme",
       commandId: "workbench.showThemeSelector",
       action: () => {
@@ -226,9 +225,9 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
     },
     {
       id: "icon-theme",
-      label: "Preferences: Icon Theme",
+      label: "Preferences: Icons",
       description: "Choose an icon theme",
-      icon: <Palette />,
+      icon: <GridIcon />,
       category: "Theme",
       action: () => {
         pushPaletteView("icon-theme");
@@ -238,7 +237,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       id: "toggle-vim-mode",
       label: "Vim Mode: Toggle",
       description: settings.vimMode ? "Currently enabled" : "Currently disabled",
-      icon: <Terminal />,
+      icon: <TerminalWindowIcon />,
       category: "Vim",
       action: () => {
         updateSetting("vimMode", !settings.vimMode);
@@ -251,7 +250,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.wordWrap
         ? "Disable line wrapping in editor"
         : "Wrap lines that exceed viewport width",
-      icon: <WrapText />,
+      icon: <TextAlignJustifyIcon />,
       category: "Editor",
       action: () => {
         updateSetting("wordWrap", !settings.wordWrap);
@@ -264,7 +263,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.lineNumbers
         ? "Hide line numbers in editor"
         : "Show line numbers in editor",
-      icon: <Hash />,
+      icon: <HashIcon />,
       category: "Editor",
       action: () => {
         updateSetting("lineNumbers", !settings.lineNumbers);
@@ -279,7 +278,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.vimRelativeLineNumbers
         ? "Use absolute line numbers"
         : "Show relative line numbers (Vim mode)",
-      icon: <Hash />,
+      icon: <HashIcon />,
       category: "Editor",
       action: () => {
         const nextEnabled = !settings.vimRelativeLineNumbers;
@@ -296,7 +295,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.autoSave
         ? "Disable automatic file saving"
         : "Automatically save files when editing",
-      icon: <Save />,
+      icon: <SaveIcon />,
       category: "Settings",
       action: () => {
         updateSetting("autoSave", !settings.autoSave);
@@ -310,8 +309,8 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
         : "Language: Enable Auto-detect Language",
       description: settings.autoDetectLanguage
         ? "Manually set language for files"
-        : "Automatically detect file language from extension",
-      icon: <Languages />,
+        : "Automatically detect file language from integration",
+      icon: <TranslateIcon />,
       category: "Language",
       action: () => {
         updateSetting("autoDetectLanguage", !settings.autoDetectLanguage);
@@ -326,7 +325,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.formatOnSave
         ? "Disable automatic formatting on save"
         : "Automatically format code when saving",
-      icon: <Code2 />,
+      icon: <CodeIcon />,
       category: "Language",
       action: () => {
         updateSetting("formatOnSave", !settings.formatOnSave);
@@ -341,7 +340,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.autoCompletion
         ? "Disable completion suggestions"
         : "Show completion suggestions while typing",
-      icon: <Lightbulb />,
+      icon: <LightbulbIcon />,
       category: "Language",
       action: () => {
         updateSetting("autoCompletion", !settings.autoCompletion);
@@ -356,10 +355,51 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.parameterHints
         ? "Disable function parameter hints"
         : "Show function parameter hints",
-      icon: <Info />,
+      icon: <InfoIcon />,
       category: "Language",
       action: () => {
         updateSetting("parameterHints", !settings.parameterHints);
+        onClose();
+      },
+    },
+    {
+      id: "toggle-inlay-hints",
+      label: settings.inlayHints ? "Language: Disable Inlay Hints" : "Language: Enable Inlay Hints",
+      description: settings.inlayHints
+        ? "Hide inline type and parameter hints from language servers"
+        : "Show inline type and parameter hints from language servers",
+      icon: <LightbulbIcon />,
+      category: "Language",
+      action: () => {
+        updateSetting("inlayHints", !settings.inlayHints);
+        onClose();
+      },
+    },
+    {
+      id: "toggle-code-lens",
+      label: settings.codeLens ? "Language: Disable Code Lens" : "Language: Enable Code Lens",
+      description: settings.codeLens
+        ? "Hide inline code actions above symbols"
+        : "Show inline code actions above symbols",
+      icon: <ListIcon />,
+      category: "Language",
+      action: () => {
+        updateSetting("codeLens", !settings.codeLens);
+        onClose();
+      },
+    },
+    {
+      id: "toggle-semantic-tokens",
+      label: settings.semanticTokens
+        ? "Language: Disable Semantic Tokens"
+        : "Language: Enable Semantic Tokens",
+      description: settings.semanticTokens
+        ? "Disable language server semantic highlighting"
+        : "Use language server semantic highlighting",
+      icon: <PaletteIcon />,
+      category: "Language",
+      action: () => {
+        updateSetting("semanticTokens", !settings.semanticTokens);
         onClose();
       },
     },
@@ -369,7 +409,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.aiCompletion
         ? "Disable AI-powered code completion"
         : "Enable AI-powered code completion",
-      icon: <Sparkles />,
+      icon: <SparkleIcon />,
       category: "AI",
       action: () => {
         updateSetting("aiCompletion", !settings.aiCompletion);
@@ -382,7 +422,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.showMinimap
         ? "Hide the editor minimap overview"
         : "Show the editor minimap overview",
-      icon: <Code2 />,
+      icon: <CodeIcon />,
       category: "Editor",
       action: () => {
         updateSetting("showMinimap", !settings.showMinimap);
@@ -395,7 +435,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.telemetry
         ? "Stop sending anonymous usage diagnostics"
         : "Enable anonymous usage diagnostics",
-      icon: <Info />,
+      icon: <InfoIcon />,
       category: "Advanced",
       action: () => {
         updateSetting("telemetry", !settings.telemetry);
@@ -410,7 +450,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.coreFeatures.breadcrumbs
         ? "Hide breadcrumbs navigation"
         : "Show breadcrumbs navigation",
-      icon: <ChevronRight />,
+      icon: <ChevronRightIcon />,
       category: "Features",
       action: () => {
         updateSetting("coreFeatures", {
@@ -428,7 +468,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.coreFeatures.diagnostics
         ? "Hide diagnostics panel"
         : "Show diagnostics panel",
-      icon: <AlertCircle />,
+      icon: <WarningCircleIcon />,
       category: "Features",
       action: () => {
         updateSetting("coreFeatures", {
@@ -446,7 +486,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.coreFeatures.debugger
         ? "Disable run and debug panel"
         : "Enable run and debug panel",
-      icon: <AlertCircle />,
+      icon: <WarningCircleIcon />,
       category: "Features",
       action: () => {
         updateSetting("coreFeatures", {
@@ -457,30 +497,12 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       },
     },
     {
-      id: "toggle-outline-feature",
-      label: settings.coreFeatures.outline
-        ? "Features: Disable Outline"
-        : "Features: Enable Outline",
-      description: settings.coreFeatures.outline
-        ? "Hide document symbol outline"
-        : "Show document symbol outline",
-      icon: <ListBullets />,
-      category: "Features",
-      action: () => {
-        updateSetting("coreFeatures", {
-          ...settings.coreFeatures,
-          outline: !settings.coreFeatures.outline,
-        });
-        onClose();
-      },
-    },
-    {
       id: "toggle-search-feature",
       label: settings.coreFeatures.search ? "Features: Disable Search" : "Features: Enable Search",
       description: settings.coreFeatures.search
         ? "Disable search functionality"
         : "Enable search functionality",
-      icon: <Search />,
+      icon: <SearchIcon />,
       category: "Features",
       action: () => {
         updateSetting("coreFeatures", {
@@ -494,7 +516,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       id: "toggle-git-feature",
       label: settings.coreFeatures.git ? "Features: Disable Git" : "Features: Enable Git",
       description: settings.coreFeatures.git ? "Disable Git integration" : "Enable Git integration",
-      icon: <GitBranch />,
+      icon: <GitBranchIcon />,
       category: "Features",
       action: () => {
         updateSetting("coreFeatures", {
@@ -512,7 +534,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.coreFeatures.terminal
         ? "Disable integrated terminal"
         : "Enable integrated terminal",
-      icon: <Terminal />,
+      icon: <TerminalWindowIcon />,
       category: "Features",
       action: () => {
         updateSetting("coreFeatures", {
@@ -525,10 +547,12 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
     {
       id: "toggle-ai-chat-feature",
       label: settings.coreFeatures.aiChat
-        ? "Features: Disable AI Chat"
-        : "Features: Enable AI Chat",
-      description: settings.coreFeatures.aiChat ? "Disable AI chat panel" : "Enable AI chat panel",
-      icon: <MessageSquare />,
+        ? "Features: Disable Agent Sessions"
+        : "Features: Enable Agent Sessions",
+      description: settings.coreFeatures.aiChat
+        ? "Disable agent sessions"
+        : "Enable agent sessions",
+      icon: <ChatBubbleTextIcon />,
       category: "Features",
       action: () => {
         updateSetting("coreFeatures", {
@@ -544,7 +568,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.coreFeatures.remote
         ? "Disable remote development"
         : "Enable remote development",
-      icon: <Cloud />,
+      icon: <CloudIcon />,
       category: "Features",
       action: () => {
         updateSetting("coreFeatures", {
@@ -562,7 +586,7 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       description: settings.coreFeatures.persistentCommands
         ? "Disable persistent commands"
         : "Enable persistent commands",
-      icon: <Cloud />,
+      icon: <CloudIcon />,
       category: "Features",
       action: () => {
         updateSetting("coreFeatures", {

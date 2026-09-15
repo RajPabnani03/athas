@@ -1,0 +1,371 @@
+import { SharingSettings } from "@/features/sharing/components/sharing-settings";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SETTINGS_TAB_ITEMS } from "@/features/settings/config/settings-tabs";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import {
+  resolveSettingsAccess,
+  resolveVisibleSettingsSection,
+} from "@/features/settings/lib/settings-access";
+import { filterVisibleSettingsTabs } from "@/features/settings/lib/settings-tab-visibility";
+import {
+  getSettingSearchTargetKey,
+  SETTINGS_SEARCH_TAB_LABELS,
+} from "@/features/settings/lib/settings-search";
+import { useAuthStore } from "@/features/window/stores/auth.store";
+import { type SettingsTab } from "@/features/window/stores/ui-state/types/ui-state.types";
+import { useUIState } from "@/features/window/stores/ui-state.store";
+import { Button } from "@/ui/button";
+import { Popover, PopoverContent } from "@/ui/popover";
+import { Empty, EmptyDescription } from "@/ui/empty";
+import { XIcon } from "@/ui/icons";
+import { Workbench, WorkbenchContent } from "@/ui/workbench";
+import { SearchInput } from "@/ui/search";
+import { cn } from "@/utils/cn";
+import type { SearchResult } from "../types/search.types";
+
+import { SettingsNavigation } from "./settings-navigation";
+import { AdvancedSettings } from "./tabs/advanced-settings";
+import { AccountSettings } from "./tabs/account-settings";
+import { AISettings } from "./tabs/ai-settings";
+import { AppearanceSettings } from "./tabs/appearance-settings";
+import { CollaborationSettings } from "./tabs/collaboration-settings";
+import { EditorSettings } from "./tabs/editor-settings";
+import { EnterpriseSettings } from "./tabs/enterprise-settings";
+import { GeneralSettings } from "./tabs/general-settings";
+import { GitSettings } from "./tabs/git-settings";
+import { KeyboardSettings } from "./tabs/keyboard-settings";
+import { FileTreeSettings } from "./tabs/file-tree-settings";
+import { NotificationsSettings } from "./tabs/notifications-settings";
+import { TerminalSettings } from "./tabs/terminal-settings";
+
+const SettingsWorkbenchView = () => {
+  const {
+    settingsInitialTab,
+    settingsInitialSection,
+    settingsNavigationRequestId,
+    setSettingsInitialTab,
+    setSettingsInitialSection,
+    setIsSettingsDialogVisible,
+    activeSidebarView,
+    setActiveView,
+  } = useUIState();
+  const [activeTab, setActiveTab] = useState<SettingsTab>("general");
+  const lastSettingsTab = useSettingsStore((state) => state.settings.lastSettingsTab);
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
+  const subscription = useAuthStore((state) => state.subscription);
+  const settingsAccess = resolveSettingsAccess(subscription);
+  const { canShowEnterpriseSettings, canShowCollaborationSettings } = settingsAccess;
+
+  const clearSearch = useSettingsStore((state) => state.actions.clearSearch);
+  const searchQuery = useSettingsStore((state) => state.search.query);
+  const searchResults = useSettingsStore((state) => state.search.results);
+  const selectedResultId = useSettingsStore((state) => state.search.selectedResultId);
+  const selectSearchResult = useSettingsStore((state) => state.actions.selectSearchResult);
+  const setSearchQuery = useSettingsStore((state) => state.actions.setSearchQuery);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchInputAnchorRef = useRef<HTMLDivElement>(null);
+  const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    if (activeSidebarView === "settings") setActiveView("files");
+  }, [activeSidebarView, setActiveView]);
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, []);
+
+  const resolveVisibleTab = useCallback(
+    (tab: SettingsTab) =>
+      resolveVisibleSettingsSection(tab, {
+        canShowCollaborationSettings,
+        canShowEnterpriseSettings,
+      }),
+    [canShowCollaborationSettings, canShowEnterpriseSettings],
+  );
+  const visibleSearchResults = useMemo(
+    () => searchResults.filter((result) => resolveVisibleTab(result.tab) === result.tab),
+    [resolveVisibleTab, searchResults],
+  );
+  const visibleSearchDropdownResults = visibleSearchResults.slice(0, 12);
+  const visibleTabs = filterVisibleSettingsTabs(SETTINGS_TAB_ITEMS, {
+    ...settingsAccess,
+    matchingTabs: null,
+  });
+  useEffect(() => {
+    const requestedTab = settingsInitialTab ?? lastSettingsTab;
+    const nextTab = resolveVisibleTab(requestedTab);
+    setActiveTab(nextTab);
+    void updateSetting("lastSettingsTab", nextTab);
+  }, [
+    settingsInitialTab,
+    lastSettingsTab,
+    canShowEnterpriseSettings,
+    canShowCollaborationSettings,
+    updateSetting,
+  ]);
+
+  const handleTabChange = (tab: SettingsTab) => {
+    const nextTab = resolveVisibleTab(tab);
+    setActiveTab(nextTab);
+    setSettingsInitialTab(nextTab);
+    void updateSetting("lastSettingsTab", nextTab);
+  };
+
+  const navigateToSearchResult = useCallback(
+    (result: SearchResult) => {
+      const nextTab = resolveVisibleTab(result.tab);
+      if (nextTab !== result.tab) return;
+
+      setActiveTab(nextTab);
+      setSettingsInitialTab(nextTab);
+      setSettingsInitialSection(result.section);
+      void updateSetting("lastSettingsTab", nextTab);
+      selectSearchResult(result.id);
+      setIsSearchDropdownOpen(false);
+    },
+    [
+      resolveVisibleTab,
+      selectSearchResult,
+      setSettingsInitialSection,
+      setSettingsInitialTab,
+      updateSetting,
+    ],
+  );
+  useEffect(
+    () => () => {
+      clearSearch();
+    },
+    [clearSearch],
+  );
+
+  useEffect(() => {
+    if (!settingsInitialSection) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      const content = contentRef.current;
+      if (!content) return;
+
+      const sectionKey = getSettingSearchTargetKey(settingsInitialSection);
+      const section = content.querySelector<HTMLElement>(
+        `[data-settings-section-key="${sectionKey}"]`,
+      );
+      if (!section) return;
+
+      section.scrollIntoView({ block: "start", inline: "nearest" });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [activeTab, settingsInitialSection, settingsNavigationRequestId]);
+
+  useEffect(() => {
+    const clearSearchHighlights = () => {
+      const content = contentRef.current;
+      if (!content) return;
+
+      content
+        .querySelectorAll<HTMLElement>("[data-settings-search-active='true']")
+        .forEach((element) => element.removeAttribute("data-settings-search-active"));
+      content
+        .querySelectorAll<HTMLElement>("[data-settings-search-section-active='true']")
+        .forEach((element) => element.removeAttribute("data-settings-search-section-active"));
+    };
+
+    if (!selectedResultId) {
+      clearSearchHighlights();
+      return;
+    }
+
+    const result = visibleSearchResults.find((item) => item.id === selectedResultId);
+    if (!result || result.tab !== activeTab) {
+      clearSearchHighlights();
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const content = contentRef.current;
+      if (!content) return;
+
+      const sectionKey = getSettingSearchTargetKey(result.section);
+      const rowKey = getSettingSearchTargetKey(result.label);
+      const section = content.querySelector<HTMLElement>(
+        `[data-settings-section-key="${sectionKey}"]`,
+      );
+      const target =
+        section?.querySelector<HTMLElement>(`[data-setting-row-key="${rowKey}"]`) ?? section;
+
+      if (!target) return;
+
+      clearSearchHighlights();
+      section?.setAttribute("data-settings-search-section-active", "true");
+      target.setAttribute("data-settings-search-active", "true");
+      target.scrollIntoView({ block: "center", inline: "nearest" });
+      target.focus({ preventScroll: true });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [activeTab, selectedResultId, visibleSearchResults]);
+
+  useEffect(() => {
+    if (!contentRef.current) return;
+    contentRef.current.scrollLeft = 0;
+  }, [activeTab]);
+
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case "account":
+        return <AccountSettings />;
+      case "sharing":
+        return <SharingSettings />;
+      case "notifications":
+        return <NotificationsSettings />;
+      case "general":
+        return <GeneralSettings />;
+      case "editor":
+        return <EditorSettings />;
+      case "git":
+        return <GitSettings />;
+      case "appearance":
+        return <AppearanceSettings />;
+      case "ai":
+        return <AISettings />;
+      case "keyboard":
+        return <KeyboardSettings />;
+      case "collaboration":
+        return canShowCollaborationSettings ? <CollaborationSettings /> : <GeneralSettings />;
+      case "enterprise":
+        return canShowEnterpriseSettings ? <EnterpriseSettings /> : <GeneralSettings />;
+      case "advanced":
+        return <AdvancedSettings />;
+      case "terminal":
+        return <TerminalSettings />;
+      case "file-explorer":
+        return <FileTreeSettings />;
+      default:
+        return <GeneralSettings />;
+    }
+  };
+
+  const activePanelId = `settings-panel-${activeTab}`;
+  const activeTabItem = visibleTabs.find((item) => item.id === activeTab) ?? visibleTabs[0];
+
+  const searchInput = (
+    <div ref={searchInputAnchorRef} className="w-full">
+      <SearchInput
+        inputRef={searchInputRef}
+        placeholder="Search settings..."
+        value={searchQuery}
+        onChange={(value) => {
+          setSearchQuery(value);
+          setIsSearchDropdownOpen(value.trim().length > 0);
+        }}
+        onFocus={() => {
+          if (searchQuery.trim()) setIsSearchDropdownOpen(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            setIsSearchDropdownOpen(false);
+            return;
+          }
+
+          if (event.key !== "Enter") return;
+          const firstResult = visibleSearchResults[0];
+          if (!firstResult) return;
+          event.preventDefault();
+          navigateToSearchResult(firstResult);
+        }}
+      />
+    </div>
+  );
+
+  return (
+    <>
+      <Workbench>
+        <SettingsNavigation
+          activeTab={activeTab}
+          items={visibleTabs}
+          onTabChange={handleTabChange}
+          search={searchInput}
+        >
+          <WorkbenchContent
+            title={activeTabItem?.label ?? "Settings"}
+            description={activeTabItem?.description}
+            pinnedHeader
+            actions={
+              <Button
+                variant="ghost"
+                iconOnly
+                aria-label="Close settings"
+                tooltip="Close"
+                onClick={() => setIsSettingsDialogVisible(false)}
+              >
+                <XIcon />
+              </Button>
+            }
+            viewportProps={{
+              ref: contentRef,
+              id: activePanelId,
+              role: "region",
+              "aria-label": `${activeTabItem?.label ?? "Settings"} settings`,
+              "data-settings-content": "",
+            }}
+          >
+            <div className="@container/settings">{renderTabContent()}</div>
+          </WorkbenchContent>
+        </SettingsNavigation>
+      </Workbench>
+      <Popover
+        open={isSearchDropdownOpen && searchQuery.trim().length > 0}
+        onOpenChange={(open) => !open && setIsSearchDropdownOpen(false)}
+      >
+        <PopoverContent
+          anchor={searchInputAnchorRef}
+          side="bottom"
+          align="start"
+          size="trigger"
+          initialFocus={false}
+          finalFocus={false}
+          className="gap-0 p-0"
+        >
+          <div className="max-h-80 overflow-y-auto p-1">
+            {visibleSearchDropdownResults.length > 0 ? (
+              visibleSearchDropdownResults.map((result) => {
+                const isSelected = selectedResultId === result.id;
+
+                return (
+                  <button
+                    key={result.id}
+                    type="button"
+                    onClick={() => navigateToSearchResult(result)}
+                    className={cn(
+                      "flex w-full flex-col items-start rounded-chrome px-2 py-1.5 text-left font-sans transition-colors duration-fast",
+                      isSelected ? "bg-primary/10 text-primary" : "text-foreground hover:bg-accent",
+                    )}
+                  >
+                    <span className="w-full truncate ui-text-sm font-medium">{result.label}</span>
+                    <span className="w-full truncate text-subtle-foreground ui-text-sm">
+                      {SETTINGS_SEARCH_TAB_LABELS[result.tab]} / {result.section}
+                    </span>
+                  </button>
+                );
+              })
+            ) : (
+              <Empty variant="inline" className="px-2 py-1.5">
+                <EmptyDescription>No matching settings</EmptyDescription>
+              </Empty>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </>
+  );
+};
+
+export default SettingsWorkbenchView;

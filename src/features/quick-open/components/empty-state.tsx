@@ -1,5 +1,5 @@
 import { CommandEmpty } from "@/ui/command";
-import { LoadingIndicator } from "@/ui/loading";
+import { Spinner } from "@/ui/spinner";
 
 interface EmptyStateProps {
   isLoadingFiles: boolean;
@@ -36,11 +36,11 @@ export const EmptyState = ({
 
   return (
     <CommandEmpty>
-      <div className="ui-font text-text-lighter">
+      <div className="font-sans text-subtle-foreground">
         {isIndexing ? (
-          <LoadingIndicator label="Indexing project files" showLabel compact />
+          <Spinner label="Indexing project files" showLabel compact />
         ) : isLoadingFiles ? (
-          <LoadingIndicator label="Loading files" showLabel compact />
+          <Spinner label="Loading files" showLabel compact />
         ) : (
           getMessage()
         )}

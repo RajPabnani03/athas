@@ -1,8 +1,14 @@
 import { memo, useMemo } from "react";
 import { useDiffData } from "../../hooks/use-git-diff-data";
+import {
+  ViewerErrorState,
+  ViewerLoadingState,
+  ViewerState,
+} from "@/features/viewer/components/viewer-state";
 import type { DiffViewerProps, MultiFileDiff } from "../../types/git-diff.types";
 import GitDiffEditorStack from "./git-diff-editor-stack";
 import GitDiffEditorSurface from "./git-diff-editor-surface";
+import { BinaryDiffViewer } from "./git-diff-binary";
 import ImageDiffViewer from "./git-diff-image";
 
 function isMultiFileDiff(data: unknown): data is MultiFileDiff {
@@ -24,27 +30,15 @@ const DiffViewer = memo((_props: DiffViewerProps) => {
   }
 
   if (isLoading) {
-    return (
-      <div className="flex h-full items-center justify-center bg-primary-bg">
-        <div className="ui-text-sm text-text-lighter">Loading diff...</div>
-      </div>
-    );
+    return <ViewerLoadingState label="Loading diff" />;
   }
 
   if (error) {
-    return (
-      <div className="flex h-full items-center justify-center bg-primary-bg">
-        <div className="text-error ui-text-sm">{error}</div>
-      </div>
-    );
+    return <ViewerErrorState message={error} />;
   }
 
   if (!diff || !filePath) {
-    return (
-      <div className="flex h-full items-center justify-center bg-primary-bg">
-        <div className="ui-text-sm text-text-lighter">No diff data available</div>
-      </div>
-    );
+    return <ViewerState description="No diff data available" />;
   }
 
   const fileName = filePath.split("/").pop() || filePath;
@@ -53,8 +47,16 @@ const DiffViewer = memo((_props: DiffViewerProps) => {
     return <ImageDiffViewer diff={diff} fileName={fileName} onClose={() => {}} />;
   }
 
+  if (diff.is_binary) {
+    return (
+      <div className="flex h-full flex-col overflow-hidden bg-background">
+        <BinaryDiffViewer fileName={fileName} />
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-primary-bg">
+    <div className="flex h-full flex-col overflow-hidden bg-background">
       <GitDiffEditorSurface
         cacheKey={filePath}
         diff={diff}

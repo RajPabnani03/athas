@@ -1,5 +1,5 @@
-import "../monaco/monaco-environment";
-import "../monaco/language-contributions";
+import "../engines/monaco/monaco-environment";
+import "../engines/monaco/language-contributions";
 import "monaco-editor/min/vs/editor/editor.main.css";
 import "../styles/monaco-editor.css";
 
@@ -7,9 +7,10 @@ import { editor as monacoEditor, Uri } from "monaco-editor";
 import type * as Monaco from "monaco-editor";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { themeRegistry } from "@/extensions/themes/theme-registry";
-import { toMonacoLanguageId } from "../monaco/language";
-import { defineActiveMonacoTheme, defineMonacoTheme } from "../monaco/theme";
-import { useMonacoEditorSettings } from "../monaco/use-monaco-editor-settings";
+import { toMonacoLanguageId } from "../engines/monaco/language";
+import { defineActiveMonacoTheme, defineMonacoTheme } from "../engines/monaco/theme";
+import { monacoCodeCellScrollbarOptions } from "../engines/monaco/scrollbar-options";
+import { useMonacoEditorSettings } from "../engines/monaco/use-monaco-editor-settings";
 
 interface NotebookCodeCellEditorProps {
   id: string;
@@ -44,6 +45,14 @@ export function NotebookCodeCellEditor({
     renderWhitespace,
     renderIndentGuides,
     highlightOccurrences,
+    editorFontLigatures,
+    editorItalicComments,
+    editorStickyScroll,
+    editorBracketPairColorization,
+    editorSmoothScrolling,
+    editorScrollBeyondLastLine,
+    editorCursorStyle,
+    editorCursorBlinking,
     themeId,
   } = useMonacoEditorSettings();
   const monacoLanguage = toMonacoLanguageId(language);
@@ -52,7 +61,9 @@ export function NotebookCodeCellEditor({
     [id, monacoLanguage],
   );
 
-  onChangeRef.current = onChange;
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -68,7 +79,13 @@ export function NotebookCodeCellEditor({
       tabSize,
       insertSpaces: true,
       minimap: { enabled: false },
-      scrollBeyondLastLine: false,
+      fontLigatures: editorFontLigatures,
+      stickyScroll: { enabled: editorStickyScroll },
+      bracketPairColorization: { enabled: editorBracketPairColorization },
+      smoothScrolling: editorSmoothScrolling,
+      scrollBeyondLastLine: editorScrollBeyondLastLine,
+      cursorStyle: editorCursorStyle,
+      cursorBlinking: editorCursorBlinking,
       lineNumbers: lineNumbers ? "on" : "off",
       glyphMargin: false,
       folding: false,
@@ -89,13 +106,9 @@ export function NotebookCodeCellEditor({
       suggestOnTriggerCharacters: true,
       parameterHints: { enabled: true },
       contextmenu: true,
-      theme: defineActiveMonacoTheme(themeId),
+      theme: defineActiveMonacoTheme(themeId, editorItalicComments),
       fixedOverflowWidgets: true,
-      scrollbar: {
-        vertical: "hidden",
-        horizontal: "auto",
-        alwaysConsumeMouseWheel: false,
-      },
+      scrollbar: monacoCodeCellScrollbarOptions,
     });
 
     editorRef.current = editor;
@@ -121,6 +134,14 @@ export function NotebookCodeCellEditor({
   }, [
     fontFamily,
     fontSize,
+    editorBracketPairColorization,
+    editorCursorBlinking,
+    editorCursorStyle,
+    editorFontLigatures,
+    editorItalicComments,
+    editorScrollBeyondLastLine,
+    editorSmoothScrolling,
+    editorStickyScroll,
     highlightOccurrences,
     id,
     lineHeight,
@@ -155,6 +176,13 @@ export function NotebookCodeCellEditor({
       lineHeight,
       lineNumbers: lineNumbers ? "on" : "off",
       tabSize,
+      fontLigatures: editorFontLigatures,
+      stickyScroll: { enabled: editorStickyScroll },
+      bracketPairColorization: { enabled: editorBracketPairColorization },
+      smoothScrolling: editorSmoothScrolling,
+      scrollBeyondLastLine: editorScrollBeyondLastLine,
+      cursorStyle: editorCursorStyle,
+      cursorBlinking: editorCursorBlinking,
       renderWhitespace: renderWhitespace === "none" ? "none" : renderWhitespace,
       wordWrap: wordWrap ? "on" : "off",
       guides: {
@@ -164,11 +192,19 @@ export function NotebookCodeCellEditor({
       occurrencesHighlight: highlightOccurrences ? "singleFile" : "off",
       selectionHighlight: highlightOccurrences,
     });
-    monacoEditor.setTheme(defineActiveMonacoTheme(themeId));
+    monacoEditor.setTheme(defineActiveMonacoTheme(themeId, editorItalicComments));
     setHeight(editorHeight(editor, lineHeight));
   }, [
     fontFamily,
     fontSize,
+    editorBracketPairColorization,
+    editorCursorBlinking,
+    editorCursorStyle,
+    editorFontLigatures,
+    editorItalicComments,
+    editorScrollBeyondLastLine,
+    editorSmoothScrolling,
+    editorStickyScroll,
     highlightOccurrences,
     lineHeight,
     lineNumbers,
@@ -183,7 +219,9 @@ export function NotebookCodeCellEditor({
   useEffect(() => {
     const applyTheme = (nextThemeId?: string) => {
       monacoEditor.setTheme(
-        nextThemeId ? defineMonacoTheme(nextThemeId) : defineActiveMonacoTheme(themeId),
+        nextThemeId
+          ? defineMonacoTheme(nextThemeId, editorItalicComments)
+          : defineActiveMonacoTheme(themeId, editorItalicComments),
       );
     };
 
@@ -198,7 +236,7 @@ export function NotebookCodeCellEditor({
       unsubscribeTheme();
       unsubscribeReady();
     };
-  }, [themeId]);
+  }, [editorItalicComments, themeId]);
 
   useEffect(() => {
     editorRef.current?.layout();
@@ -212,8 +250,8 @@ export function NotebookCodeCellEditor({
   } as CSSProperties;
 
   return (
-    <div className="monaco-editor-shell overflow-hidden bg-primary-bg" style={shellStyle}>
-      <div ref={containerRef} className="h-full w-full" />
+    <div className="monaco-editor-shell overflow-hidden bg-background" style={shellStyle}>
+      <div ref={containerRef} className="size-full" />
     </div>
   );
 }

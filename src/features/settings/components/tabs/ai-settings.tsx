@@ -1,41 +1,45 @@
-import { invoke } from "@tauri-apps/api/core";
 import {
-  WarningCircleIcon as AlertCircle,
-  CheckCircleIcon as CheckCircle,
-  CloudIcon as Cloud,
-  ArrowSquareOutIcon as ExternalLink,
-  GlobeHemisphereWestIcon as Globe,
-  KeyIcon as Key,
-  LaptopIcon as Laptop,
-  ArrowClockwiseIcon as RefreshCw,
-  ArrowCounterClockwiseIcon as RotateCcw,
-  TrashIcon as Trash2,
-} from "@phosphor-icons/react";
+  ArrowClockwiseIcon,
+  ArrowCounterClockwiseIcon,
+  CheckCircleIcon,
+  CloudIcon,
+  GlobeIcon,
+  KeyIcon,
+  LaptopIcon,
+  OpenExternalIcon,
+  PaletteIcon,
+  SparkleIcon,
+  TrashIcon,
+  WarningCircleIcon,
+} from "@/ui/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { ProviderApiKeyCommand } from "@/features/ai/components/provider-api-key-command";
 import { ModelSelector } from "@/features/ai/components/selectors/model-selector";
 import { ProviderSelector } from "@/features/ai/components/selectors/provider-selector";
+import { useAvailableProviders } from "@/features/ai/hooks/use-available-providers";
+import { useAIProviderSettingsActions } from "@/features/ai/services/providers/ai-provider-settings-registry";
 import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
-import type { AgentConfig, SessionConfigOption } from "@/features/ai/types/acp.types";
-import { getAvailableProviders } from "@/features/ai/types/providers.types";
+import type { SessionConfigOption } from "@/features/ai/types/acp.types";
 import { useToast } from "@/features/layout/contexts/toast-context";
 import { TypedConfirmAction } from "@/features/settings/components/typed-confirm-action";
-import { LoadingIndicator } from "@/ui/loading";
-import { getDefaultSetting, useSettingsStore } from "@/features/settings/stores/settings.store";
+import { Spinner } from "@/ui/spinner";
+import { getDefaultSetting } from "@/features/settings/config/default-settings";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { useAuthStore } from "@/features/window/stores/auth.store";
 import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
 import Input from "@/ui/input";
-import { SegmentedControl } from "@/ui/segmented-control";
-import Section, { SETTINGS_CONTROL_WIDTHS, SettingRow } from "../settings-section";
+import Section, { SettingsView, SettingRow } from "../settings-section";
 import Select from "@/ui/select";
 import Switch from "@/ui/switch";
+import { TextLink } from "@/ui/text-link";
+import { ToggleGroup } from "@/ui/toggle-group";
 import { fetchAutocompleteModels } from "@/features/editor/services/editor-autocomplete-service";
 import {
   CUSTOM_AUTOCOMPLETE_PROVIDER_ID,
   CUSTOM_CHAT_PROVIDER_ID,
 } from "@/features/ai/lib/custom-provider-config";
-import { cn } from "@/utils/cn";
 import {
   setCustomProviderBaseUrl,
   setOllamaApiKey,
@@ -44,14 +48,16 @@ import {
 import {
   DEFAULT_OLLAMA_BASE_URL,
   OLLAMA_CLOUD_BASE_URL,
-  checkOllamaConnection,
   isOllamaCloudUrl,
-} from "@/features/ai/services/providers/ollama-provider";
+} from "@/features/ai/lib/ollama-endpoint";
+import { checkOllamaConnection } from "@/features/ai/services/providers/ollama-provider";
+import { resolveOllamaBaseUrl } from "@/features/ai/lib/ollama-endpoint";
 import {
   getProviderApiToken,
   removeProviderApiToken,
   storeProviderApiToken,
 } from "@/features/ai/services/ai-token-service";
+import { CodexSettings } from "@/features/ai/integrations/codex/codex-settings";
 const DEFAULT_AUTOCOMPLETE_MODEL_ID = "mistralai/devstral-small";
 
 function resolveAutocompleteDefaultModelId(models: Array<{ id: string; name: string }>): string {
@@ -62,7 +68,21 @@ function resolveAutocompleteDefaultModelId(models: Array<{ id: string; name: str
 }
 
 export const AISettings = () => {
-  const { settings, updateSetting } = useSettingsStore();
+  const settings = useSettingsStore(
+    useShallow((state) => ({
+      aiAutocompleteCustomBaseUrl: state.settings.aiAutocompleteCustomBaseUrl,
+      aiAutocompleteCustomModelId: state.settings.aiAutocompleteCustomModelId,
+      aiAutocompleteModelId: state.settings.aiAutocompleteModelId,
+      aiAutocompleteProvider: state.settings.aiAutocompleteProvider,
+      aiCompletion: state.settings.aiCompletion,
+      aiCustomBaseUrl: state.settings.aiCustomBaseUrl,
+      aiCustomModelId: state.settings.aiCustomModelId,
+      aiModelId: state.settings.aiModelId,
+      aiProviderId: state.settings.aiProviderId,
+      ollamaBaseUrl: state.settings.ollamaBaseUrl,
+    })),
+  );
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
   const subscription = useAuthStore((state) => state.subscription);
   const { showToast } = useToast();
   const enterprisePolicy = subscription?.enterprise?.policy;
@@ -96,6 +116,13 @@ export const AISettings = () => {
   const [ollamaUrl, setOllamaUrl] = useState(settings.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL);
   const [ollamaStatus, setOllamaStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
   const ollamaDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const ollamaDraftDirtyRef = useRef(false);
+  const ollamaValidationIdRef = useRef(0);
+  const lastSelfHostedOllamaUrlRef = useRef(
+    isOllamaCloudUrl(settings.ollamaBaseUrl)
+      ? DEFAULT_OLLAMA_BASE_URL
+      : resolveOllamaBaseUrl(settings.ollamaBaseUrl) || DEFAULT_OLLAMA_BASE_URL,
+  );
 
   // Ollama API key state (used for Ollama Cloud; optional for local)
   const [ollamaApiKeyInput, setOllamaApiKeyInput] = useState("");
@@ -104,17 +131,8 @@ export const AISettings = () => {
 
   const isOllamaCloud = isOllamaCloudUrl(ollamaUrl);
   const needsApiKey = isOllamaCloud;
-
-  useEffect(() => {
-    const detectAgents = async () => {
-      try {
-        await invoke<AgentConfig[]>("get_available_agents");
-      } catch {
-        // Failed to detect agents
-      }
-    };
-    detectAgents();
-  }, []);
+  const providers = useAvailableProviders();
+  const providerSettingsActions = useAIProviderSettingsActions(settings.aiProviderId);
 
   useEffect(() => {
     const unsubscribe = useAIChatStore.subscribe((state) => {
@@ -124,10 +142,22 @@ export const AISettings = () => {
     return unsubscribe;
   }, []);
 
-  // Sync Ollama base URL + API key on mount
+  // Keep the draft aligned with settings loaded after the dialog mounted.
   useEffect(() => {
-    const url = settings.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL;
+    const url = resolveOllamaBaseUrl(settings.ollamaBaseUrl) || DEFAULT_OLLAMA_BASE_URL;
     setOllamaBaseUrl(url);
+
+    if (!isOllamaCloudUrl(url)) {
+      lastSelfHostedOllamaUrlRef.current = url;
+    }
+
+    if (!ollamaDraftDirtyRef.current) {
+      if (ollamaDebounceRef.current) clearTimeout(ollamaDebounceRef.current);
+      setOllamaUrl(url);
+    }
+  }, [settings.ollamaBaseUrl]);
+
+  useEffect(() => {
     void (async () => {
       const token = await getProviderApiToken("ollama");
       setHasStoredOllamaKey(!!token);
@@ -135,8 +165,23 @@ export const AISettings = () => {
     })();
   }, []);
 
+  useEffect(
+    () => () => {
+      if (ollamaDebounceRef.current) clearTimeout(ollamaDebounceRef.current);
+      ollamaValidationIdRef.current += 1;
+    },
+    [],
+  );
+
   const validateOllamaConnection = useCallback(
     async (url: string, apiKey?: string | null) => {
+      const normalizedUrl = resolveOllamaBaseUrl(url);
+      const validationId = ++ollamaValidationIdRef.current;
+      if (!normalizedUrl) {
+        setOllamaStatus("error");
+        return;
+      }
+
       setOllamaStatus("checking");
       const keyToUse =
         apiKey !== undefined
@@ -144,37 +189,66 @@ export const AISettings = () => {
           : hasStoredOllamaKey
             ? await getProviderApiToken("ollama")
             : null;
-      const ok = await checkOllamaConnection(url, keyToUse);
-      setOllamaStatus(ok ? "ok" : "error");
+      const ok = await checkOllamaConnection(normalizedUrl, keyToUse);
+      if (validationId === ollamaValidationIdRef.current) {
+        setOllamaStatus(ok ? "ok" : "error");
+      }
     },
     [hasStoredOllamaKey],
   );
 
+  const commitOllamaUrl = useCallback(
+    (value: string) => {
+      if (ollamaDebounceRef.current) {
+        clearTimeout(ollamaDebounceRef.current);
+        ollamaDebounceRef.current = undefined;
+      }
+
+      const normalizedUrl = resolveOllamaBaseUrl(value);
+      if (!normalizedUrl) {
+        setOllamaStatus("error");
+        return;
+      }
+
+      ollamaDraftDirtyRef.current = false;
+      setOllamaUrl(normalizedUrl);
+      void updateSetting("ollamaBaseUrl", normalizedUrl);
+      setOllamaBaseUrl(normalizedUrl);
+      if (!isOllamaCloudUrl(normalizedUrl)) {
+        lastSelfHostedOllamaUrlRef.current = normalizedUrl;
+      }
+      void validateOllamaConnection(normalizedUrl);
+    },
+    [updateSetting, validateOllamaConnection],
+  );
+
   const handleOllamaUrlChange = (value: string) => {
+    ollamaDraftDirtyRef.current = true;
     setOllamaUrl(value);
     setOllamaStatus("idle");
 
     if (ollamaDebounceRef.current) clearTimeout(ollamaDebounceRef.current);
     ollamaDebounceRef.current = setTimeout(() => {
-      const trimmed = value.replace(/\/+$/, "") || DEFAULT_OLLAMA_BASE_URL;
-      updateSetting("ollamaBaseUrl", trimmed);
-      setOllamaBaseUrl(trimmed);
-      void validateOllamaConnection(trimmed);
+      ollamaDebounceRef.current = undefined;
+      void commitOllamaUrl(value);
     }, 600);
   };
 
   const handleResetOllamaUrl = () => {
-    setOllamaUrl(DEFAULT_OLLAMA_BASE_URL);
-    updateSetting("ollamaBaseUrl", DEFAULT_OLLAMA_BASE_URL);
-    setOllamaBaseUrl(DEFAULT_OLLAMA_BASE_URL);
-    void validateOllamaConnection(DEFAULT_OLLAMA_BASE_URL);
+    lastSelfHostedOllamaUrlRef.current = DEFAULT_OLLAMA_BASE_URL;
+    commitOllamaUrl(DEFAULT_OLLAMA_BASE_URL);
+  };
+
+  const handleUseSelfHostedOllama = () => {
+    commitOllamaUrl(lastSelfHostedOllamaUrlRef.current);
   };
 
   const handleUseOllamaCloud = () => {
-    setOllamaUrl(OLLAMA_CLOUD_BASE_URL);
-    updateSetting("ollamaBaseUrl", OLLAMA_CLOUD_BASE_URL);
-    setOllamaBaseUrl(OLLAMA_CLOUD_BASE_URL);
-    void validateOllamaConnection(OLLAMA_CLOUD_BASE_URL);
+    const currentUrl = resolveOllamaBaseUrl(ollamaUrl);
+    if (currentUrl && !isOllamaCloudUrl(currentUrl)) {
+      lastSelfHostedOllamaUrlRef.current = currentUrl;
+    }
+    commitOllamaUrl(OLLAMA_CLOUD_BASE_URL);
   };
 
   const handleSaveOllamaApiKey = async () => {
@@ -207,8 +281,6 @@ export const AISettings = () => {
       showToast({ message: "Failed to remove Ollama API key", type: "error" });
     }
   };
-
-  const providers = getAvailableProviders();
 
   const handleProviderChange = (newProviderId: string) => {
     const provider = providers.find((p) => p.id === newProviderId);
@@ -345,9 +417,7 @@ export const AISettings = () => {
     updateSetting("aiAutocompleteCustomBaseUrl", customAutocompleteBaseUrlInput);
   };
 
-  const providersNeedingAuth = getAvailableProviders().filter(
-    (p) => p.requiresAuth && !p.requiresApiKey,
-  );
+  const providersNeedingAuth = providers.filter((p) => p.requiresAuth && !p.requiresApiKey);
 
   const isOllamaSelected = settings.aiProviderId === "ollama";
   const isCustomProviderSelected = settings.aiProviderId === CUSTOM_CHAT_PROVIDER_ID;
@@ -356,11 +426,12 @@ export const AISettings = () => {
   const hasAutocompleteModels = autocompleteModels.length > 0;
 
   return (
-    <div className="space-y-4">
-      <Section title="Athas Agent">
+    <SettingsView>
+      <CodexSettings />
+      <Section title="AI Chat">
         <SettingRow
           label="Provider"
-          description="Choose the provider used by Athas Agent"
+          description="Choose the provider used by direct AI chat"
           onReset={() => {
             updateSetting("aiProviderId", getDefaultSetting("aiProviderId"));
             updateSetting("aiModelId", getDefaultSetting("aiModelId"));
@@ -381,7 +452,7 @@ export const AISettings = () => {
           description={
             isCustomProviderSelected
               ? "Model name sent to the custom endpoint"
-              : "Choose the model used by Athas Agent"
+              : "Choose the model used by direct AI chat"
           }
           onReset={() => {
             if (isCustomProviderSelected) {
@@ -416,44 +487,58 @@ export const AISettings = () => {
         </SettingRow>
 
         <SettingRow label="API Keys" description="Manage provider API keys separately">
-          <Button
-            type="button"
-            variant="default"
-            onClick={() => setIsApiKeyManagerOpen(true)}
-            className="w-fit"
-          >
-            <Key />
+          <Button type="button" variant="default" onClick={() => setIsApiKeyManagerOpen(true)}>
+            <KeyIcon />
             <span>Manage keys</span>
           </Button>
         </SettingRow>
+
+        {providerSettingsActions.map((action) => {
+          const Icon = action.icon === "sparkles" ? SparkleIcon : PaletteIcon;
+
+          return (
+            <SettingRow
+              key={action.id}
+              label={action.label}
+              description={
+                action.getDescription?.() || action.description || "Configure provider integration"
+              }
+            >
+              <Button type="button" variant="default" onClick={() => void action.execute()}>
+                <Icon />
+                <span>{action.buttonLabel}</span>
+              </Button>
+            </SettingRow>
+          );
+        })}
       </Section>
 
       {showCustomProviderSettings && (
         <Section title="Custom Provider">
           <SettingRow
             label="Base URL"
-            description="OpenAI-compatible endpoint base URL for Athas Agent"
+            description="OpenAI-compatible endpoint base URL for direct AI chat"
             onReset={() => {
               updateSetting("aiCustomBaseUrl", getDefaultSetting("aiCustomBaseUrl"));
               setCustomProviderBaseUrl(getDefaultSetting("aiCustomBaseUrl"));
             }}
             canReset={settings.aiCustomBaseUrl !== getDefaultSetting("aiCustomBaseUrl")}
           >
-            <Input
-              value={customChatBaseUrlInput}
-              onChange={(event) => setCustomChatBaseUrlInput(event.currentTarget.value)}
-              onBlur={commitCustomChatBaseUrl}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.currentTarget.blur();
-                }
-              }}
-              placeholder="http://localhost:11434/v1"
-              size="xs"
-              className={SETTINGS_CONTROL_WIDTHS.xwide}
-              spellCheck={false}
-              leftIcon={Globe}
-            />
+            <span className="inline-flex min-w-0 w-56 max-w-full">
+              <Input
+                value={customChatBaseUrlInput}
+                onChange={(event) => setCustomChatBaseUrlInput(event.currentTarget.value)}
+                onBlur={commitCustomChatBaseUrl}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                  }
+                }}
+                placeholder="http://localhost:11434/v1"
+                spellCheck={false}
+                leftIcon={GlobeIcon}
+              />
+            </span>
           </SettingRow>
           <SettingRow
             label="API Key"
@@ -464,23 +549,23 @@ export const AISettings = () => {
             }
           >
             <div className="flex items-center gap-2">
-              <Input
-                type="password"
-                value={customChatApiKeyInput}
-                onChange={(event) => setCustomChatApiKeyInput(event.currentTarget.value)}
-                placeholder={hasCustomChatApiKey ? "Saved" : "API key"}
-                size="xs"
-                className={SETTINGS_CONTROL_WIDTHS.wide}
-                spellCheck={false}
-                autoComplete="off"
-                disabled={isSavingCustomChatApiKey}
-              />
+              <span className="inline-flex min-w-0 w-56 max-w-full">
+                <Input
+                  type="password"
+                  value={customChatApiKeyInput}
+                  onChange={(event) => setCustomChatApiKeyInput(event.currentTarget.value)}
+                  placeholder={hasCustomChatApiKey ? "Saved" : "API key"}
+                  spellCheck={false}
+                  autoComplete="off"
+                  disabled={isSavingCustomChatApiKey}
+                  leftIcon={KeyIcon}
+                />
+              </span>
               <Button
                 type="button"
                 variant="default"
                 onClick={handleSaveCustomChatApiKey}
                 disabled={!customChatApiKeyInput.trim() || isSavingCustomChatApiKey}
-                compact
               >
                 Save
               </Button>
@@ -490,7 +575,6 @@ export const AISettings = () => {
                   variant="default"
                   onClick={handleRemoveCustomChatApiKey}
                   disabled={isSavingCustomChatApiKey}
-                  compact
                 >
                   Remove
                 </Button>
@@ -503,18 +587,19 @@ export const AISettings = () => {
       {(isOllamaSelected || settings.ollamaBaseUrl !== DEFAULT_OLLAMA_BASE_URL) && (
         <Section title="Ollama">
           <SettingRow label="Mode" description="Run Ollama locally or use Ollama Cloud">
-            <SegmentedControl
+            <ToggleGroup
               value={isOllamaCloud ? "cloud" : "local"}
-              onChange={(nextValue) => {
+              onValueChange={(nextValue) => {
                 if (nextValue === "local") {
-                  handleResetOllamaUrl();
+                  handleUseSelfHostedOllama();
                   return;
                 }
                 handleUseOllamaCloud();
               }}
+              ariaLabel="Ollama mode"
               options={[
-                { value: "local", label: "Local", icon: <Laptop /> },
-                { value: "cloud", label: "Cloud", icon: <Cloud /> },
+                { value: "local", label: "Local", icon: <LaptopIcon /> },
+                { value: "cloud", label: "Cloud", icon: <CloudIcon /> },
               ]}
             />
           </SettingRow>
@@ -524,19 +609,29 @@ export const AISettings = () => {
             onReset={handleResetOllamaUrl}
             canReset={settings.ollamaBaseUrl !== getDefaultSetting("ollamaBaseUrl")}
           >
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <Input
-                type="text"
-                value={ollamaUrl}
-                onChange={(e) => handleOllamaUrlChange(e.target.value)}
-                placeholder={DEFAULT_OLLAMA_BASE_URL}
-                spellCheck={false}
-                leftIcon={Globe}
-                className={cn("w-56 max-w-full", ollamaStatus === "error" && "border-error/60")}
-              />
-              {ollamaStatus === "checking" && <LoadingIndicator label="Checking" compact />}
-              {ollamaStatus === "ok" && <CheckCircle className="text-success" />}
-              {ollamaStatus === "error" && <AlertCircle className="text-error" />}
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="inline-flex min-w-0 w-56 max-w-full">
+                <Input
+                  type="text"
+                  value={ollamaUrl}
+                  onChange={(e) => handleOllamaUrlChange(e.target.value)}
+                  onBlur={(e) => {
+                    void commitOllamaUrl(e.target.value);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    e.currentTarget.blur();
+                  }}
+                  placeholder={DEFAULT_OLLAMA_BASE_URL}
+                  spellCheck={false}
+                  leftIcon={GlobeIcon}
+                  aria-invalid={ollamaStatus === "error" || undefined}
+                />
+              </span>
+              {ollamaStatus === "checking" && <Spinner label="Checking" compact />}
+              {ollamaStatus === "ok" && <CheckCircleIcon className="text-success" />}
+              {ollamaStatus === "error" && <WarningCircleIcon className="text-destructive" />}
               {ollamaUrl !== DEFAULT_OLLAMA_BASE_URL && (
                 <Button
                   type="button"
@@ -544,68 +639,64 @@ export const AISettings = () => {
                   onClick={handleResetOllamaUrl}
                   title="Reset to default"
                   aria-label="Reset Ollama URL to default"
-                  compact
+                  iconOnly
                 >
-                  <RotateCcw />
+                  <ArrowCounterClockwiseIcon />
                 </Button>
               )}
             </div>
           </SettingRow>
           <SettingRow
             label="API Key"
-            description="Used for authenticated Ollama endpoints and Ollama Cloud."
+            description="Used for authenticated Ollama endpoints and Ollama Cloud"
           >
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <Input
-                type="password"
-                value={ollamaApiKeyInput}
-                onChange={(e) => setOllamaApiKeyInput(e.target.value)}
-                placeholder={hasStoredOllamaKey ? "••••••••  (saved)" : "ollama-…"}
-                spellCheck={false}
-                leftIcon={Key}
-                className={cn(
-                  "w-56 max-w-full",
-                  needsApiKey && !hasStoredOllamaKey && "border-warning/60",
-                )}
-                autoComplete="off"
-                disabled={isSavingOllamaKey}
-              />
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="inline-flex min-w-0 w-56 max-w-full">
+                <Input
+                  type="password"
+                  value={ollamaApiKeyInput}
+                  onChange={(e) => setOllamaApiKeyInput(e.target.value)}
+                  placeholder={hasStoredOllamaKey ? "••••••••  (saved)" : "ollama-…"}
+                  spellCheck={false}
+                  leftIcon={KeyIcon}
+                  aria-invalid={(needsApiKey && !hasStoredOllamaKey) || undefined}
+                  autoComplete="off"
+                  disabled={isSavingOllamaKey}
+                />
+              </span>
               <Button
                 type="button"
                 variant="default"
                 onClick={handleSaveOllamaApiKey}
                 disabled={!ollamaApiKeyInput.trim() || isSavingOllamaKey}
-                compact
               >
                 {isSavingOllamaKey ? "Saving…" : "Save"}
               </Button>
               {hasStoredOllamaKey && (
                 <Button
                   type="button"
-                  variant="default"
+                  variant="danger"
                   onClick={handleRemoveOllamaApiKey}
-                  title="Remove saved API key"
-                  aria-label="Remove Ollama API key"
-                  className="text-error hover:bg-error/10"
-                  compact
+                  tooltip="Remove saved API key"
+                  iconOnly
                 >
-                  <Trash2 />
+                  <TrashIcon />
                 </Button>
               )}
             </div>
           </SettingRow>
           {needsApiKey && !hasStoredOllamaKey && (
-            <SettingRow label="Ollama Cloud Key" description="Ollama Cloud requires an API key.">
-              <div className="flex items-center gap-1.5">
-                <AlertCircle className="shrink-0 text-warning" />
-                <a
+            <SettingRow label="Ollama Cloud Key" description="Ollama Cloud requires an API key">
+              <div className="flex items-center gap-2">
+                <WarningCircleIcon className="shrink-0 text-warning" />
+                <TextLink
                   href="https://ollama.com/settings/keys"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-link hover:underline"
+                  className="inline-flex items-center gap-1"
                 >
-                  Get key <ExternalLink className="size-3" />
-                </a>
+                  Get key <OpenExternalIcon className="size-3" />
+                </TextLink>
               </div>
             </SettingRow>
           )}
@@ -618,9 +709,7 @@ export const AISettings = () => {
                   : "Could not connect. Check that Ollama is running at this address."
               }
             >
-              <Badge variant="default" size="default">
-                Error
-              </Badge>
+              <Badge variant="error">Error</Badge>
             </SettingRow>
           )}
         </Section>
@@ -640,9 +729,7 @@ export const AISettings = () => {
               label={provider.name}
               description="Requires OAuth authentication"
             >
-              <Badge variant="default" size="default">
-                Coming Soon
-              </Badge>
+              <Badge variant="muted">Coming Soon</Badge>
             </SettingRow>
           ))}
         </Section>
@@ -668,9 +755,8 @@ export const AISettings = () => {
                     label: value.name,
                   }))}
                   onChange={(value) =>
-                    useAIChatStore.getState().changeSessionConfigOption(option.id, value)
+                    useAIChatStore.getState().actions.changeSessionConfigOption(option.id, value)
                   }
-                  size="xs"
                   variant="default"
                   searchable
                   searchableTrigger="input"
@@ -692,7 +778,6 @@ export const AISettings = () => {
             checked={aiCompletionAllowedByPolicy ? settings.aiCompletion : false}
             onChange={(checked) => updateSetting("aiCompletion", checked)}
             disabled={!aiCompletionAllowedByPolicy}
-            size="sm"
           />
         </SettingRow>
         {settings.aiCompletion && (
@@ -707,20 +792,19 @@ export const AISettings = () => {
                 settings.aiAutocompleteProvider !== getDefaultSetting("aiAutocompleteProvider")
               }
             >
-              <SegmentedControl
+              <ToggleGroup
                 value={settings.aiAutocompleteProvider}
                 options={[
                   { value: "openrouter", label: "OpenRouter" },
                   { value: "custom", label: "Custom" },
                 ]}
-                onChange={(value) =>
+                onValueChange={(value) =>
                   updateSetting(
                     "aiAutocompleteProvider",
                     value === "custom" ? "custom" : "openrouter",
                   )
                 }
-                size="xs"
-                wrap={false}
+                ariaLabel="Autocomplete provider"
               />
             </SettingRow>
             <SettingRow
@@ -751,20 +835,20 @@ export const AISettings = () => {
               }
             >
               {settings.aiAutocompleteProvider === "custom" ? (
-                <Input
-                  value={customAutocompleteModelInput}
-                  onChange={(event) => setCustomAutocompleteModelInput(event.currentTarget.value)}
-                  onBlur={commitCustomAutocompleteModel}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.currentTarget.blur();
-                    }
-                  }}
-                  placeholder="qwen2.5-coder:7b"
-                  size="xs"
-                  className={SETTINGS_CONTROL_WIDTHS.xwide}
-                  disabled={!aiCompletionAllowedByPolicy}
-                />
+                <span className="inline-flex min-w-0 w-56 max-w-full">
+                  <Input
+                    value={customAutocompleteModelInput}
+                    onChange={(event) => setCustomAutocompleteModelInput(event.currentTarget.value)}
+                    onBlur={commitCustomAutocompleteModel}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.currentTarget.blur();
+                      }
+                    }}
+                    placeholder="qwen2.5-coder:7b"
+                    disabled={!aiCompletionAllowedByPolicy}
+                  />
+                </span>
               ) : (
                 <div className="flex items-center gap-2">
                   <Button
@@ -772,12 +856,12 @@ export const AISettings = () => {
                     onClick={loadAutocompleteModels}
                     disabled={isLoadingAutocompleteModels || !aiCompletionAllowedByPolicy}
                     title="Refresh model list"
-                    compact
+                    iconOnly
                   >
                     {isLoadingAutocompleteModels ? (
-                      <LoadingIndicator label="Loading models" compact />
+                      <Spinner label="Loading models" compact />
                     ) : (
-                      <RefreshCw />
+                      <ArrowClockwiseIcon />
                     )}
                   </Button>
                   <Select
@@ -787,11 +871,9 @@ export const AISettings = () => {
                       label: model.name,
                     }))}
                     onChange={(value) => updateSetting("aiAutocompleteModelId", value)}
-                    size="xs"
                     variant="default"
                     searchable
                     searchableTrigger="input"
-                    className={SETTINGS_CONTROL_WIDTHS.xwide}
                     disabled={
                       !aiCompletionAllowedByPolicy ||
                       isLoadingAutocompleteModels ||
@@ -820,22 +902,23 @@ export const AISettings = () => {
                     getDefaultSetting("aiAutocompleteCustomBaseUrl")
                   }
                 >
-                  <Input
-                    value={customAutocompleteBaseUrlInput}
-                    onChange={(event) =>
-                      setCustomAutocompleteBaseUrlInput(event.currentTarget.value)
-                    }
-                    onBlur={commitCustomAutocompleteBaseUrl}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.currentTarget.blur();
+                  <span className="inline-flex min-w-0 w-56 max-w-full">
+                    <Input
+                      value={customAutocompleteBaseUrlInput}
+                      onChange={(event) =>
+                        setCustomAutocompleteBaseUrlInput(event.currentTarget.value)
                       }
-                    }}
-                    placeholder="http://localhost:11434/v1"
-                    size="xs"
-                    className={SETTINGS_CONTROL_WIDTHS.xwide}
-                    disabled={!aiCompletionAllowedByPolicy}
-                  />
+                      onBlur={commitCustomAutocompleteBaseUrl}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.currentTarget.blur();
+                        }
+                      }}
+                      placeholder="http://localhost:11434/v1"
+                      disabled={!aiCompletionAllowedByPolicy}
+                      leftIcon={GlobeIcon}
+                    />
+                  </span>
                 </SettingRow>
                 <SettingRow
                   label="Custom API Key"
@@ -846,17 +929,18 @@ export const AISettings = () => {
                   }
                 >
                   <div className="flex items-center gap-2">
-                    <Input
-                      type="password"
-                      value={customAutocompleteApiKeyInput}
-                      onChange={(event) =>
-                        setCustomAutocompleteApiKeyInput(event.currentTarget.value)
-                      }
-                      placeholder={hasCustomAutocompleteApiKey ? "Saved" : "API key"}
-                      size="xs"
-                      className={SETTINGS_CONTROL_WIDTHS.wide}
-                      disabled={!aiCompletionAllowedByPolicy || isSavingCustomAutocompleteApiKey}
-                    />
+                    <span className="inline-flex min-w-0 w-56 max-w-full">
+                      <Input
+                        type="password"
+                        value={customAutocompleteApiKeyInput}
+                        onChange={(event) =>
+                          setCustomAutocompleteApiKeyInput(event.currentTarget.value)
+                        }
+                        placeholder={hasCustomAutocompleteApiKey ? "Saved" : "API key"}
+                        disabled={!aiCompletionAllowedByPolicy || isSavingCustomAutocompleteApiKey}
+                        leftIcon={KeyIcon}
+                      />
+                    </span>
                     <Button
                       variant="default"
                       onClick={handleSaveCustomAutocompleteApiKey}
@@ -865,7 +949,6 @@ export const AISettings = () => {
                         !aiCompletionAllowedByPolicy ||
                         isSavingCustomAutocompleteApiKey
                       }
-                      compact
                     >
                       Save
                     </Button>
@@ -874,7 +957,6 @@ export const AISettings = () => {
                         variant="default"
                         onClick={handleRemoveCustomAutocompleteApiKey}
                         disabled={!aiCompletionAllowedByPolicy || isSavingCustomAutocompleteApiKey}
-                        compact
                       >
                         Remove
                       </Button>
@@ -885,9 +967,7 @@ export const AISettings = () => {
             )}
             {autocompleteModelError && (
               <SettingRow label="Model List" description={autocompleteModelError}>
-                <Badge variant="default" size="default">
-                  Error
-                </Badge>
+                <Badge variant="error">Error</Badge>
               </SettingRow>
             )}
           </>
@@ -897,15 +977,13 @@ export const AISettings = () => {
             label="Enterprise Policy"
             description={`${aiCompletionAllowedByPolicy ? "AI completion enabled." : "AI completion disabled."} ${byokAllowedByPolicy ? "BYOK allowed." : "BYOK blocked."}`}
           >
-            <Badge variant="default" size="default">
-              Managed
-            </Badge>
+            <Badge variant="accent">Managed</Badge>
           </SettingRow>
         ) : null}
       </Section>
 
-      <Section title="Chat History">
-        <SettingRow label="Clear All Chats" description="Permanently delete all chat history">
+      <Section title="Agent History">
+        <SettingRow label="Clear Agent History" description="Permanently delete all agent history">
           <TypedConfirmAction
             actionLabel="Clear All"
             busyLabel="Clearing..."
@@ -913,8 +991,8 @@ export const AISettings = () => {
             onConfirm={async () => {
               setIsClearingChats(true);
               try {
-                await useAIChatStore.getState().clearAllChats();
-                showToast({ message: "All chats cleared", type: "success" });
+                await useAIChatStore.getState().actions.clearAllChats();
+                showToast({ message: "Agent history cleared", type: "success" });
               } finally {
                 setIsClearingChats(false);
               }
@@ -922,6 +1000,6 @@ export const AISettings = () => {
           />
         </SettingRow>
       </Section>
-    </div>
+    </SettingsView>
   );
 };

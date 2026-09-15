@@ -1,9 +1,8 @@
-import { EDITOR_CONSTANTS } from "@/features/editor/config/constants";
+import { shareEditor } from "@/features/sharing/services/open-share";
 import { useEditorStateStore } from "@/features/editor/stores/state.store";
-import { ContextMenu } from "@/ui/context-menu";
-import { IS_MAC } from "@/utils/platform";
+import { ContextMenuPopup } from "@/ui/context-menu";
 import {
-  buildEditorContextMenuItems,
+  buildEditorContextMenuGroups,
   type EditorContextMenuHandlers,
 } from "./editor-context-menu-items";
 
@@ -19,27 +18,16 @@ const EditorContextMenu = ({ isOpen, position, onClose, ...handlers }: EditorCon
     const selection = useEditorStateStore.getState().selection;
     return Boolean(selection && selection.start.offset !== selection.end.offset);
   })();
-  const modifierKey = IS_MAC ? "Cmd" : "Ctrl";
-  const altKey = IS_MAC ? "Option" : "Alt";
-
   if (!isOpen) return null;
 
-  const items = buildEditorContextMenuItems({
+  const groups = buildEditorContextMenuGroups({
     hasSelection,
-    modifierKey,
-    altKey,
+    onShareSelection: () => shareEditor(true),
+    onShareBuffer: () => shareEditor(),
     ...handlers,
   });
 
-  return (
-    <ContextMenu
-      isOpen={isOpen}
-      position={position}
-      items={items}
-      onClose={onClose}
-      style={{ zIndex: EDITOR_CONSTANTS.Z_INDEX.CONTEXT_MENU }}
-    />
-  );
+  return <ContextMenuPopup isOpen={isOpen} point={position} groups={groups} onClose={onClose} />;
 };
 
 export default EditorContextMenu;

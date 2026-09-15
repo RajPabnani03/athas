@@ -1,7 +1,23 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "vite-plus/test";
+import { registerCommands } from "../commands/command-registry";
 import { defaultKeymaps } from "../defaults/default-keymaps";
+import { keymapRegistry } from "../utils/registry";
+
+function expectKeybinding(command: string, key: string, when?: string) {
+  expect(defaultKeymaps).toContainEqual(
+    expect.objectContaining({
+      command,
+      key,
+      ...(when ? { when } : {}),
+    }),
+  );
+}
 
 describe("default keymaps", () => {
+  afterEach(() => {
+    keymapRegistry.clear();
+  });
+
   it("registers editor navigation and folding shortcuts", () => {
     const byCommand = new Map(defaultKeymaps.map((keybinding) => [keybinding.command, keybinding]));
 
@@ -84,6 +100,78 @@ describe("default keymaps", () => {
     expect(byCommand.get("file.saveAll")).toMatchObject({
       key: "cmd+alt+s",
       when: "editorFocus",
+    });
+  });
+
+  it("registers basic edit shortcuts", () => {
+    expectKeybinding("editor.selectAll", "cmd+a", "editorFocus");
+    expectKeybinding("editor.undo", "cmd+z", "editorFocus");
+    expectKeybinding("editor.redo", "cmd+shift+z", "editorFocus");
+    expectKeybinding("editor.redo", "cmd+y", "editorFocus");
+    expectKeybinding("editor.copy", "cmd+c", "editorFocus");
+    expectKeybinding("editor.cut", "cmd+x", "editorFocus");
+    expectKeybinding("editor.paste", "cmd+v", "editorFocus");
+  });
+
+  it("adds vertical cursors with Ctrl+Up and Ctrl+Down in Vim mode", () => {
+    expectKeybinding("editor.insertCursorAbove", "ctrl+up", "editorFocus && vimMode");
+    expectKeybinding("editor.insertCursorBelow", "ctrl+down", "editorFocus && vimMode");
+  });
+
+  it("keeps chrome actions in the command registry", () => {
+    expectKeybinding("workbench.openSettings", "cmd+,");
+    expectKeybinding("workbench.toggleActivitySidebar", "cmd+b");
+    expectKeybinding("workbench.toggleSidebar", "cmd+e");
+    expectKeybinding("workbench.showFind", "cmd+f", "editorFocus");
+    expectKeybinding("workbench.showFindReplace", "ctrl+h", "editorFocus");
+    expectKeybinding("terminal.find", "cmd+f", "terminalFocus");
+    expectKeybinding("terminal.split", "cmd+d", "terminalFocus");
+    expectKeybinding("terminal.splitDown", "cmd+shift+d", "terminalFocus");
+    expectKeybinding("terminal.previousCommand", "cmd+up", "terminalFocus");
+    expectKeybinding("terminal.nextCommand", "cmd+down", "terminalFocus");
+    expectKeybinding("terminal.focusNextPane", "cmd+alt+right", "terminalFocus");
+    expectKeybinding("terminal.focusPreviousPane", "cmd+alt+left", "terminalFocus");
+    expectKeybinding("terminal.clear", "cmd+k", "terminalFocus");
+    expectKeybinding("terminal.selectAll", "cmd+shift+a", "terminalFocus");
+    expectKeybinding("terminal.copyLastCommandOutput", "cmd+shift+c", "terminalFocus");
+    expectKeybinding("workbench.toggleActivePaneFullscreen", "cmd+k z");
+  });
+
+  it("keeps Ctrl+Tab navigation in the frontend keymap", () => {
+    expectKeybinding("workbench.nextTabCtrlTab", "ctrl+tab");
+    expectKeybinding("workbench.previousTabCtrlTab", "ctrl+shift+tab");
+  });
+
+  it("has registered commands for every default keybinding", () => {
+    keymapRegistry.clear();
+    registerCommands();
+
+    const missingCommands = defaultKeymaps
+      .filter((keybinding) => !keymapRegistry.getCommand(keybinding.command))
+      .map((keybinding) => `${keybinding.key} -> ${keybinding.command}`);
+
+    expect(missingCommands).toEqual([]);
+  });
+
+  it("binds the new window shortcut to a registered command", () => {
+    keymapRegistry.clear();
+    registerCommands();
+
+    expectKeybinding("workbench.newWindow", "cmd+shift+n");
+    expect(keymapRegistry.getCommand("workbench.newWindow")).toMatchObject({
+      title: "New Window",
+    });
+  });
+
+  it("registers distinct activity and secondary sidebar commands", () => {
+    keymapRegistry.clear();
+    registerCommands();
+
+    expect(keymapRegistry.getCommand("workbench.toggleActivitySidebar")).toMatchObject({
+      title: "Toggle Activity Sidebar",
+    });
+    expect(keymapRegistry.getCommand("workbench.toggleSidebar")).toMatchObject({
+      title: "Toggle Secondary Sidebar",
     });
   });
 });

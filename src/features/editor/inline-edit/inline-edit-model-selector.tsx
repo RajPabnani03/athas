@@ -1,16 +1,13 @@
-import {
-  CaretLeftIcon as CaretLeft,
-  CheckIcon as Check,
-  MagnifyingGlassIcon as Search,
-} from "@phosphor-icons/react";
+import { CheckIcon, ChevronLeftIcon, SearchIcon } from "@/ui/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProviderIcon } from "@/features/ai/components/icons/provider-icons";
 import { ProviderApiKeyCommand } from "@/features/ai/components/provider-api-key-command";
+import { useAvailableProviders } from "@/features/ai/hooks/use-available-providers";
 import { canUseProviderWithoutApiKey } from "@/features/ai/lib/provider-access";
 import { getProviderApiToken } from "@/features/ai/services/ai-token-service";
 import { getProvider } from "@/features/ai/services/providers/ai-provider-registry";
 import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
-import { getAvailableProviders, getProviderById } from "@/features/ai/types/providers.types";
+import { getProviderById } from "@/features/ai/types/providers.types";
 import { useAuthStore } from "@/features/window/stores/auth.store";
 import { Button } from "@/ui/button";
 import Command, {
@@ -18,8 +15,9 @@ import Command, {
   CommandFooter,
   CommandFooterAction,
   CommandHeader,
+  CommandHeaderAction,
   CommandInput,
-  CommandItem,
+  CommandItemRow,
   CommandList,
 } from "@/ui/command";
 import { matchesSearchQuery } from "@/utils/search-match";
@@ -47,9 +45,11 @@ export const InlineEditModelSelector = ({
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
   const subscription = useAuthStore((state) => state.subscription);
-  const { dynamicModels, setDynamicModels, hasProviderApiKey } = useAIChatStore();
+  const dynamicModels = useAIChatStore((state) => state.dynamicModels);
+  const setDynamicModels = useAIChatStore((state) => state.actions.setDynamicModels);
+  const hasProviderApiKey = useAIChatStore((state) => state.actions.hasProviderApiKey);
 
-  const providers = useMemo(() => getAvailableProviders(), []);
+  const providers = useAvailableProviders();
   const currentProvider = getProviderById(providerId);
   const currentProviderName = currentProvider?.name ?? providerId;
   const selectedProvider = selectedProviderId ? getProviderById(selectedProviderId) : null;
@@ -173,39 +173,35 @@ export const InlineEditModelSelector = ({
 
   return (
     <>
-      <Button
-        type="button"
-        variant="ghost"
-        compact
-        onClick={openSelector}
-        disabled={disabled}
-        className="max-w-[144px] justify-start px-1.5 text-text"
-        tooltip="Inline edit model"
-      >
-        <span className="truncate ui-text-xs">
-          {currentProviderName} / {currentModelName}
-        </span>
-      </Button>
+      <span className="inline-flex min-w-0 max-w-36">
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={openSelector}
+          disabled={disabled}
+          align="start"
+          truncate
+          tooltip="Inline edit model"
+        >
+          <span className="truncate ui-text-base">
+            {currentProviderName} / {currentModelName}
+          </span>
+        </Button>
+      </span>
 
       <Command
         isVisible={isOpen}
         onClose={closeSelector}
-        className="inline-edit-model-command max-h-[420px] w-[480px]"
+        className="inline-edit-model-command max-h-105 w-120"
         title="Inline edit model"
       >
         <CommandHeader onClose={closeSelector}>
           {selectedProvider ? (
-            <Button
-              type="button"
-              variant="ghost"
-              compact
-              onClick={handleBack}
-              aria-label="Back to providers"
-            >
-              <CaretLeft />
-            </Button>
+            <CommandHeaderAction type="button" onClick={handleBack} aria-label="Back to providers">
+              <ChevronLeftIcon />
+            </CommandHeaderAction>
           ) : (
-            <Search className="shrink-0 text-text-lighter" size={14} />
+            <SearchIcon className="shrink-0 text-subtle-foreground" size={14} />
           )}
           <CommandInput
             ref={inputRef}
@@ -226,33 +222,29 @@ export const InlineEditModelSelector = ({
                 filteredModels.map((model) => {
                   const isSelected = selectedProvider.id === providerId && model.id === modelId;
                   return (
-                    <CommandItem
+                    <CommandItemRow
                       key={model.id}
                       isSelected={isSelected}
                       onClick={() => handleModelSelect(model.id)}
-                      className="px-2 py-2"
-                    >
-                      <ProviderIcon
-                        providerId={selectedProvider.id}
-                        size={14}
-                        className="shrink-0 text-text-lighter"
-                      />
-                      <span className="min-w-0 flex-1 truncate ui-text-xs text-text">
-                        {model.name}
-                      </span>
-                      {isSelected && <Check className="shrink-0 text-accent" size={13} />}
-                    </CommandItem>
+                      icon={
+                        <ProviderIcon
+                          providerId={selectedProvider.id}
+                          size={14}
+                          className="text-subtle-foreground"
+                        />
+                      }
+                      title={model.name}
+                      accessory={
+                        isSelected ? <CheckIcon className="text-primary" size={13} /> : null
+                      }
+                    />
                   );
                 })
               )}
             </CommandList>
             {providerNeedsApiKey && (
               <CommandFooter>
-                <CommandFooterAction
-                  type="button"
-                  onClick={() => setIsApiKeyOpen(true)}
-                  className="px-1.5 text-text-lighter hover:text-text"
-                >
+                <CommandFooterAction type="button" onClick={() => setIsApiKeyOpen(true)}>
                   Add API key
                 </CommandFooterAction>
               </CommandFooter>
@@ -264,20 +256,18 @@ export const InlineEditModelSelector = ({
               <CommandEmpty>No providers found</CommandEmpty>
             ) : (
               filteredProviders.map((provider) => (
-                <CommandItem
+                <CommandItemRow
                   key={provider.id}
                   onClick={() => handleProviderSelect(provider.id)}
-                  className="px-2 py-2"
-                >
-                  <ProviderIcon
-                    providerId={provider.id}
-                    size={14}
-                    className="shrink-0 text-text-lighter"
-                  />
-                  <span className="min-w-0 flex-1 truncate ui-text-xs text-text">
-                    {provider.name}
-                  </span>
-                </CommandItem>
+                  icon={
+                    <ProviderIcon
+                      providerId={provider.id}
+                      size={14}
+                      className="text-subtle-foreground"
+                    />
+                  }
+                  title={provider.name}
+                />
               ))
             )}
           </CommandList>

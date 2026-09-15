@@ -1,36 +1,35 @@
-import { BellIcon as Bell } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
-import {
-  chromeControl,
-  chromeControlGroup,
-  chromeIcon,
-} from "@/features/layout/components/chrome-control-styles";
 import { useCommandShortcut } from "@/features/keymaps/hooks/use-command-shortcut";
 import { NotificationsCommand } from "@/features/notifications/components/notifications-command";
-import { OPEN_NOTIFICATIONS_COMMAND_EVENT } from "@/features/notifications/constants/notifications-events";
+import {
+  OPEN_NOTIFICATIONS_COMMAND_EVENT,
+  type OpenNotificationsCommandDetail,
+} from "@/features/notifications/constants/notifications-events";
+import { useGitHubNotifications } from "@/features/notifications/hooks/use-github-notifications";
+import { useNotificationsStore } from "@/features/notifications/stores/notifications.store";
+import type { NotificationCategoryFilter } from "@/features/notifications/types/notifications.types";
 import { Button } from "@/ui/button";
-import { TabsList } from "@/ui/tabs";
-import { useToastStore } from "@/ui/toast";
-import Tooltip from "@/ui/tooltip";
-import { cn } from "@/utils/cn";
+import { BellIcon } from "@/ui/icons";
 
-interface NotificationsTriggerProps {
-  className?: string;
-}
-
-export const NotificationsTrigger = ({ className }: NotificationsTriggerProps) => {
-  const notifications = useToastStore.use.notifications();
+export const NotificationsTrigger = () => {
+  const notifications = useNotificationsStore.use.notifications();
+  const github = useGitHubNotifications();
   const [isCommandVisible, setIsCommandVisible] = useState(false);
+  const [initialCategory, setInitialCategory] = useState<NotificationCategoryFilter>("all");
   const shortcut = useCommandShortcut("workbench.showNotifications");
   const unreadCount = useMemo(
     () =>
       notifications.filter((notification) => !notification.read && notification.type !== "success")
-        .length,
-    [notifications],
+        .length + github.notifications.length,
+    [github.notifications.length, notifications],
   );
 
   useEffect(() => {
-    const handleShowNotifications = () => setIsCommandVisible(true);
+    const handleShowNotifications = (event: Event) => {
+      const detail = (event as CustomEvent<OpenNotificationsCommandDetail>).detail;
+      setInitialCategory(detail?.category ?? "all");
+      setIsCommandVisible(true);
+    };
 
     window.addEventListener(OPEN_NOTIFICATIONS_COMMAND_EVENT, handleShowNotifications);
     return () => {
@@ -38,35 +37,35 @@ export const NotificationsTrigger = ({ className }: NotificationsTriggerProps) =
     };
   }, []);
 
+  const tooltip = unreadCount > 0 ? `Notifications (${unreadCount})` : "Notifications";
+
   return (
     <>
-      <Tooltip content="Notifications" shortcut={shortcut} side="top">
-        <TabsList variant="segmented" className={cn(chromeControlGroup(), className)}>
-          <Button
-            onClick={() => {
-              window.dispatchEvent(new CustomEvent(OPEN_NOTIFICATIONS_COMMAND_EVENT));
-            }}
-            type="button"
-            variant="ghost"
-            compact
-            active={isCommandVisible}
-            className={cn(
-              chromeControl(),
-              unreadCount > 0 && cn(chromeControl({ shape: "pill" }), "w-auto gap-1.5"),
-            )}
-            aria-label="Notifications"
-          >
-            <Bell className={chromeIcon()} weight="duotone" />
-            {unreadCount > 0 && (
-              <span className="ui-font ui-text-sm pointer-events-none font-medium tabular-nums text-current">
-                {unreadCount}
-              </span>
-            )}
-          </Button>
-        </TabsList>
-      </Tooltip>
+      <span className="inline-flex min-w-0 relative">
+        <Button
+          type="button"
+          variant="ghost"
+          iconOnly
+          size="chrome"
+          onClick={() => {
+            setInitialCategory("all");
+            setIsCommandVisible(true);
+          }}
+          active={isCommandVisible}
+          tooltip={tooltip}
+          shortcut={shortcut}
+          aria-label={tooltip}
+        >
+          <BellIcon />
+          {unreadCount > 0 ? (
+            <span className="absolute top-0 right-0 size-1.5 rounded-full bg-primary ring-1 ring-background" />
+          ) : null}
+        </Button>
+      </span>
       <NotificationsCommand
         isVisible={isCommandVisible}
+        initialCategory={initialCategory}
+        github={github}
         onClose={() => setIsCommandVisible(false)}
       />
     </>

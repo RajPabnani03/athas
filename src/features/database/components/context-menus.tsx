@@ -1,6 +1,7 @@
-import { PencilSimpleIcon as EditIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
+import { PenIcon, PlusIcon, TrashIcon } from "@/ui/icons";
 import { useUIState } from "@/features/window/stores/ui-state.store";
-import { ContextMenu, type ContextMenuItem } from "@/ui/context-menu";
+import { ContextMenuPopup, createContextMenuGroups } from "@/ui/context-menu";
+import { menuSeparator, type MenuItem } from "@/ui/dropdown";
 import type { DatabaseRow } from "../types/common.types";
 
 export const SqlTableMenu = ({
@@ -23,7 +24,7 @@ export const SqlTableMenu = ({
         : objectKind === "index"
           ? "Delete Index"
           : "Delete Table";
-  const items: ContextMenuItem[] = databaseTableMenu
+  const items: MenuItem[] = databaseTableMenu
     ? [
         ...(canCreateRow
           ? [
@@ -33,25 +34,26 @@ export const SqlTableMenu = ({
                 icon: <PlusIcon />,
                 onClick: () => onCreateRow(databaseTableMenu.tableName),
               },
-              { id: "separator", label: "", separator: true, onClick: () => {} },
+              menuSeparator("separator"),
             ]
           : []),
         {
           id: "delete-table",
           label: deleteLabel,
           icon: <TrashIcon />,
+          tone: "destructive",
           onClick: () => onDeleteTable(databaseTableMenu.tableName),
         },
       ]
     : [];
 
   return (
-    <ContextMenu
+    <ContextMenuPopup
       isOpen={!!databaseTableMenu}
-      position={
+      point={
         databaseTableMenu ? { x: databaseTableMenu.x, y: databaseTableMenu.y } : { x: 0, y: 0 }
       }
-      items={items}
+      groups={createContextMenuGroups(items)}
       onClose={onCloseMenu}
     />
   );
@@ -67,28 +69,29 @@ export const SqlRowMenu = ({
   const { databaseRowMenu, setDatabaseRowMenu } = useUIState();
 
   const onCloseMenu = () => setDatabaseRowMenu(null);
-  const items: ContextMenuItem[] = databaseRowMenu
+  const items: MenuItem[] = databaseRowMenu
     ? [
         {
           id: "edit-row",
           label: "Edit Row",
-          icon: <EditIcon />,
+          icon: <PenIcon />,
           onClick: () => onEditRow(databaseRowMenu.tableName, databaseRowMenu.rowData),
         },
         {
           id: "delete-row",
           label: "Delete Row",
           icon: <TrashIcon />,
+          tone: "destructive",
           onClick: () => onDeleteRow(databaseRowMenu.tableName, databaseRowMenu.rowData),
         },
       ]
     : [];
 
   return (
-    <ContextMenu
+    <ContextMenuPopup
       isOpen={!!databaseRowMenu}
-      position={databaseRowMenu ? { x: databaseRowMenu.x, y: databaseRowMenu.y } : { x: 0, y: 0 }}
-      items={items}
+      point={databaseRowMenu ? { x: databaseRowMenu.x, y: databaseRowMenu.y } : { x: 0, y: 0 }}
+      groups={createContextMenuGroups(items)}
       onClose={onCloseMenu}
     />
   );

@@ -1,4 +1,4 @@
-import type { BufferSession } from "@/features/window/stores/session.store";
+import type { BufferSession } from "@/features/workspace/types/workspace-session.types";
 
 export interface WorkspaceSessionBuffer {
   type: BufferSession["type"];
@@ -14,6 +14,7 @@ export interface WorkspaceSessionBuffer {
   history?: string[];
   historyIndex?: number;
   sessionId?: string;
+  shell?: string;
   initialCommand?: string;
   workingDirectory?: string;
   remoteConnectionId?: string;
@@ -27,31 +28,6 @@ export interface WorkspaceFolderSession {
 
 function normalizeWorkspacePath(path: string) {
   return path.replace(/\\/g, "/").replace(/\/+$/, "");
-}
-
-export function isLocalFileInWorkspace(
-  filePath: string,
-  workspaceRootPath: string | undefined,
-  workspaceFolderPaths: string[] = [],
-) {
-  const workspaceRoots = [
-    workspaceRootPath,
-    ...workspaceFolderPaths.filter((folderPath) => folderPath !== workspaceRootPath),
-  ].filter((folderPath): folderPath is string => !!folderPath);
-
-  if (workspaceRoots.length === 0) {
-    return false;
-  }
-
-  const normalizedFilePath = normalizeWorkspacePath(filePath);
-
-  return workspaceRoots.some((workspaceRoot) => {
-    const normalizedWorkspaceRoot = normalizeWorkspacePath(workspaceRoot);
-    return (
-      normalizedFilePath === normalizedWorkspaceRoot ||
-      normalizedFilePath.startsWith(`${normalizedWorkspaceRoot}/`)
-    );
-  });
 }
 
 export function normalizeWorkspaceFolders(
@@ -82,6 +58,20 @@ export function normalizeWorkspaceFolders(
   }));
 }
 
+export function selectRestoredWorkspaceFolders(
+  rootFolderPath: string,
+  workspaceFolders: WorkspaceFolderSession[],
+  restoredFolderPaths: readonly string[],
+): WorkspaceFolderSession[] {
+  const restoredPaths = new Set(
+    [rootFolderPath, ...restoredFolderPaths].map(normalizeWorkspacePath),
+  );
+
+  return normalizeWorkspaceFolders(rootFolderPath, workspaceFolders).filter((folder) =>
+    restoredPaths.has(normalizeWorkspacePath(folder.path)),
+  );
+}
+
 export function isWorkspaceFolderPath(
   path: string,
   rootFolderPath: string | undefined,
@@ -92,39 +82,15 @@ export function isWorkspaceFolderPath(
   );
 }
 
-export function getEditorWorkspaceScope(
-  filePath: string,
-  workspaceRootPath: string | undefined,
-  workspaceFolderPaths: string[] = [],
-): "workspace" | "external" | undefined {
-  if (
-    filePath.startsWith("remote://") ||
-    filePath.startsWith("diff://") ||
-    filePath.startsWith("terminal://") ||
-    filePath.startsWith("webview://")
-  ) {
-    return undefined;
-  }
-
-  return isLocalFileInWorkspace(filePath, workspaceRootPath, workspaceFolderPaths)
-    ? "workspace"
-    : "external";
-}
-
-export interface WorkspaceSessionSnapshot {
+interface WorkspaceSessionSnapshot {
   activeBufferPath: string | null;
   buffers: WorkspaceSessionBuffer[];
 }
 
 export interface WorkspaceRestorePlan {
   activeBufferPath: string | null;
-  initialBuffer: WorkspaceSessionBuffer | null;
-  remainingBuffers: WorkspaceSessionBuffer[];
-}
-
-export interface WorkspaceRestoreBatch {
-  buffersToRestore: WorkspaceSessionBuffer[];
-  deferredBuffers: WorkspaceSessionBuffer[];
+  initialBuffer: BufferSession | null;
+  remainingBuffers: BufferSession[];
 }
 
 type WorkspaceRestoreSession = Pick<WorkspaceSessionSnapshot, "activeBufferPath"> & {
@@ -142,22 +108,41 @@ export const buildWorkspaceRestorePlan = (
     };
   }
 
-  const initialBuffer =
-    (session.activeBufferPath
-      ? session.buffers.find((buffer) => buffer.path === session.activeBufferPath)
-      : null) ?? session.buffers[0];
+  if (session.activeBufferPath) {
+    let initialBuffer: BufferSession | null = null;
+    const remainingBuffers: BufferSession[] = [];
+
+    for (const buffer of session.buffers) {
+      if (buffer.path === session.activeBufferPath) {
+        initialBuffer ??= buffer;
+      } else {
+        remainingBuffers.push(buffer);
+      }
+    }
+
+    if (initialBuffer) {
+      return {
+        activeBufferPath: session.activeBufferPath,
+        initialBuffer,
+        remainingBuffers,
+      };
+    }
+  }
+
+  const initialBuffer = session.buffers[0];
+  const remainingBuffers = session.buffers.filter((buffer) => buffer.path !== initialBuffer.path);
 
   return {
     activeBufferPath: session.activeBufferPath,
     initialBuffer,
-    remainingBuffers: session.buffers.filter((buffer) => buffer.path !== initialBuffer.path),
+    remainingBuffers,
   };
 };
 
-export const buildWorkspaceRestoreBatch = (
-  candidateBuffers: WorkspaceSessionBuffer[],
+export const buildWorkspaceRestoreBatch = <T extends WorkspaceSessionBuffer>(
+  candidateBuffers: T[],
   restoreLimit: number,
-): WorkspaceRestoreBatch => {
+): { buffersToRestore: T[]; deferredBuffers: T[] } => {
   if (restoreLimit <= 0) {
     return {
       buffersToRestore: [],

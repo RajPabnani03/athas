@@ -1,3 +1,26 @@
+/* Keep per-frame viewport measurements out of content subtrees in WebKit. */
+[data-slot="scroll-area-content"] {
+  --scroll-area-overflow-x-start: 0px;
+  --scroll-area-overflow-x-end: 0px;
+  --scroll-area-overflow-y-start: 0px;
+  --scroll-area-overflow-y-end: 0px;
+}
+
+@utility overflow-auto {
+  overflow: auto;
+  overscroll-behavior: none;
+}
+
+@utility overflow-x-auto {
+  overflow-x: auto;
+  overscroll-behavior-x: none;
+}
+
+@utility overflow-y-auto {
+  overflow-y: auto;
+  overscroll-behavior-y: none;
+}
+
 :root {
   --app-scrollbar-size: 11px;
   --app-scrollbar-thin-size: 9px;
@@ -7,7 +30,6 @@
   --app-scrollbar-thumb-subtle: rgba(120, 120, 120, 0.28);
   --app-scrollbar-thumb-hover: rgba(105, 105, 105, 0.62);
   --app-scrollbar-thumb-active: rgba(85, 85, 85, 0.72);
-  --app-scrollbar-border-size: 3px;
   --app-scrollbar-thumb-border: 3px solid transparent;
 }
 
@@ -18,22 +40,15 @@
   --app-scrollbar-thumb-active: rgba(210, 210, 210, 0.68);
 }
 
-@supports not selector(::-webkit-scrollbar) {
-  :root,
-  body,
-  #root,
-  * {
-    scrollbar-color: var(--app-scrollbar-thumb) var(--app-scrollbar-track);
-    scrollbar-width: thin;
-  }
-
-  .custom-scrollbar,
-  .custom-scrollbar-thin,
-  .custom-scrollbar-auto,
-  .editor-scrollable,
-  .tab-scroll-container {
-    scrollbar-color: var(--app-scrollbar-thumb) var(--app-scrollbar-track);
-    scrollbar-width: thin;
+@layer base {
+  @supports not selector(::-webkit-scrollbar) {
+    :root,
+    body,
+    #root,
+    * {
+      scrollbar-color: var(--app-scrollbar-thumb) var(--app-scrollbar-track);
+      scrollbar-width: thin;
+    }
   }
 }
 
@@ -68,7 +83,6 @@ body::-webkit-scrollbar-thumb,
   min-width: 36px !important;
   border: var(--app-scrollbar-thumb-border) !important;
   border-radius: var(--app-scrollbar-radius) !important;
-  background-color: rgba(120, 120, 120, 0.42) !important;
   background-color: var(--app-scrollbar-thumb) !important;
   background-clip: content-box !important;
 }
@@ -77,7 +91,6 @@ body::-webkit-scrollbar-thumb,
 body::-webkit-scrollbar-thumb:hover,
 #root::-webkit-scrollbar-thumb:hover,
 *::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(105, 105, 105, 0.62) !important;
   background-color: var(--app-scrollbar-thumb-hover) !important;
   background-clip: content-box !important;
 }
@@ -86,7 +99,6 @@ body::-webkit-scrollbar-thumb:hover,
 body::-webkit-scrollbar-thumb:active,
 #root::-webkit-scrollbar-thumb:active,
 *::-webkit-scrollbar-thumb:active {
-  background-color: rgba(85, 85, 85, 0.72) !important;
   background-color: var(--app-scrollbar-thumb-active) !important;
   background-clip: content-box !important;
 }
@@ -98,198 +110,4 @@ body::-webkit-scrollbar-button,
   display: none !important;
   width: 0 !important;
   height: 0 !important;
-}
-
-.scrollbar-none,
-.scrollbar-hidden {
-  scrollbar-width: none !important;
-  -ms-overflow-style: none !important;
-}
-
-.scrollbar-none::-webkit-scrollbar,
-.scrollbar-hidden::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
-}
-
-.custom-scrollbar {
-  overflow: auto;
-}
-
-.custom-scrollbar::-webkit-scrollbar {
-  width: var(--app-scrollbar-size) !important;
-  height: var(--app-scrollbar-size) !important;
-}
-
-.custom-scrollbar::-webkit-scrollbar-track {
-  background-color: var(--app-scrollbar-track) !important;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  border: var(--app-scrollbar-thumb-border) !important;
-  border-radius: var(--app-scrollbar-radius) !important;
-  background-color: rgba(120, 120, 120, 0.42) !important;
-  background-color: var(--app-scrollbar-thumb) !important;
-  background-clip: content-box !important;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(105, 105, 105, 0.62) !important;
-  background-color: var(--app-scrollbar-thumb-hover) !important;
-  background-clip: content-box !important;
-}
-
-.custom-scrollbar::-webkit-scrollbar-corner {
-  background-color: var(--app-scrollbar-track) !important;
-}
-
-.custom-scrollbar-thin {
-  overflow: auto;
-}
-
-.custom-scrollbar-thin::-webkit-scrollbar {
-  width: var(--app-scrollbar-thin-size) !important;
-  height: var(--app-scrollbar-thin-size) !important;
-}
-
-.custom-scrollbar-thin::-webkit-scrollbar-track {
-  background-color: transparent !important;
-}
-
-.custom-scrollbar-thin::-webkit-scrollbar-thumb {
-  border: 2px solid transparent !important;
-  border-radius: var(--app-scrollbar-radius) !important;
-  background-color: rgba(120, 120, 120, 0.42) !important;
-  background-color: var(--app-scrollbar-thumb) !important;
-  background-clip: content-box !important;
-}
-
-.custom-scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(105, 105, 105, 0.62) !important;
-  background-color: var(--app-scrollbar-thumb-hover) !important;
-  background-clip: content-box !important;
-}
-
-.custom-scrollbar-auto {
-  overflow: auto;
-}
-
-.custom-scrollbar-auto::-webkit-scrollbar {
-  width: var(--app-scrollbar-size) !important;
-  height: var(--app-scrollbar-size) !important;
-}
-
-.custom-scrollbar-auto::-webkit-scrollbar-track {
-  background-color: transparent !important;
-}
-
-.custom-scrollbar-auto::-webkit-scrollbar-thumb {
-  border: var(--app-scrollbar-thumb-border) !important;
-  border-radius: var(--app-scrollbar-radius) !important;
-  background-color: rgba(120, 120, 120, 0.28) !important;
-  background-color: var(--app-scrollbar-thumb-subtle) !important;
-  background-clip: content-box !important;
-}
-
-.custom-scrollbar-auto:hover::-webkit-scrollbar-thumb {
-  background-color: rgba(120, 120, 120, 0.42) !important;
-  background-color: var(--app-scrollbar-thumb) !important;
-  background-clip: content-box !important;
-}
-
-.custom-scrollbar-auto::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(105, 105, 105, 0.62) !important;
-  background-color: var(--app-scrollbar-thumb-hover) !important;
-  background-clip: content-box !important;
-}
-
-.custom-scrollbar-auto::-webkit-scrollbar-corner {
-  background-color: transparent !important;
-}
-
-.editor-scrollable {
-  overscroll-behavior: none;
-}
-
-.editor-scrollable::-webkit-scrollbar {
-  width: var(--app-scrollbar-thin-size) !important;
-  height: var(--app-scrollbar-thin-size) !important;
-}
-
-.editor-scrollable::-webkit-scrollbar-track {
-  background-color: transparent !important;
-}
-
-.editor-scrollable::-webkit-scrollbar-thumb {
-  border: 2px solid transparent !important;
-  border-radius: var(--app-scrollbar-radius) !important;
-  background-color: rgba(120, 120, 120, 0.28) !important;
-  background-color: var(--app-scrollbar-thumb-subtle) !important;
-  background-clip: content-box !important;
-}
-
-.editor-scrollable:hover::-webkit-scrollbar-thumb {
-  background-color: rgba(120, 120, 120, 0.42) !important;
-  background-color: var(--app-scrollbar-thumb) !important;
-  background-clip: content-box !important;
-}
-
-.editor-scrollable::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(105, 105, 105, 0.62) !important;
-  background-color: var(--app-scrollbar-thumb-hover) !important;
-  background-clip: content-box !important;
-}
-
-.editor-scrollable::-webkit-scrollbar-corner {
-  background-color: transparent !important;
-}
-
-.custom-scrollbar,
-.custom-scrollbar-thin,
-.custom-scrollbar-auto {
-  scroll-behavior: smooth;
-  overscroll-behavior: none !important;
-}
-
-/* .editor-scrollable intentionally does NOT use scroll-behavior: smooth for instant scrolling feedback */
-
-.tab-scroll-container {
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-x: contain;
-  scroll-behavior: smooth;
-  -webkit-overflow-scrolling: touch;
-}
-
-.tab-scroll-container::-webkit-scrollbar {
-  height: var(--app-scrollbar-thin-size) !important;
-}
-
-.tab-scroll-container::-webkit-scrollbar-track {
-  background-color: transparent !important;
-}
-
-.tab-scroll-container::-webkit-scrollbar-thumb {
-  border: 2px solid transparent !important;
-  border-radius: var(--app-scrollbar-radius) !important;
-  background-color: rgba(120, 120, 120, 0.42) !important;
-  background-color: var(--app-scrollbar-thumb) !important;
-  background-clip: content-box !important;
-}
-
-.tab-scroll-container::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(105, 105, 105, 0.62) !important;
-  background-color: var(--app-scrollbar-thumb-hover) !important;
-  background-clip: content-box !important;
-}
-
-.tab-scroll-container:hover::-webkit-scrollbar-thumb {
-  background-color: rgba(120, 120, 120, 0.42) !important;
-  background-color: var(--app-scrollbar-thumb) !important;
-  background-clip: content-box !important;
-}
-
-.tab-scroll-container > * {
-  flex-shrink: 0;
 }

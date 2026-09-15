@@ -1,15 +1,23 @@
-import { PushPinIcon as Pin, XIcon as X } from "@phosphor-icons/react";
-import { memo, useCallback, useEffect, useRef } from "react";
-import type { Terminal } from "@/features/terminal/types/terminal.types";
+import { ColumnsIcon, PauseIcon, PinIcon, WarningCircleIcon, XIcon } from "@/ui/icons";
+import { memo, useCallback } from "react";
+import type {
+  Terminal,
+  TerminalCommandSummary,
+  TerminalProgress,
+} from "@/features/terminal/types/terminal.types";
 import { Button } from "@/ui/button";
-import Input from "@/ui/input";
-import { Tab } from "@/ui/tabs";
+import { InlineRenameInput } from "@/ui/input";
+import { ProgressCircle } from "@/ui/progress";
+import { Spinner } from "@/ui/spinner";
+import { TabItem } from "@/ui/tab-bar";
 import { cn } from "@/utils/cn";
 
 interface TerminalTabBarItemProps {
   terminal: Terminal;
   displayName: string;
-  orientation?: "horizontal" | "vertical";
+  progress?: TerminalProgress;
+  lastCommand?: TerminalCommandSummary;
+  isSplit?: boolean;
   isActive: boolean;
   isDraggedTab: boolean;
   showDropIndicatorBefore: boolean;
@@ -22,15 +30,51 @@ interface TerminalTabBarItemProps {
   isEditing: boolean;
   editingName: string;
   onEditingNameChange: (value: string) => void;
-  onRenameSubmit: () => void;
+  onRenameSubmit: (value: string) => void;
   onRenameCancel: () => void;
-  onRenameBlur: () => void;
+}
+
+function TerminalProgressIndicator({ progress }: { progress: TerminalProgress }) {
+  const label = `${Math.round(progress.value)}% complete`;
+
+  if (progress.state === 2) {
+    return (
+      <WarningCircleIcon className="shrink-0 text-destructive" aria-label={`${label}, failed`} />
+    );
+  }
+  if (progress.state === 3) {
+    return <Spinner label="Working" compact className="shrink-0" />;
+  }
+  if (progress.state === 4) {
+    return <PauseIcon className="shrink-0 text-warning" aria-label={`${label}, paused`} />;
+  }
+  return (
+    <ProgressCircle
+      value={progress.value}
+      className="size-3.5 shrink-0"
+      role="img"
+      aria-label={label}
+    />
+  );
+}
+
+function TerminalCommandBadge({ command }: { command: TerminalCommandSummary }) {
+  const failed = command.status === "failure";
+  return (
+    <span
+      role="img"
+      aria-label={failed ? "Last command failed" : "Last command finished"}
+      className={cn("size-1.5 shrink-0 rounded-full", failed ? "bg-destructive" : "bg-success")}
+    />
+  );
 }
 
 const TerminalTabBarItem = memo(function TerminalTabBarItem({
   terminal,
   displayName,
-  orientation = "horizontal",
+  progress,
+  lastCommand,
+  isSplit = false,
   isActive,
   isDraggedTab,
   showDropIndicatorBefore,
@@ -45,22 +89,7 @@ const TerminalTabBarItem = memo(function TerminalTabBarItem({
   onEditingNameChange,
   onRenameSubmit,
   onRenameCancel,
-  onRenameBlur,
 }: TerminalTabBarItemProps) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (!isEditing || !inputRef.current) return;
-
-    const frameId = requestAnimationFrame(() => {
-      if (!inputRef.current) return;
-      inputRef.current.focus();
-      inputRef.current.select();
-    });
-
-    return () => cancelAnimationFrame(frameId);
-  }, [isEditing]);
-
   const handleAuxClick = useCallback(
     (e: React.MouseEvent) => {
       // Only handle middle click here
@@ -75,17 +104,10 @@ const TerminalTabBarItem = memo(function TerminalTabBarItem({
     <>
       {showDropIndicatorBefore && (
         <div className="relative">
-          <div
-            className={cn(
-              "drop-indicator absolute z-20 bg-accent",
-              orientation === "vertical"
-                ? "top-0 right-1 left-1 h-0.5"
-                : "top-1 bottom-1 left-0 w-0.5",
-            )}
-          />
+          <div className="drop-indicator absolute top-1 bottom-1 left-0 z-20 w-0.5 bg-primary" />
         </div>
       )}
-      <Tab
+      <TabItem
         ref={tabRef}
         role="tab"
         aria-selected={isActive}
@@ -93,101 +115,93 @@ const TerminalTabBarItem = memo(function TerminalTabBarItem({
         tabIndex={isActive ? 0 : -1}
         isActive={isActive}
         isDragged={isDraggedTab}
-        size="xs"
-        labelPosition={orientation === "vertical" ? "start" : "center"}
-        className={cn(
-          orientation === "vertical"
-            ? "w-full max-w-none justify-start pr-6 pl-2"
-            : "min-w-[88px] w-fit pr-6 pl-2",
-          isActive ? "bg-hover/80" : undefined,
-          isEditing ? "pr-2" : undefined,
-        )}
-        maxWidth={orientation === "vertical" ? undefined : 290}
         onClick={isEditing ? undefined : onClick}
         onContextMenu={onContextMenu}
         onKeyDown={onKeyDown}
         onAuxClick={handleAuxClick}
         action={
           !isEditing ? (
-            <Button
-              type="button"
-              compact
-              variant="ghost"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (terminal.isPinned) {
-                  handleTabPin(terminal.id);
-                } else {
-                  handleTabClose(terminal.id);
-                }
-              }}
+            <span
               className={cn(
-                "-translate-y-1/2 absolute top-1/2 right-1 h-4 min-w-4 cursor-pointer select-none rounded-sm px-0 text-text-lighter transition-opacity",
-                "hover:text-text",
+                "inline-flex -translate-y-1/2 absolute top-1/2 right-1 transition-opacity focus-within:opacity-100",
                 terminal.isPinned || isActive
                   ? "opacity-100"
                   : "opacity-0 group-hover/tab:opacity-100",
               )}
-              tooltip={terminal.isPinned ? "Unpin terminal" : `Close ${terminal.name}`}
-              shortcut={terminal.isPinned ? undefined : "mod+w"}
-              tabIndex={-1}
-              draggable={false}
             >
-              {terminal.isPinned ? (
-                <Pin className="pointer-events-none select-none fill-current text-accent" />
-              ) : (
-                <X className="pointer-events-none select-none" />
-              )}
-            </Button>
+              <Button
+                type="button"
+                iconOnly
+                variant="ghost"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (terminal.isPinned) {
+                    handleTabPin(terminal.id);
+                  } else {
+                    handleTabClose(terminal.id);
+                  }
+                }}
+                tooltip={terminal.isPinned ? "Unpin terminal" : `Close ${terminal.name}`}
+                commandId={terminal.isPinned ? undefined : "terminal.close"}
+                tabIndex={-1}
+                draggable={false}
+              >
+                {terminal.isPinned ? (
+                  <PinIcon className="pointer-events-none select-none fill-current text-primary" />
+                ) : (
+                  <XIcon className="pointer-events-none select-none" />
+                )}
+              </Button>
+            </span>
           ) : null
         }
       >
         {isEditing ? (
-          <Input
-            ref={inputRef}
+          <InlineRenameInput
             type="text"
             value={editingName}
-            onChange={(e) => onEditingNameChange(e.target.value)}
+            onValueChange={onEditingNameChange}
+            onSubmit={onRenameSubmit}
+            onCancel={onRenameCancel}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onMouseUp={(e) => e.stopPropagation()}
             onDoubleClick={(e) => e.stopPropagation()}
-            onFocus={(e) => e.currentTarget.select()}
-            onBlur={onRenameBlur}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Enter") {
-                onRenameSubmit();
-              } else if (e.key === "Escape") {
-                onRenameCancel();
-              }
-            }}
-            variant="ghost"
-            className={cn(
-              "ui-font ui-text-sm h-5 min-w-0 px-0",
-              orientation === "vertical" ? "text-left" : "text-left",
-              isActive ? "text-text" : "text-text-lighter",
-            )}
-            style={{
-              width: `${Math.max(editingName.trim().length || terminal.name.length, 1)}ch`,
-              maxWidth: "100%",
-            }}
+            tone={isActive ? "default" : "muted"}
+            width="content"
             placeholder="Terminal name"
+            aria-label={`Rename ${displayName}`}
             spellCheck={false}
           />
         ) : (
-          <span
-            className={cn(
-              "ui-font ui-text-sm max-w-full select-none overflow-hidden text-ellipsis whitespace-nowrap",
-              "text-left",
-              isActive ? "text-text" : "text-text-lighter",
-            )}
-            title={terminal.currentDirectory}
-          >
-            {displayName}
-          </span>
+          <>
+            {progress ? <TerminalProgressIndicator progress={progress} /> : null}
+            {!progress && lastCommand && !isActive ? (
+              <TerminalCommandBadge command={lastCommand} />
+            ) : null}
+            {isSplit ? (
+              <ColumnsIcon
+                className="size-3 shrink-0 text-subtle-foreground"
+                aria-label="Part of a split group"
+              />
+            ) : null}
+            <span
+              className={cn(
+                "font-sans ui-text-chrome max-w-full select-none overflow-hidden text-ellipsis whitespace-nowrap",
+                "text-left",
+                isActive ? "text-foreground" : "text-subtle-foreground",
+              )}
+              title={
+                terminal.currentDirectory
+                  ? `${displayName} — ${terminal.currentDirectory}`
+                  : displayName
+              }
+            >
+              {displayName}
+            </span>
+          </>
         )}
-      </Tab>
+      </TabItem>
     </>
   );
 });

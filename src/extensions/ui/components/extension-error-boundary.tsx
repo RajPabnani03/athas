@@ -1,6 +1,14 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
-import { WarningIcon as AlertTriangle } from "@phosphor-icons/react";
+import { WarningIcon } from "@/ui/icons";
 import { Button } from "@/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/ui/empty";
 
 interface Props {
   extensionId: string;
@@ -21,7 +29,7 @@ export class ExtensionErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error(`Extension "${this.props.extensionId}" crashed:`, error, info);
+    console.error(`Integration "${this.props.extensionId}" crashed:`, error, info);
   }
 
   handleRetry = () => {
@@ -31,23 +39,26 @@ export class ExtensionErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
-          <AlertTriangle className="size-8 text-warning" />
-          <div>
-            <p className="font-medium ui-text-sm text-text">{this.props.name} crashed</p>
-            <p className="mt-1 text-text-lighter ui-text-xs">
+        <Empty className="h-full p-4" tone="warning" role="alert">
+          <EmptyHeader>
+            <EmptyMedia>
+              <WarningIcon className="size-8" />
+            </EmptyMedia>
+            <EmptyTitle>{this.props.name} crashed</EmptyTitle>
+            <EmptyDescription>
               {this.state.error?.message || "An unexpected error occurred"}
-            </p>
-          </div>
-          <Button
-            onClick={this.handleRetry}
-            variant="default"
-            aria-label={`Retry loading ${this.props.name}`}
-            compact
-          >
-            Retry
-          </Button>
-        </div>
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button
+              onClick={this.handleRetry}
+              variant="default"
+              aria-label={`Retry loading ${this.props.name}`}
+            >
+              Retry
+            </Button>
+          </EmptyContent>
+        </Empty>
       );
     }
 

@@ -1,4 +1,5 @@
-import { create } from "zustand";
+import { createStore } from "zustand/vanilla";
+import { createWorkspaceScopedStore } from "@/features/workspace/stores/create-workspace-scoped-store";
 import type { ContextMenuSlice } from "./ui-state/context-menu-slice";
 import { createContextMenuSlice } from "./ui-state/context-menu-slice";
 import type { ModalSlice } from "./ui-state/modal-slice";
@@ -9,12 +10,10 @@ import type { QuickEditSlice } from "./ui-state/quick-edit-slice";
 import { createQuickEditSlice } from "./ui-state/quick-edit-slice";
 import type { TerminalSlice } from "./ui-state/terminal-slice";
 import { createTerminalSlice } from "./ui-state/terminal-slice";
-import type { SettingsTab } from "./ui-state/types/ui-state.types";
 import type { ViewSlice } from "./ui-state/view-slice";
 import { createViewSlice } from "./ui-state/view-slice";
 
 // Re-export types for convenience
-export type { SettingsTab };
 
 // Combined store type
 export type UIState = ModalSlice &
@@ -25,11 +24,14 @@ export type UIState = ModalSlice &
   QuickEditSlice;
 
 // Create the combined store
-export const useUIState = create<UIState>()((...a) => ({
-  ...createModalSlice(...a),
-  ...createPanelSlice(...a),
-  ...createViewSlice(...a),
-  ...createContextMenuSlice(...a),
-  ...createTerminalSlice(...a),
-  ...createQuickEditSlice(...a),
-}));
+const createUIStateStore = () =>
+  createStore<UIState>()((...a) => ({
+    ...createModalSlice(...a),
+    ...createPanelSlice(...a),
+    ...createViewSlice(...a),
+    ...createContextMenuSlice(...a),
+    ...createTerminalSlice(...a),
+    ...createQuickEditSlice(...a),
+  }));
+
+export const useUIState = createWorkspaceScopedStore("window-ui", createUIStateStore);

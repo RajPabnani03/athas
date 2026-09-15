@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useLinuxFolderPickerStore } from "@/features/file-system/stores/linux-folder-picker.store";
+import { parseWslPath } from "@/features/wsl/utils/wsl-path";
 import { IS_LINUX } from "@/utils/platform";
 import {
   BaseDirectory,
@@ -35,13 +36,27 @@ async function promptForPath(title: string): Promise<string | null> {
  * @param path The path to the file to read
  */
 export async function readFile(path: string): Promise<string> {
+  const wslInfo = parseWslPath(path);
+  if (wslInfo) {
+    return await invoke<string>("wsl_read_file", {
+      distro: wslInfo.distro,
+      filePath: wslInfo.linuxPath,
+    });
+  }
+
   try {
-    const content = await readBinaryFile(path);
+    const response = await invoke<ArrayBuffer | number[]>("read_local_file", { path });
+    const content =
+      response instanceof ArrayBuffer ? new Uint8Array(response) : Uint8Array.from(response);
     return utf8Decoder.decode(content);
   } catch {
     const content = await readBinaryFile(path, { baseDir: BaseDirectory.AppData });
     return utf8Decoder.decode(content);
   }
+}
+
+export async function getLocalDirectorySize(path: string): Promise<number> {
+  return await invoke<number>("get_local_directory_size", { path });
 }
 
 /**
@@ -50,6 +65,16 @@ export async function readFile(path: string): Promise<string> {
  * @param content The content to write
  */
 export async function writeFile(path: string, content: string): Promise<void> {
+  const wslInfo = parseWslPath(path);
+  if (wslInfo) {
+    await invoke("wsl_write_file", {
+      distro: wslInfo.distro,
+      filePath: wslInfo.linuxPath,
+      content,
+    });
+    return;
+  }
+
   try {
     // Try to write as absolute path first
     await writeTextFile(path, content);
@@ -64,6 +89,15 @@ export async function writeFile(path: string, content: string): Promise<void> {
  * @param path The path to the directory to create
  */
 export async function createDirectory(path: string): Promise<void> {
+  const wslInfo = parseWslPath(path);
+  if (wslInfo) {
+    await invoke("wsl_create_directory", {
+      distro: wslInfo.distro,
+      directoryPath: wslInfo.linuxPath,
+    });
+    return;
+  }
+
   await mkdir(path, { recursive: true });
 }
 
@@ -72,6 +106,16 @@ export async function createDirectory(path: string): Promise<void> {
  * @param path The path to delete
  */
 export async function deletePath(path: string): Promise<void> {
+  const wslInfo = parseWslPath(path);
+  if (wslInfo) {
+    await invoke("wsl_delete_path", {
+      distro: wslInfo.distro,
+      targetPath: wslInfo.linuxPath,
+      isDirectory: true,
+    });
+    return;
+  }
+
   await remove(path, { recursive: true });
 }
 
@@ -79,32 +123,59 @@ export async function deletePath(path: string): Promise<void> {
  * Open a folder selection dialog
  */
 export async function openFolder(): Promise<string | null> {
-  if (IS_LINUX) {
+  try {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+    });
+
+    return selected as string | null;
+  } catch (error) {
+    if (!IS_LINUX) throw error;
+
+    console.warn("Native folder dialog failed, using the Athas folder picker:", error);
     return useLinuxFolderPickerStore.getState().actions.open();
   }
-
-  const selected = await open({
-    directory: true,
-    multiple: false,
-  });
-
-  return selected as string | null;
 }
 
 /**
  * Open a file selection dialog
  */
 export async function openFile(): Promise<string | null> {
-  if (IS_LINUX) {
+  try {
+    const selected = await open({
+      directory: false,
+      multiple: false,
+    });
+
+    return selected as string | null;
+  } catch (error) {
+    if (!IS_LINUX) throw error;
+
+    console.warn("Native file dialog failed, using path entry:", error);
     return promptForPath("File path");
   }
+}
 
-  const selected = await open({
-    directory: false,
-    multiple: false,
-  });
+/**
+ * Open a file selection dialog that allows selecting multiple files.
+ */
+export async function openFiles(): Promise<string[]> {
+  try {
+    const selected = await open({
+      directory: false,
+      multiple: true,
+    });
 
-  return selected as string | null;
+    if (!selected) return [];
+    return Array.isArray(selected) ? selected : [selected];
+  } catch (error) {
+    if (!IS_LINUX) throw error;
+
+    console.warn("Native file dialog failed, using path entry:", error);
+    const selected = await promptForPath("File path");
+    return selected ? [selected] : [];
+  }
 }
 
 /**
@@ -112,6 +183,24 @@ export async function openFile(): Promise<string | null> {
  * @param path The directory path to read
  */
 export async function readDirectory(path: string): Promise<any[]> {
+  const wslInfo = parseWslPath(path);
+  if (wslInfo) {
+    const entries = await invoke<
+      Array<{
+        name: string;
+        path: string;
+        is_dir: boolean;
+        size: number;
+        is_symlink: boolean;
+        target?: string | null;
+      }>
+    >("wsl_read_directory", {
+      distro: wslInfo.distro,
+      path: wslInfo.linuxPath,
+    });
+    return entries;
+  }
+
   try {
     // Normalize the path - remove any trailing slashes
     const normalizedPath = path.replace(/[/\\]+$/, "");
@@ -124,6 +213,7 @@ export async function readDirectory(path: string): Promise<any[]> {
       name: entry.name,
       path: `${normalizedPath}${separator}${entry.name}`,
       is_dir: entry.isDirectory,
+      is_symlink: entry.isSymlink,
     }));
   } catch (error) {
     console.error("readDirectory: Error reading directory:", path, error);
@@ -138,6 +228,21 @@ export async function readDirectory(path: string): Promise<any[]> {
  * @param targetPath The destination path where the file should be moved
  */
 export async function moveFile(sourcePath: string, targetPath: string): Promise<void> {
+  const sourceWsl = parseWslPath(sourcePath);
+  const targetWsl = parseWslPath(targetPath);
+  if (sourceWsl || targetWsl) {
+    if (!sourceWsl || !targetWsl || sourceWsl.distro !== targetWsl.distro) {
+      throw new Error("Moving files between WSL distributions or local folders is not supported.");
+    }
+
+    await invoke("wsl_rename_path", {
+      distro: sourceWsl.distro,
+      sourcePath: sourceWsl.linuxPath,
+      targetPath: targetWsl.linuxPath,
+    });
+    return;
+  }
+
   await invoke("move_file", { sourcePath, targetPath });
 }
 
@@ -147,6 +252,23 @@ export async function moveFile(sourcePath: string, targetPath: string): Promise<
  * @param targetPath The new path of the file
  */
 export async function renameFile(sourcePath: string, targetPath: string): Promise<void> {
+  const sourceWsl = parseWslPath(sourcePath);
+  const targetWsl = parseWslPath(targetPath);
+  if (sourceWsl || targetWsl) {
+    if (!sourceWsl || !targetWsl || sourceWsl.distro !== targetWsl.distro) {
+      throw new Error(
+        "Renaming files between WSL distributions or local folders is not supported.",
+      );
+    }
+
+    await invoke("wsl_rename_path", {
+      distro: sourceWsl.distro,
+      sourcePath: sourceWsl.linuxPath,
+      targetPath: targetWsl.linuxPath,
+    });
+    return;
+  }
+
   await invoke("rename_file", { sourcePath, targetPath });
 }
 
@@ -162,5 +284,13 @@ export interface SymlinkInfo {
  * @param workspaceRoot The workspace root for relative path calculation
  */
 export async function getSymlinkInfo(path: string, workspaceRoot?: string): Promise<SymlinkInfo> {
+  const wslInfo = parseWslPath(path);
+  if (wslInfo) {
+    return await invoke("wsl_get_symlink_info", {
+      distro: wslInfo.distro,
+      path: wslInfo.linuxPath,
+    });
+  }
+
   return await invoke("get_symlink_info", { path, workspaceRoot });
 }

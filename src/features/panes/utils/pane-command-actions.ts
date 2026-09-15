@@ -1,4 +1,5 @@
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { getBufferById } from "@/features/editor/utils/buffer-index";
 import { BOTTOM_PANE_ID } from "../constants/pane";
 import { usePaneStore } from "../stores/pane.store";
 import type { PaneNode } from "../types/pane.types";
@@ -6,14 +7,10 @@ import { getPaneScopeForPaneId } from "./pane-routing";
 import { createPaneBeside } from "./pane-split-actions";
 import { getAllPaneGroups } from "./pane-tree";
 
-export const getShareableSplitBufferId = (bufferId: string | null | undefined) => {
+const getShareableSplitBufferId = (bufferId: string | null | undefined) => {
   if (!bufferId) return undefined;
-  const activeBuffer = useBufferStore.getState().buffers.find((buffer) => buffer.id === bufferId);
-  if (
-    activeBuffer?.type === "terminal" ||
-    activeBuffer?.type === "agent" ||
-    activeBuffer?.type === "webViewer"
-  ) {
+  const activeBuffer = getBufferById(useBufferStore.getState().buffers, bufferId);
+  if (activeBuffer?.type === "terminal" || activeBuffer?.type === "agent") {
     return undefined;
   }
 
@@ -46,6 +43,17 @@ export function toggleActiveEditorGroupLock(): boolean {
   }
 
   paneStore.actions.setPaneLocked(activePane.id, !activePane.locked);
+  return true;
+}
+
+export function toggleActivePaneFullscreen(): boolean {
+  const paneStore = usePaneStore.getState();
+  const activePane = paneStore.actions.getActivePane();
+  if (!activePane) {
+    return false;
+  }
+
+  paneStore.actions.togglePaneFullscreen(activePane.id);
   return true;
 }
 

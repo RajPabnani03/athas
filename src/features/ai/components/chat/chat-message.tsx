@@ -1,78 +1,241 @@
-import { CopySimpleIcon as CopySimple } from "@phosphor-icons/react";
-import { memo, useCallback } from "react";
+import { CopyIcon, FileTextIcon, UploadIcon } from "@/ui/icons";
+import type { FormEvent, ReactNode } from "react";
+import { memo, useCallback, useState } from "react";
+import { Shimmer } from "@/ui/shimmer";
+import { Marker, MarkerContent, MarkerIcon } from "@/ui/marker";
+import { MessageAction, MessageResponse } from "@/ui/message";
+import { ThinkingOrb, type ThinkingOrbProps } from "@/ui/thinking-orb";
 import type { PlanStep } from "@/features/ai/lib/plan-parser";
 import { hasPlanBlock, parsePlan } from "@/features/ai/lib/plan-parser";
-import type { Message } from "@/features/ai/types/ai-chat.types";
+import type { Message as AIMessage } from "@/features/ai/types/ai-chat.types";
 import { formatTime } from "@/features/ai/lib/formatting";
-import { Button } from "@/ui/button";
+import { buildShareableOutcomeMarkdown } from "@/features/ai/lib/shareable-outcome";
 import { writeClipboardText } from "@/utils/clipboard";
-import { useAIChatStore } from "../../stores/ai-chat.store";
+import { Button } from "@/ui/button";
 import { GenerativeUIRenderer } from "@/extensions/ui/components/generative-ui-renderer";
+import {
+  Attachment,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+  AttachmentTrigger,
+} from "@/ui/attachment";
+import { Bubble, BubbleContent } from "@/ui/bubble";
+import { Avatar } from "@/ui/avatar";
+import { Message, MessageAvatar, MessageContent, MessageFooter } from "@/ui/message";
+import Textarea from "@/ui/textarea";
+import { ProviderIcon } from "../icons/provider-icons";
 import MarkdownRenderer from "../messages/markdown-renderer";
 import { PlanBlockDisplay } from "../messages/plan-block-display";
 import { ToolCallGroupDisplay } from "../messages/tool-call-display";
-import { ChatLoadingIndicator } from "./chat-loading-indicator";
 
 interface ChatMessageProps {
-  message: Message;
+  message: AIMessage;
   isLastMessage: boolean;
+  showActions?: boolean;
   onApplyCode?: (code: string, language?: string) => void;
+  onEditUserMessage?: (messageId: string, content: string) => void | Promise<void>;
+  canEditUserMessage?: boolean;
+  searchQuery?: string;
+  chatId?: string | null;
+  onExecutePlanStep?: (message: string) => void | Promise<void>;
+  userName: string;
+  userAvatarUrl?: string | null;
+  assistantIconId: string;
+  assistantLabel: string;
 }
 
 async function copyText(text: string) {
   await writeClipboardText(text);
 }
 
-export const ChatMessage = memo(function ChatMessage({ message, onApplyCode }: ChatMessageProps) {
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function HighlightedPlainText({ text, query }: { text: string; query: string }) {
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) return text;
+
+  const matcher = new RegExp(`(${escapeRegExp(trimmedQuery)})`, "gi");
+  const parts = text.split(matcher);
+
+  return (
+    <>
+      {parts.map((part, index): ReactNode => {
+        if (!part) return null;
+        if (part.toLowerCase() !== trimmedQuery.toLowerCase()) return part;
+
+        return (
+          <mark key={`${part}-${index}`} className="rounded bg-primary/25 px-0.5 text-inherit">
+            {part}
+          </mark>
+        );
+      })}
+    </>
+  );
+}
+
+function ChatResponseStatus({ phase }: { phase: AIMessage["responsePhase"] }) {
+  const isStarting = phase === "starting";
+  const isThinking = phase === "thinking";
+  const label = isStarting ? "Starting agent…" : isThinking ? "Thinking…" : "Waiting for response…";
+  const state: ThinkingOrbProps["state"] = isThinking ? "breathing" : "connecting";
+
+  return (
+    <Marker role="status" className="w-fit">
+      <MarkerIcon className="size-5">
+        <ThinkingOrb state={state} size={20} aria-hidden="true" />
+      </MarkerIcon>
+      <MarkerContent>
+        <Shimmer>{label}</Shimmer>
+      </MarkerContent>
+    </Marker>
+  );
+}
+
+function AssistantMessageAvatar({ iconId, label }: { iconId: string; label: string }) {
+  return (
+    <MessageAvatar
+      placement="content"
+      variant="assistant"
+      size="compact"
+      className="mt-1.5"
+      title={label}
+      aria-label={label}
+    >
+      <ProviderIcon providerId={iconId} />
+    </MessageAvatar>
+  );
+}
+
+export const ChatMessage = memo(function ChatMessage({
+  message,
+  isLastMessage,
+  showActions = true,
+  onApplyCode,
+  onEditUserMessage,
+  canEditUserMessage = false,
+  searchQuery = "",
+  chatId,
+  onExecutePlanStep,
+  userName,
+  userAvatarUrl,
+  assistantIconId,
+  assistantLabel,
+}: ChatMessageProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftContent, setDraftContent] = useState(message.content);
   const isToolOnlyMessage =
     message.role === "assistant" &&
     message.toolCalls &&
     message.toolCalls.length > 0 &&
     (!message.content || message.content.trim().length === 0);
 
-  const handleExecuteStep = useCallback((step: PlanStep, stepIndex: number) => {
-    const { setMode, addMessageToQueue } = useAIChatStore.getState();
-    setMode("chat");
-    addMessageToQueue(
-      `Execute step ${stepIndex + 1} of the plan: ${step.title}\n\n${step.description}`,
-    );
-  }, []);
+  const handleExecuteStep = useCallback(
+    (step: PlanStep, stepIndex: number) => {
+      void onExecutePlanStep?.(
+        `Execute step ${stepIndex + 1} of the plan: ${step.title}\n\n${step.description}`,
+      );
+    },
+    [onExecutePlanStep],
+  );
 
   if (message.role === "user") {
     const messageTime = formatTime(message.timestamp);
+    const startEditing = () => {
+      setDraftContent(message.content);
+      setIsEditing(true);
+    };
+    const cancelEditing = () => {
+      setDraftContent(message.content);
+      setIsEditing(false);
+    };
+    const submitEdit = (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const nextContent = draftContent.trim();
+      if (!nextContent || nextContent === message.content) {
+        cancelEditing();
+        return;
+      }
+
+      setIsEditing(false);
+      void onEditUserMessage?.(message.id, nextContent);
+    };
 
     return (
-      <div className="group flex w-full flex-col items-end">
-        <div
-          className="inline-block max-w-[min(72ch,100%)] rounded-2xl bg-secondary-bg/42 px-3 py-2.5"
-          title={messageTime}
-        >
-          <div className="ai-chat-message-content whitespace-pre-wrap break-words">
-            {message.content}
-          </div>
-        </div>
-        <div className="mt-1 flex items-center gap-1.5">
-          <span className="ui-text-xs text-text-lighter/55">{messageTime}</span>
-          <Button
-            type="button"
-            variant="ghost"
-            compact
-            onClick={() => void copyText(message.content)}
-            className="size-6 rounded-md border-transparent bg-transparent p-0 text-text-lighter/55 shadow-none hover:bg-transparent hover:text-text-lighter"
-            aria-label="Copy prompt"
-          >
-            <CopySimple className="size-3.5" />
-          </Button>
-        </div>
-      </div>
+      <Message>
+        <MessageAvatar placement="content" size="compact" className="mt-0.5">
+          <Avatar name={userName} src={userAvatarUrl} className="size-full" />
+        </MessageAvatar>
+        <MessageContent>
+          <Bubble variant="ghost">
+            <BubbleContent title={messageTime} className="w-full">
+              {isEditing ? (
+                <form onSubmit={submitEdit} className="flex min-w-0 flex-col gap-2">
+                  <Textarea
+                    autoFocus
+                    value={draftContent}
+                    onChange={(event) => setDraftContent(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelEditing();
+                      }
+                    }}
+                    variant="ghost"
+                    inset="flush"
+                    className="min-h-16"
+                    aria-label="Edit prompt"
+                  />
+                  <div className="flex justify-end gap-1">
+                    <Button type="button" variant="ghost" onClick={cancelEditing}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" variant="accent" disabled={!draftContent.trim()}>
+                      Send
+                    </Button>
+                  </div>
+                </form>
+              ) : canEditUserMessage && onEditUserMessage ? (
+                <button
+                  type="button"
+                  onClick={startEditing}
+                  className="block w-full cursor-text text-left whitespace-pre-wrap wrap-break-word select-text"
+                  aria-label="Edit prompt"
+                >
+                  <HighlightedPlainText text={message.content} query={searchQuery} />
+                </button>
+              ) : (
+                <div className="select-text whitespace-pre-wrap wrap-break-word">
+                  <HighlightedPlainText text={message.content} query={searchQuery} />
+                </div>
+              )}
+            </BubbleContent>
+          </Bubble>
+          {isEditing || !showActions ? null : (
+            <MessageFooter reserveSpace={false}>
+              <span>{messageTime}</span>
+              <MessageAction onClick={() => void copyText(message.content)} label="Copy prompt">
+                <CopyIcon className="size-3.5" />
+              </MessageAction>
+            </MessageFooter>
+          )}
+        </MessageContent>
+      </Message>
     );
   }
 
   if (isToolOnlyMessage) {
     return (
-      <div>
-        <ToolCallGroupDisplay toolCalls={message.toolCalls!} isStreaming={message.isStreaming} />
-      </div>
+      <Message>
+        <AssistantMessageAvatar iconId={assistantIconId} label={assistantLabel} />
+        <MessageContent>
+          <ToolCallGroupDisplay toolCalls={message.toolCalls!} isStreaming={message.isStreaming} />
+        </MessageContent>
+      </Message>
     );
   }
 
@@ -82,69 +245,117 @@ export const ChatMessage = memo(function ChatMessage({ message, onApplyCode }: C
     (!message.content || message.content.trim().length === 0) &&
     (!message.toolCalls || message.toolCalls.length === 0)
   ) {
-    return <ChatLoadingIndicator label="waiting for response" compact />;
+    return (
+      <Message>
+        <AssistantMessageAvatar iconId={assistantIconId} label={assistantLabel} />
+        <MessageContent>
+          <ChatResponseStatus phase={message.responsePhase} />
+        </MessageContent>
+      </Message>
+    );
   }
 
   return (
-    <div className="group relative w-full">
-      {message.images && message.images.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-2">
-          {message.images.map((image, index) => (
-            <img
-              key={`${message.id}-image-${index}`}
-              src={`data:${image.mediaType};base64,${image.data}`}
-              alt={`AI generated content ${index + 1}`}
-              className="max-h-64 max-w-full rounded-lg border border-border"
-            />
-          ))}
-        </div>
-      )}
+    <Message>
+      <AssistantMessageAvatar iconId={assistantIconId} label={assistantLabel} />
+      <MessageContent>
+        <Bubble variant="ghost">
+          <BubbleContent>
+            {message.images?.length || message.resources?.length ? (
+              <AttachmentGroup className="mb-2">
+                {message.images?.map((image, index) => (
+                  <Attachment key={`${message.id}-image-${index}`} orientation="vertical">
+                    <AttachmentMedia variant="image">
+                      <img
+                        src={`data:${image.mediaType};base64,${image.data}`}
+                        alt={`AI generated content ${index + 1}`}
+                      />
+                    </AttachmentMedia>
+                    <AttachmentContent>
+                      <AttachmentTitle>Generated image {index + 1}</AttachmentTitle>
+                      <AttachmentDescription>{image.mediaType}</AttachmentDescription>
+                    </AttachmentContent>
+                  </Attachment>
+                ))}
+                {message.resources?.map((resource, index) => {
+                  const resourceName = resource.name || resource.uri;
 
-      {message.resources && message.resources.length > 0 && (
-        <div className="mb-2 flex flex-col gap-1">
-          {message.resources.map((resource, index) => (
-            <a
-              key={`${message.id}-resource-${index}`}
-              href={resource.uri}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded border border-border bg-primary-bg/50 px-2 py-1 text-accent ui-text-xs hover:bg-hover"
-            >
-              <span className="truncate">{resource.name || resource.uri}</span>
-            </a>
-          ))}
-        </div>
-      )}
+                  return (
+                    <Attachment key={`${message.id}-resource-${index}`}>
+                      <AttachmentMedia>
+                        <FileTextIcon />
+                      </AttachmentMedia>
+                      <AttachmentContent>
+                        <AttachmentTitle>{resourceName}</AttachmentTitle>
+                        <AttachmentDescription>{resource.uri}</AttachmentDescription>
+                      </AttachmentContent>
+                      <AttachmentTrigger
+                        render={
+                          <a
+                            href={resource.uri}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`Open ${resourceName}`}
+                          />
+                        }
+                      />
+                    </Attachment>
+                  );
+                })}
+              </AttachmentGroup>
+            ) : null}
 
-      {message.ui && message.ui.length > 0 && (
-        <div className="mb-2 space-y-2">
-          {message.ui.map((component, index) => (
-            <GenerativeUIRenderer key={`${message.id}-ui-${index}`} component={component} />
-          ))}
-        </div>
-      )}
-
-      {message.content && (
-        <>
-          <div className="ai-chat-message-content pr-1 leading-relaxed">
-            {hasPlanBlock(message.content) ? (
-              <PlanBlockDisplay
-                plan={parsePlan(message.content)!}
-                isStreaming={message.isStreaming}
-                onExecuteStep={handleExecuteStep}
-              />
-            ) : (
-              <MarkdownRenderer content={message.content} onApplyCode={onApplyCode} />
+            {message.ui && message.ui.length > 0 && (
+              <div className="mb-2 space-y-2">
+                {message.ui.map((component, index) => (
+                  <GenerativeUIRenderer key={`${message.id}-ui-${index}`} component={component} />
+                ))}
+              </div>
             )}
-          </div>
-        </>
-      )}
 
-      {message.toolCalls && message.toolCalls.length > 0 && (
-        <div className="mt-2">
-          <ToolCallGroupDisplay toolCalls={message.toolCalls} isStreaming={message.isStreaming} />
-        </div>
-      )}
-    </div>
+            {message.content && (
+              <MessageResponse>
+                {hasPlanBlock(message.content) ? (
+                  <PlanBlockDisplay
+                    plan={parsePlan(message.content)!}
+                    isStreaming={message.isStreaming}
+                    onExecuteStep={handleExecuteStep}
+                  />
+                ) : (
+                  <MarkdownRenderer
+                    content={message.content}
+                    onApplyCode={onApplyCode}
+                    chatId={chatId}
+                  />
+                )}
+              </MessageResponse>
+            )}
+
+            {message.toolCalls && message.toolCalls.length > 0 && (
+              <div className="mt-2">
+                <ToolCallGroupDisplay
+                  toolCalls={message.toolCalls}
+                  isStreaming={message.isStreaming}
+                />
+              </div>
+            )}
+          </BubbleContent>
+        </Bubble>
+        {showActions && message.content.trim() ? (
+          <MessageFooter reserveSpace={false}>
+            <MessageAction onClick={() => void copyText(message.content)} label="Copy response">
+              <CopyIcon className="size-3.5" />
+            </MessageAction>
+            {isLastMessage && !message.isStreaming ? (
+              <MessageAction
+                onClick={() => void copyText(buildShareableOutcomeMarkdown(message.content))}
+                label="Copy outcome as Markdown"
+                icon={UploadIcon}
+              />
+            ) : null}
+          </MessageFooter>
+        ) : null}
+      </MessageContent>
+    </Message>
   );
 });

@@ -1,7 +1,8 @@
-import { PlusIcon as Plus, XIcon as X } from "@phosphor-icons/react";
+import { PlusIcon, XIcon } from "@/ui/icons";
 import { Button } from "@/ui/button";
 import Input from "@/ui/input";
 import Select from "@/ui/select";
+import { databaseCardClassName } from "../utils/database-surface";
 import type { ColumnFilter, ColumnInfo, FilterOperator } from "../types/common.types";
 
 const FILTER_OPERATORS: { value: FilterOperator; label: string }[] = [
@@ -41,43 +42,34 @@ export default function ColumnFilters({
   if (filters.length === 0) return null;
 
   return (
-    <div className="mx-3 mb-2 rounded-lg border border-border/60 bg-secondary-bg/60 px-3 py-2">
+    <div className={databaseCardClassName("mx-3 mb-2 bg-surface/60 px-3 py-2")}>
       <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="ui-font ui-text-sm text-text-lighter">
+          <span className="font-sans ui-text-sm text-subtle-foreground">
             {filters.length} filter{filters.length !== 1 ? "s" : ""}
           </span>
           {columns.length > 0 && (
             <Button
               onClick={() => onAddFilter(columns[0].name)}
               variant="ghost"
-              compact
-              className="rounded-md gap-0.5 text-text-lighter"
               aria-label="Add filter"
             >
-              <Plus />
+              <PlusIcon />
               Add
             </Button>
           )}
         </div>
-        <Button
-          onClick={onClear}
-          variant="ghost"
-          className="rounded-md text-text-lighter"
-          aria-label="Clear all filters"
-          compact
-        >
+        <Button onClick={onClear} variant="ghost" aria-label="Clear all filters">
           Clear all
         </Button>
       </div>
       <div className="space-y-1">
         {filters.map((filter, index) => (
-          <div key={index} className="flex items-center gap-2 ui-font ui-text-sm">
+          <div key={index} className="flex items-center gap-2 font-sans ui-text-sm">
             <Select
               value={filter.column}
               options={columns.map((column) => ({ value: column.name, label: column.name }))}
               onChange={(value) => onUpdate(index, { column: value })}
-              size="xs"
               className="min-w-20"
             />
             <Select
@@ -87,35 +79,31 @@ export default function ColumnFilters({
                 label: operator.label,
               }))}
               onChange={(value) => onUpdate(index, { operator: value as FilterOperator })}
-              size="xs"
               className="min-w-20"
             />
             {!NO_VALUE_OPERATORS.has(filter.operator) && (
               <Input
+                grow
                 value={filter.value}
                 onChange={(e) => onUpdate(index, { value: e.target.value })}
                 placeholder="value"
-                size="xs"
-                className="flex-1"
               />
             )}
             {filter.operator === "between" && (
               <Input
+                grow
                 value={filter.value2 || ""}
                 onChange={(e) => onUpdate(index, { value2: e.target.value })}
                 placeholder="to"
-                size="xs"
-                className="flex-1"
               />
             )}
             <Button
               onClick={() => onRemove(index)}
-              variant="ghost"
-              compact
-              className="text-text-lighter hover:text-error"
+              variant="danger"
+              iconOnly
               aria-label="Remove filter"
             >
-              <X />
+              <XIcon />
             </Button>
           </div>
         ))}

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { extractFollowUpActions, getFollowUpActionsForMessage } from "../lib/follow-up-actions";
+import {
+  extractFollowUpActions,
+  getFollowUpActionsForMessage,
+  normalizeMessageFollowUpActions,
+} from "../lib/follow-up-actions";
 import type { Message } from "../types/ai-chat.types";
 
 function assistantMessage(overrides: Partial<Message>): Message {
@@ -18,7 +22,7 @@ describe("follow-up actions", () => {
 
 [FOLLOW_UP_ACTIONS]
 [
-  {"label":"Deploy","prompt":"Deploy this change and verify it.","icon":"RocketLaunch"},
+  {"label":"Deploy","prompt":"Deploy this change and verify it.","icon":"Rocket"},
   {"label":"Review","prompt":"Review the diff.","icon":"ShieldCheck"}
 ]
 [/FOLLOW_UP_ACTIONS]`);
@@ -29,7 +33,7 @@ describe("follow-up actions", () => {
         id: "deploy-0",
         label: "Deploy",
         prompt: "Deploy this change and verify it.",
-        icon: "RocketLaunch",
+        icon: "Rocket",
       },
       {
         id: "review-1",
@@ -51,6 +55,22 @@ describe("follow-up actions", () => {
     expect(extracted.actions).toEqual([]);
   });
 
+  it("extracts compact action blocks emitted on one line", () => {
+    const extracted = extractFollowUpActions(
+      `Done. [FOLLOW_UP_ACTIONS] [ {"label":"Run tests","prompt":"Run the relevant tests and verify this change.","icon":"ShieldCheck"} ] [/FOLLOW_UP_ACTIONS]`,
+    );
+
+    expect(extracted.content).toBe("Done.");
+    expect(extracted.actions).toEqual([
+      {
+        id: "run-tests-0",
+        label: "Run tests",
+        prompt: "Run the relevant tests and verify this change.",
+        icon: "ShieldCheck",
+      },
+    ]);
+  });
+
   it("falls back to the default package icon for unknown icon names", () => {
     const extracted = extractFollowUpActions(`Done.
 
@@ -59,6 +79,28 @@ describe("follow-up actions", () => {
 [/FOLLOW_UP_ACTIONS]`);
 
     expect(extracted.actions[0]?.icon).toBe("ArrowRight");
+  });
+
+  it("normalizes assistant message content and stores extracted actions", () => {
+    const normalized = normalizeMessageFollowUpActions(
+      assistantMessage({
+        content: `Done.
+
+[FOLLOW_UP_ACTIONS]
+[{"label":"Review","prompt":"Review the diff.","icon":"ShieldCheck"}]
+[/FOLLOW_UP_ACTIONS]`,
+      }),
+    );
+
+    expect(normalized.content).toBe("Done.");
+    expect(normalized.followUpActions).toEqual([
+      {
+        id: "review-0",
+        label: "Review",
+        prompt: "Review the diff.",
+        icon: "ShieldCheck",
+      },
+    ]);
   });
 
   it("does not show generated follow-ups while the assistant is streaming", () => {
@@ -71,7 +113,7 @@ describe("follow-up actions", () => {
               id: "deploy-0",
               label: "Deploy",
               prompt: "Deploy this change.",
-              icon: "RocketLaunch",
+              icon: "Rocket",
             },
           ],
         }),

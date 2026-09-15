@@ -15,23 +15,6 @@ export const formatRelativeTime = (timestamp: number) => {
 };
 
 /**
- * Format a Unix timestamp (seconds) to a locale date-time string.
- * Returns "YYYY-MM-DD HH:MM" (e.g., "2024-01-20 14:30").
- */
-export const formatDate = (timestamp: number) => {
-  return new Intl.DateTimeFormat("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })
-    .format(timestamp * 1000)
-    .replace(",", "");
-};
-
-/**
  * Format a date string to a short date format.
  * Returns "Jan 20, 2024" style output.
  */
@@ -54,6 +37,7 @@ interface CompactRelativeDateOptions {
   fallback?: string;
   capitalizeJustNow?: boolean;
   justNowLabel?: string;
+  includeAgo?: boolean;
 }
 
 function toDate(value: DateInput): Date {
@@ -80,13 +64,14 @@ export const formatCompactRelativeDate = (
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
   const justNow = options.justNowLabel ?? (options.capitalizeJustNow ? "Just now" : "just now");
+  const ago = options.includeAgo === false ? "" : " ago";
 
   if (diffMins < 1) return justNow;
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffMins < 60) return `${diffMins}m${ago}`;
+  if (diffHours < 24) return `${diffHours}h${ago}`;
   if (diffDays === 1 && options.afterWeek !== "days") return "yesterday";
-  if (diffDays < 7 || options.afterWeek === "days") return `${diffDays}d ago`;
-  if (options.afterWeek === "weeks") return `${Math.floor(diffDays / 7)}w ago`;
+  if (diffDays < 7 || options.afterWeek === "days") return `${diffDays}d${ago}`;
+  if (options.afterWeek === "weeks") return `${Math.floor(diffDays / 7)}w${ago}`;
 
   return new Intl.DateTimeFormat("en-US").format(date);
 };

@@ -1,14 +1,9 @@
-import {
-  ClipboardTextIcon as ClipboardText,
-  CodeIcon as Code,
-  PlayIcon as Play,
-  TrashIcon as Trash,
-  XIcon as X,
-} from "@phosphor-icons/react";
+import { ClipboardTextIcon, CodeIcon, PlayIcon, TrashIcon, XIcon } from "@/ui/icons";
 import { Button } from "@/ui/button";
 import { formatSqlHistoryPreview } from "../lib/sql-history";
 import { writeDatabaseClipboardText } from "../utils/clipboard";
 import { cn } from "@/utils/cn";
+import { databaseCardClassName } from "../utils/database-surface";
 
 interface SqlHistoryListProps {
   queries: string[];
@@ -32,26 +27,20 @@ export default function SqlHistoryList({
   if (queries.length === 0) return null;
 
   return (
-    <div
-      className={cn(
-        "rounded-lg border border-border/60 bg-secondary-bg/40",
-        compact && "mx-2 mb-2",
-      )}
-    >
+    <div className={cn(databaseCardClassName(), compact && "mx-2 mb-2")}>
       <div className="flex items-center justify-between p-2">
-        <div className="px-2 py-1 ui-font ui-text-xs text-text-lighter uppercase">
+        <div className="px-2 py-1 font-sans ui-text-sm text-subtle-foreground uppercase">
           {title} ({queries.length})
         </div>
         <Button
           type="button"
           onClick={onClear}
           variant="ghost"
-          compact
-          className="rounded-md text-text-lighter hover:text-text"
+          iconOnly
           aria-label="Clear recent queries"
           tooltip="Clear recent queries"
         >
-          <Trash />
+          <TrashIcon />
         </Button>
       </div>
       <div className={cn("overflow-y-auto pb-1", compact ? "max-h-32" : "max-h-56 px-1")}>
@@ -60,67 +49,68 @@ export default function SqlHistoryList({
           return (
             <div
               key={query}
-              className="group mx-1 flex items-center gap-1 rounded-lg hover:bg-hover"
+              className="group mx-1 flex items-center gap-1 rounded-lg hover:bg-accent"
             >
               <Button
                 type="button"
                 onClick={() => onSelect(query)}
-                variant="ghost"
-                compact
-                className={cn(
-                  "min-w-0 flex-1 justify-start truncate rounded-lg px-2.5 py-1.5 text-left",
-                  compact ? "ui-text-xs" : "ui-text-sm",
-                )}
+                variant="list"
+                width="grow"
+                align="start"
+                truncate
                 tooltip={query}
                 aria-label={`Open query: ${preview}`}
               >
-                <Code className="mr-1.5 shrink-0" />
+                <CodeIcon className="mr-1.5 shrink-0" />
                 <span className="truncate">{preview}</span>
               </Button>
               {onRun && (
+                <span className="inline-flex min-w-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+                  <Button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onRun(query);
+                    }}
+                    variant="ghost"
+                    iconOnly
+                    aria-label={`Run query from history: ${preview}`}
+                    tooltip="Run query"
+                  >
+                    <PlayIcon />
+                  </Button>
+                </span>
+              )}
+              <span className="inline-flex min-w-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
                 <Button
                   type="button"
                   onClick={(event) => {
                     event.stopPropagation();
-                    onRun(query);
+                    void writeDatabaseClipboardText(query);
                   }}
                   variant="ghost"
-                  compact
-                  className="shrink-0 rounded-md text-text-lighter opacity-0 hover:text-text focus-visible:opacity-100 group-hover:opacity-100"
-                  aria-label={`Run query from history: ${preview}`}
-                  tooltip="Run query"
+                  iconOnly
+                  aria-label={`Copy query from history: ${preview}`}
+                  tooltip="Copy query"
                 >
-                  <Play />
+                  <ClipboardTextIcon />
                 </Button>
-              )}
-              <Button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void writeDatabaseClipboardText(query);
-                }}
-                variant="ghost"
-                compact
-                className="shrink-0 rounded-md text-text-lighter opacity-0 hover:text-text focus-visible:opacity-100 group-hover:opacity-100"
-                aria-label={`Copy query from history: ${preview}`}
-                tooltip="Copy query"
-              >
-                <ClipboardText />
-              </Button>
-              <Button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onRemove(query);
-                }}
-                variant="ghost"
-                compact
-                className="shrink-0 rounded-md text-text-lighter opacity-0 hover:text-text focus-visible:opacity-100 group-hover:opacity-100"
-                aria-label={`Remove query from history: ${preview}`}
-                tooltip="Remove from history"
-              >
-                <X />
-              </Button>
+              </span>
+              <span className="inline-flex min-w-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+                <Button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRemove(query);
+                  }}
+                  variant="ghost"
+                  iconOnly
+                  aria-label={`Remove query from history: ${preview}`}
+                  tooltip="Remove from history"
+                >
+                  <XIcon />
+                </Button>
+              </span>
             </div>
           );
         })}

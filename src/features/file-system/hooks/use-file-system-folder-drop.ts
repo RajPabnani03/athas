@@ -11,25 +11,18 @@ import {
 } from "@/features/tabs/utils/internal-tab-drag";
 import { useUIState } from "@/features/window/stores/ui-state.store";
 import {
+  dispatchDroppedPathsToTerminal,
   handleExternalFileDropPayload,
   getExternalFileDropRoute,
   isExternalFileDragTypeList,
+  resolveDropClientPoint,
+  type ExternalFileDropPayload,
 } from "../utils/file-system-drop-controller";
 
 function resolveClientPoint(position: { x: number; y: number }) {
-  const rawPoint = { x: position.x, y: position.y };
-  const scaledPoint = {
-    x: position.x / window.devicePixelRatio,
-    y: position.y / window.devicePixelRatio,
-  };
-
-  const rawElement = document.elementFromPoint(rawPoint.x, rawPoint.y);
-  if (rawElement) {
-    return { point: rawPoint, element: rawElement };
-  }
-
-  const scaledElement = document.elementFromPoint(scaledPoint.x, scaledPoint.y);
-  return { point: scaledPoint, element: scaledElement };
+  return resolveDropClientPoint(position, window.devicePixelRatio, (x, y) =>
+    document.elementFromPoint(x, y),
+  );
 }
 
 function routeInternalTabDrop(position: { x: number; y: number }) {
@@ -89,23 +82,87 @@ function isExternalFileDrag(event: DragEvent): boolean {
   return isExternalFileDragTypeList(event.dataTransfer?.types);
 }
 
-function getExternalFileDropRouteAtPosition(position?: { x: number; y: number }) {
-  if (!position) return "global";
-  return getExternalFileDropRoute(resolveClientPoint(position).element);
+function isGlobalExternalFileDropEventTarget(
+  event: DragEvent,
+  treatPaneDropAsGlobal: boolean,
+): boolean {
+  return (
+    getExternalFileDropRoute(
+      event.target instanceof Element ? event.target : null,
+      treatPaneDropAsGlobal,
+    ) === "global"
+  );
 }
 
-function isGlobalExternalFileDropEventTarget(event: DragEvent): boolean {
-  return (
-    getExternalFileDropRoute(event.target instanceof Element ? event.target : null) === "global"
-  );
+function listenForExternalFileDropDomEvents(
+  treatPaneDropAsGlobal: boolean,
+  setDraggingOver: (isDraggingOver: boolean) => void,
+) {
+  const onDomDragOver = (event: DragEvent) => {
+    if (getInternalTabDragData()) return;
+    if (!isExternalFileDrag(event)) return;
+    if (!isGlobalExternalFileDropEventTarget(event, treatPaneDropAsGlobal)) {
+      setDraggingOver(false);
+      return;
+    }
+    event.preventDefault();
+  };
+  const onDomDrop = (event: DragEvent) => {
+    if (getInternalTabDragData()) {
+      setDraggingOver(false);
+      return;
+    }
+    if (!isExternalFileDrag(event)) return;
+    if (!isGlobalExternalFileDropEventTarget(event, treatPaneDropAsGlobal)) {
+      setDraggingOver(false);
+      return;
+    }
+    event.preventDefault();
+    setDraggingOver(false);
+  };
+  const onDomEnter = (event: DragEvent) => {
+    if (getInternalTabDragData()) return;
+    if (!isExternalFileDrag(event)) return;
+    if (!isGlobalExternalFileDropEventTarget(event, treatPaneDropAsGlobal)) {
+      setDraggingOver(false);
+      return;
+    }
+    event.preventDefault();
+    setDraggingOver(true);
+  };
+  const onDomLeave = (event: DragEvent) => {
+    if (getInternalTabDragData()) {
+      setDraggingOver(false);
+      return;
+    }
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    setDraggingOver(false);
+  };
+
+  window.addEventListener("dragover", onDomDragOver);
+  window.addEventListener("drop", onDomDrop);
+  window.addEventListener("dragenter", onDomEnter);
+  window.addEventListener("dragleave", onDomLeave);
+
+  return () => {
+    window.removeEventListener("dragover", onDomDragOver);
+    window.removeEventListener("drop", onDomDrop);
+    window.removeEventListener("dragenter", onDomEnter);
+    window.removeEventListener("dragleave", onDomLeave);
+  };
 }
 
 /**
  * Hook to handle drag-and-drop from OS into the application
  * @param onDrop - Callback when files/folders are dropped (array of paths)
+ * @param treatPaneDropAsGlobal - Whether editor pane surfaces should fall through to onDrop
  * @returns isDraggingOver - Boolean indicating if a drag is over the window
  */
-export const useFileSystemFolderDrop = (onDrop: (paths: string[]) => void | Promise<void>) => {
+export const useFileSystemFolderDrop = (
+  onDrop: (paths: string[]) => void | Promise<void>,
+  treatPaneDropAsGlobal = false,
+) => {
   const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   useEffect(() => {
@@ -113,6 +170,7 @@ export const useFileSystemFolderDrop = (onDrop: (paths: string[]) => void | Prom
     let unlistenWindow: (() => void) | null = null;
     let unlistenWebview: (() => void) | null = null;
     let domTeardown: (() => void) | null = null;
+    let disposed = false;
 
     const handleExternalPayload = async (payload: { type: string; paths?: string[] }) => {
       await handleExternalFileDropPayload(payload, {
@@ -125,116 +183,72 @@ export const useFileSystemFolderDrop = (onDrop: (paths: string[]) => void | Prom
     };
 
     const setupListener = async () => {
-      unlistenWindow = await currentWindow.onDragDropEvent(async (event) => {
+      const handleNativeDragDrop = async (payload: ExternalFileDropPayload) => {
         if (getInternalTabDragData()) {
           if (
-            event.payload.type === "drop" &&
-            "position" in event.payload &&
-            routeInternalTabDrop(event.payload.position)
+            payload.type === "drop" &&
+            payload.position &&
+            routeInternalTabDrop(payload.position)
           ) {
             setIsDraggingOver(false);
             return;
           }
-          if (event.payload.type === "leave" || event.payload.type === "drop") {
+          if (payload.type === "leave" || payload.type === "drop") {
             setIsDraggingOver(false);
           }
           return;
         }
-        const position = "position" in event.payload ? event.payload.position : undefined;
-        if (getExternalFileDropRouteAtPosition(position) !== "global") {
+
+        const position = payload.position;
+        const target = position ? resolveClientPoint(position).element : null;
+        const route = getExternalFileDropRoute(target, treatPaneDropAsGlobal);
+
+        if (route === "terminal") {
+          if (payload.type === "drop" && payload.paths) {
+            dispatchDroppedPathsToTerminal(target, payload.paths);
+          }
           setIsDraggingOver(false);
           return;
         }
-        await handleExternalPayload(event.payload);
-      });
+
+        if (route !== "global") {
+          setIsDraggingOver(false);
+          return;
+        }
+
+        await handleExternalPayload(payload);
+      };
+
+      const nextUnlistenWindow = await currentWindow.onDragDropEvent((event) =>
+        handleNativeDragDrop(event.payload),
+      );
+      if (disposed) {
+        nextUnlistenWindow();
+        return;
+      }
+      unlistenWindow = nextUnlistenWindow;
 
       const currentWebview = getCurrentWebview();
-      unlistenWebview = await currentWebview.onDragDropEvent(async (event) => {
-        if (getInternalTabDragData()) {
-          if (
-            event.payload.type === "drop" &&
-            "position" in event.payload &&
-            routeInternalTabDrop(event.payload.position)
-          ) {
-            setIsDraggingOver(false);
-            return;
-          }
-          if (event.payload.type === "leave" || event.payload.type === "drop") {
-            setIsDraggingOver(false);
-          }
-          return;
-        }
-        const position = "position" in event.payload ? event.payload.position : undefined;
-        if (getExternalFileDropRouteAtPosition(position) !== "global") {
-          setIsDraggingOver(false);
-          return;
-        }
-        await handleExternalPayload(event.payload);
-      });
-
-      const onDomDragOver = (event: DragEvent) => {
-        if (getInternalTabDragData()) return;
-        if (!isExternalFileDrag(event)) return;
-        if (!isGlobalExternalFileDropEventTarget(event)) {
-          setIsDraggingOver(false);
-          return;
-        }
-        event.preventDefault();
-      };
-      const onDomDrop = (event: DragEvent) => {
-        if (getInternalTabDragData()) {
-          setIsDraggingOver(false);
-          return;
-        }
-        if (!isExternalFileDrag(event)) return;
-        if (!isGlobalExternalFileDropEventTarget(event)) {
-          setIsDraggingOver(false);
-          return;
-        }
-        event.preventDefault();
-        setIsDraggingOver(false);
-      };
-      const onDomEnter = (event: DragEvent) => {
-        if (getInternalTabDragData()) return;
-        if (!isExternalFileDrag(event)) return;
-        if (!isGlobalExternalFileDropEventTarget(event)) {
-          setIsDraggingOver(false);
-          return;
-        }
-        event.preventDefault();
-        setIsDraggingOver(true);
-      };
-      const onDomLeave = (event: DragEvent) => {
-        if (getInternalTabDragData()) {
-          setIsDraggingOver(false);
-          return;
-        }
-        if (!isExternalFileDrag(event)) return;
-        event.preventDefault();
-        setIsDraggingOver(false);
-      };
-
-      window.addEventListener("dragover", onDomDragOver);
-      window.addEventListener("drop", onDomDrop);
-      window.addEventListener("dragenter", onDomEnter);
-      window.addEventListener("dragleave", onDomLeave);
-
-      domTeardown = () => {
-        window.removeEventListener("dragover", onDomDragOver);
-        window.removeEventListener("drop", onDomDrop);
-        window.removeEventListener("dragenter", onDomEnter);
-        window.removeEventListener("dragleave", onDomLeave);
-      };
+      const nextUnlistenWebview = await currentWebview.onDragDropEvent((event) =>
+        handleNativeDragDrop(event.payload),
+      );
+      if (disposed) {
+        nextUnlistenWebview();
+        return;
+      }
+      unlistenWebview = nextUnlistenWebview;
     };
 
-    setupListener();
+    domTeardown = listenForExternalFileDropDomEvents(treatPaneDropAsGlobal, setIsDraggingOver);
+    void setupListener();
 
     return () => {
+      disposed = true;
       if (unlistenWindow) unlistenWindow();
       if (unlistenWebview) unlistenWebview();
       if (domTeardown) domTeardown();
     };
-  }, [onDrop]);
+  }, [onDrop, treatPaneDropAsGlobal]);
 
   return { isDraggingOver };
 };

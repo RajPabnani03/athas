@@ -9,11 +9,15 @@ use super::{
    workspace_path::{path_to_string, resolve_workspace_path},
 };
 use crate::runtime::AthasAppHandle as AppHandle;
-use agent_client_protocol::{self as acp_sdk, schema as acp};
+use agent_client_protocol::{
+   self as acp_sdk,
+   schema::{ProtocolVersion, v1 as acp},
+};
 use anyhow::{Result, bail};
 use athas_terminal::TerminalManager;
 use serde_json::json;
 use std::{
+   collections::VecDeque,
    path::{Path, PathBuf},
    process::Stdio,
    sync::Arc,
@@ -21,7 +25,7 @@ use std::{
 use tauri::Emitter;
 use tokio::{
    process::{Child, Command},
-   sync::mpsc,
+   sync::{Mutex, mpsc},
 };
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -38,6 +42,9 @@ pub(super) struct InitializedAcpWorker {
    pub workspace_path: Option<PathBuf>,
 }
 
+const MAX_RECENT_STDERR_LINES: usize = 20;
+type RecentAgentStderr = Arc<Mutex<VecDeque<String>>>;
+
 pub(super) async fn initialize_worker(
    config: &AgentConfig,
    workspace_path: Option<String>,
@@ -47,8 +54,7 @@ pub(super) async fn initialize_worker(
    map_config_options: impl Fn(Vec<acp::SessionConfigOption>) -> Vec<SessionConfigOption>,
 ) -> Result<InitializedAcpWorker> {
    let workspace_path = resolve_workspace_path(workspace_path)?;
-   let (mut child, uses_npx_codex_adapter) =
-      spawn_agent_process(config, workspace_path.as_deref())?;
+   let mut child = spawn_agent_process(config, workspace_path.as_deref())?;
    let process_group_id = child.id();
    let stdin = child
       .stdin
@@ -58,7 +64,7 @@ pub(super) async fn initialize_worker(
       .stdout
       .take()
       .ok_or_else(|| anyhow::anyhow!("Failed to get stdout"))?;
-   spawn_stderr_logger(&mut child, config.name.clone());
+   let recent_stderr = spawn_stderr_logger(&mut child, config.name.clone());
 
    let client = Arc::new(AthasAcpClient::new(
       app_handle.clone(),
@@ -111,13 +117,7 @@ pub(super) async fn initialize_worker(
          .map_err(|_| anyhow::anyhow!("Failed to establish ACP connection"))?,
    );
 
-   let init_response = initialize_connection(
-      connection.clone(),
-      uses_npx_codex_adapter,
-      &mut child,
-      &io_handle,
-   )
-   .await?;
+   let init_response = initialize_connection(connection.clone(), &mut child, &io_handle).await?;
    let auth_methods = init_response.auth_methods.clone();
    let auth_method_id = auth_methods.first().map(|method| method.id().to_string());
    let supports_session_resume = init_response
@@ -148,7 +148,14 @@ pub(super) async fn initialize_worker(
          io_handle: &io_handle,
       },
    )
-   .await?;
+   .await;
+   let session_bootstrap = match session_bootstrap {
+      Ok(session) => session,
+      Err(error) => {
+         tokio::task::yield_now().await;
+         return Err(with_agent_stderr(error, &recent_stderr).await);
+      }
+   };
 
    emit_initial_session_state(
       &app_handle,
@@ -201,10 +208,7 @@ fn configure_background_agent_command(command: &mut Command) {
    }
 }
 
-fn spawn_agent_process(
-   config: &AgentConfig,
-   workspace_path: Option<&Path>,
-) -> Result<(Child, bool)> {
+fn spawn_agent_process(config: &AgentConfig, workspace_path: Option<&Path>) -> Result<Child> {
    let binary = config.binary_path.as_deref().unwrap_or(&config.binary_name);
    log::info!(
       "Starting agent '{}' (binary: {}, resolved: {}, args: {:?})",
@@ -222,16 +226,10 @@ fn spawn_agent_process(
       .stderr(Stdio::piped());
 
    // Augment PATH with user's shell PATH for bundled app launches
-   if let Some(shell_path) = super::config::user_shell_path() {
+   if let Some(shell_path) = crate::executable_path::user_shell_path() {
       let current = std::env::var("PATH").unwrap_or_default();
       cmd.env("PATH", format!("{current}:{shell_path}"));
    }
-
-   let uses_npx_codex_adapter = binary.ends_with("npx")
-      && config
-         .args
-         .iter()
-         .any(|arg| arg == "@zed-industries/codex-acp");
 
    for (key, value) in &config.env_vars {
       cmd.env(key, value);
@@ -241,37 +239,70 @@ fn spawn_agent_process(
       cmd.current_dir(path);
    }
 
-   Ok((cmd.spawn()?, uses_npx_codex_adapter))
+   Ok(cmd.spawn()?)
 }
 
-fn spawn_stderr_logger(child: &mut Child, agent_name: String) {
+fn spawn_stderr_logger(child: &mut Child, agent_name: String) -> RecentAgentStderr {
+   let recent_stderr = Arc::new(Mutex::new(VecDeque::new()));
    if let Some(stderr) = child.stderr.take() {
+      let captured_stderr = recent_stderr.clone();
       tokio::task::spawn_local(async move {
          use tokio::io::{AsyncBufReadExt, BufReader};
          let mut lines = BufReader::new(stderr).lines();
          while let Ok(Some(line)) = lines.next_line().await {
             log::warn!("[{}] stderr: {}", agent_name, line);
+            let mut recent = captured_stderr.lock().await;
+            recent.push_back(line);
+            if recent.len() > MAX_RECENT_STDERR_LINES {
+               recent.pop_front();
+            }
          }
       });
    }
+   recent_stderr
+}
+
+async fn with_agent_stderr(
+   error: anyhow::Error,
+   recent_stderr: &RecentAgentStderr,
+) -> anyhow::Error {
+   let recent = recent_stderr.lock().await;
+   let Some(detail) = relevant_agent_stderr(&recent) else {
+      return error;
+   };
+
+   anyhow::anyhow!("{}. Agent stderr: {}", error, detail)
+}
+
+fn relevant_agent_stderr(lines: &VecDeque<String>) -> Option<String> {
+   let line = lines
+      .iter()
+      .rev()
+      .find(|line| {
+         let normalized = line.to_lowercase();
+         normalized.contains("authentication failed")
+            || normalized.contains("requires setting")
+            || normalized.contains("error:")
+      })
+      .or_else(|| lines.back())?;
+
+   let normalized = line.split_whitespace().collect::<Vec<_>>().join(" ");
+   (!normalized.is_empty()).then_some(normalized)
 }
 
 async fn initialize_connection(
    connection: Arc<AcpConnection>,
-   uses_npx_codex_adapter: bool,
    child: &mut Child,
    io_handle: &tokio::task::JoinHandle<()>,
 ) -> Result<acp::InitializeResponse> {
    let mut client_meta = acp::Meta::new();
    client_meta.insert(
-      "athas".to_string(),
+      "athas.dev".to_string(),
       json!({
          "extensionMethods": [
-            { "name": "athas.openWebViewer", "description": "Open a URL in Athas web viewer", "params": { "url": "string" } },
-            { "name": "athas.openTerminal", "description": "Open a terminal tab in Athas", "params": { "command": "string|null" } },
-            { "name": "athas.setChatTitle", "description": "Rename the active Athas chat title", "params": { "title": "string" } }
-         ],
-         "notes": "Call these via ACP extension methods, not shell commands."
+            { "name": "_athas/open_terminal", "description": "Open a terminal tab in Athas", "params": { "command": "string|null" } },
+            { "name": "_athas/set_chat_title", "description": "Rename the active Athas chat title", "params": { "title": "string" } }
+         ]
       }),
    );
 
@@ -282,13 +313,19 @@ async fn initialize_connection(
             .write_text_file(true),
       )
       .terminal(true)
+      .session(
+         acp::ClientSessionCapabilities::new().config_options(
+            acp::SessionConfigOptionsCapabilities::new()
+               .boolean(acp::BooleanConfigOptionCapabilities::new()),
+         ),
+      )
       .meta(client_meta);
 
-   let init_request = acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)
+   let init_request = acp::InitializeRequest::new(ProtocolVersion::LATEST)
       .client_capabilities(client_capabilities)
       .client_info(acp::Implementation::new("athas", env!("CARGO_PKG_VERSION")).title("Athas"));
 
-   let initialize_timeout_secs = if uses_npx_codex_adapter { 120 } else { 30 };
+   let initialize_timeout_secs = 30;
    log::info!(
       "Sending ACP initialize request (timeout: {}s)...",
       initialize_timeout_secs
@@ -608,5 +645,38 @@ fn emit_initial_session_state(
       )
    {
       log::warn!("Failed to emit initial session config options: {}", e);
+   }
+}
+
+#[cfg(test)]
+mod tests {
+   use super::*;
+
+   #[test]
+   fn prefers_actionable_authentication_stderr() {
+      let lines = VecDeque::from([
+         "Loaded cached credentials.".to_string(),
+         "Authentication failed: Error: This account requires setting the GOOGLE_CLOUD_PROJECT \
+          env var."
+            .to_string(),
+      ]);
+
+      assert_eq!(
+         relevant_agent_stderr(&lines).as_deref(),
+         Some(
+            "Authentication failed: Error: This account requires setting the GOOGLE_CLOUD_PROJECT \
+             env var."
+         )
+      );
+   }
+
+   #[test]
+   fn normalizes_multiline_spacing_in_stderr() {
+      let lines = VecDeque::from(["Error:   invalid\tconfiguration".to_string()]);
+
+      assert_eq!(
+         relevant_agent_stderr(&lines).as_deref(),
+         Some("Error: invalid configuration")
+      );
    }
 }

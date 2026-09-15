@@ -2,9 +2,9 @@ import type { RefObject } from "react";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { EDITOR_CONSTANTS } from "@/features/editor/config/constants";
-import { isDragScrolling } from "@/features/editor/hooks/use-drag-scroll";
 import type {
   Cursor,
+  EditorContentChangeOptions,
   MultiCursorState,
   Position,
   Range,
@@ -18,6 +18,11 @@ export interface EditorViewState {
   selection?: Range;
   scrollTop: number;
   scrollLeft: number;
+}
+
+export interface EditorNavigationTarget {
+  bufferId: string;
+  range: Range;
 }
 
 // Editor View State Cache Manager - caches cursor position and scroll offset per buffer
@@ -153,9 +158,6 @@ function rangesEqual(left?: Range, right?: Range): boolean {
 const ensureCursorVisible = (position: Position) => {
   if (typeof window === "undefined") return;
 
-  // Skip scroll adjustment during drag selection auto-scroll
-  if (isDragScrolling()) return;
-
   const editorElement = useEditorStateStore.getState().editorRef?.current;
   const scopedTextarea =
     editorElement?.querySelector<HTMLTextAreaElement>("[data-monaco-editor-scroll] textarea") ??
@@ -214,22 +216,25 @@ interface EditorState {
     previousValue?: string,
     previousCursorPosition?: Position,
     previousSelection?: Range,
-    options?: { contentAlreadyApplied?: boolean; skipUndoGrouping?: boolean },
+    options?: EditorContentChangeOptions,
   ) => void;
   filePath: string;
   editorRef: RefObject<HTMLDivElement | null> | null;
   placeholder?: string;
   disabled: boolean;
   activeEditorViewKey: string | null;
+  pendingNavigation: EditorNavigationTarget | null;
 
   // Actions
   actions: EditorStateActions;
 }
 
 interface EditorStateActions {
+  requestNavigation: (target: EditorNavigationTarget | null) => void;
   // Cursor actions
   setCursorPosition: (position: Position, options?: { ensureVisible?: boolean }) => void;
   setSelection: (selection?: Range) => void;
+  setCursorAndSelection: (position: Position, selection?: Range) => void;
   setDesiredColumn: (column?: number) => void;
   setCursorVisibility: (visible: boolean) => void;
   getCachedPosition: (bufferId: string) => Position | null;
@@ -261,7 +266,7 @@ interface EditorStateActions {
       previousValue?: string,
       previousCursorPosition?: Position,
       previousSelection?: Range,
-      options?: { contentAlreadyApplied?: boolean; skipUndoGrouping?: boolean },
+      options?: EditorContentChangeOptions,
     ) => void,
   ) => void;
   setFileInfo: (filePath: string) => void;
@@ -295,9 +300,11 @@ export const useEditorStateStore = createSelectors(
       placeholder: undefined,
       disabled: false,
       activeEditorViewKey: null,
+      pendingNavigation: null,
 
       // Actions
       actions: {
+        requestNavigation: (pendingNavigation) => set({ pendingNavigation }),
         // Cursor actions
         setCursorPosition: (position, options) => {
           const currentState = useEditorStateStore.getState();
@@ -324,6 +331,22 @@ export const useEditorStateStore = createSelectors(
           }
           if (!rangesEqual(currentState.selection, selection)) {
             set({ selection });
+          }
+        },
+        setCursorAndSelection: (position, selection) => {
+          const currentState = useEditorStateStore.getState();
+          const { activeBufferId } = useBufferStore.getState();
+          const viewKey = currentState.activeEditorViewKey ?? activeBufferId;
+          if (viewKey) {
+            viewStateCache.setCursor(viewKey, position);
+            viewStateCache.setSelection(viewKey, selection);
+          }
+
+          if (
+            !positionsEqual(currentState.cursorPosition, position) ||
+            !rangesEqual(currentState.selection, selection)
+          ) {
+            set({ cursorPosition: position, selection });
           }
         },
         setDesiredColumn: (column) => {

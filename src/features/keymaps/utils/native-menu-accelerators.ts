@@ -9,8 +9,16 @@ const NATIVE_MENU_ACCELERATORS = [
   "cmd+shift+s",
   "cmd+alt+s",
   "cmd+w",
+  "cmd+shift+w",
   "cmd+shift+t",
   "cmd+q",
+  "cmd+a",
+  "cmd+z",
+  "cmd+shift+z",
+  "cmd+y",
+  "cmd+c",
+  "cmd+x",
+  "cmd+v",
   "cmd+f",
   "cmd+alt+f",
   "cmd+/",
@@ -19,6 +27,7 @@ const NATIVE_MENU_ACCELERATORS = [
   // Command palette stays in the frontend pipeline so Ctrl+Shift+P can cancel
   // the webview print shortcut before any browser default handling runs.
   "cmd+b",
+  "cmd+e",
   "cmd+j",
   "cmd+shift+f",
   "cmd+shift+j",
@@ -47,7 +56,7 @@ const NATIVE_MENU_ACCELERATORS = [
 ] as const;
 
 const parsedNativeMenuAccelerators = NATIVE_MENU_ACCELERATORS.map((shortcut) =>
-  parseKeybinding(shortcut, { normalize: false }),
+  parseKeybinding(shortcut),
 );
 
 export function isNativeMenuAccelerator(event: KeyboardEvent) {

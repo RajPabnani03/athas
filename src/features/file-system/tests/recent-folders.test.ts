@@ -2,7 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   limitRecentFolders,
   MAX_RECENT_PROJECTS,
+  removeMissingRecentFolders,
   toggleRecentFolderPinned,
+  uniqueRecentFolderImports,
   updateRecentFolderMetadata,
   upsertRecentFolder,
 } from "../utils/recent-folders";
@@ -93,5 +95,39 @@ describe("recent folder helpers", () => {
 
     expect(folders.map((folder) => folder.path)).toEqual(["/workspace/one", "/workspace/two"]);
     expect(folders[1].missing).toBe(true);
+  });
+
+  it("removes missing recent projects without affecting available projects", () => {
+    const folders = removeMissingRecentFolders([
+      {
+        name: "available",
+        path: "/workspace/available",
+        lastOpened: "available",
+        missing: false,
+      },
+      {
+        name: "missing",
+        path: "/workspace/missing",
+        lastOpened: "missing",
+        missing: true,
+        pinned: true,
+      },
+    ]);
+
+    expect(folders.map((folder) => folder.path)).toEqual(["/workspace/available"]);
+  });
+
+  it("deduplicates recent project imports while preserving first source metadata", () => {
+    const folders = uniqueRecentFolderImports([
+      { path: "/workspace/one", sourceId: "cursor", sourceName: "Cursor" },
+      { path: "/workspace/two", sourceId: "vscode", sourceName: "VS Code" },
+      { path: "/workspace/one", sourceId: "duplicate", sourceName: "Duplicate" },
+    ]);
+
+    expect(folders.map((folder) => folder.path)).toEqual(["/workspace/one", "/workspace/two"]);
+    expect(folders[0]).toMatchObject({
+      sourceId: "cursor",
+      sourceName: "Cursor",
+    });
   });
 });

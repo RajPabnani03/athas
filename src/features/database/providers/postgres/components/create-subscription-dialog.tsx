@@ -1,7 +1,7 @@
-import { RadioButtonIcon as Radio } from "@phosphor-icons/react";
+import { BroadcastIcon } from "@/ui/icons";
 import { useState } from "react";
 import { Button } from "@/ui/button";
-import Checkbox from "@/ui/checkbox";
+import { Checkbox } from "@/ui/checkbox";
 import Dialog from "@/ui/dialog";
 import Input from "@/ui/input";
 import Textarea from "@/ui/textarea";
@@ -10,7 +10,7 @@ import {
   canCreatePostgresSubscription,
   initialCreatePostgresSubscriptionForm,
   normalizeCreatePostgresSubscriptionParams,
-} from "./create-subscription-form";
+} from "../utils/create-subscription-form";
 
 interface CreateSubscriptionDialogProps {
   isOpen: boolean;
@@ -58,11 +58,11 @@ export default function CreateSubscriptionDialog({
     <Dialog
       onClose={handleClose}
       title="Create Subscription"
-      icon={Radio}
+      icon={BroadcastIcon}
       size="lg"
       footer={
         <>
-          <Button variant="ghost" onClick={handleClose} disabled={isSubmitting} compact>
+          <Button variant="ghost" onClick={handleClose} disabled={isSubmitting}>
             Cancel
           </Button>
           <Button
@@ -101,7 +101,8 @@ export default function CreateSubscriptionDialog({
                 connection_string: e.target.value,
               }))
             }
-            className="h-20 resize-none rounded-xl border-border/70 bg-secondary-bg/60"
+            resize="none"
+            className="h-20 rounded-xl border-border/70 bg-surface/60"
             placeholder="host=127.0.0.1 port=5432 dbname=postgres user=replicator password=secret"
             disabled={isSubmitting}
           />
@@ -142,40 +143,40 @@ export default function CreateSubscriptionDialog({
           <label className="flex items-center gap-2 ui-text-sm">
             <Checkbox
               checked={form.enabled}
-              onChange={(checked) => setForm((prev) => ({ ...prev, enabled: checked }))}
+              onCheckedChange={(checked) => setForm((prev) => ({ ...prev, enabled: checked }))}
             />
             Enabled
           </label>
           <label className="flex items-center gap-2 ui-text-sm">
             <Checkbox
               checked={form.create_slot}
-              onChange={(checked) => setForm((prev) => ({ ...prev, create_slot: checked }))}
+              onCheckedChange={(checked) => setForm((prev) => ({ ...prev, create_slot: checked }))}
             />
             Create Slot
           </label>
           <label className="flex items-center gap-2 ui-text-sm">
             <Checkbox
               checked={form.copy_data}
-              onChange={(checked) => setForm((prev) => ({ ...prev, copy_data: checked }))}
+              onCheckedChange={(checked) => setForm((prev) => ({ ...prev, copy_data: checked }))}
             />
             Copy Existing Data
           </label>
           <label className="flex items-center gap-2 ui-text-sm">
             <Checkbox
               checked={form.connect}
-              onChange={(checked) => setForm((prev) => ({ ...prev, connect: checked }))}
+              onCheckedChange={(checked) => setForm((prev) => ({ ...prev, connect: checked }))}
             />
             Connect Immediately
           </label>
           <label className="col-span-2 flex items-center gap-2 ui-text-sm">
             <Checkbox
               checked={form.failover}
-              onChange={(checked) => setForm((prev) => ({ ...prev, failover: checked }))}
+              onCheckedChange={(checked) => setForm((prev) => ({ ...prev, failover: checked }))}
             />
             Enable failover slot sync
           </label>
         </div>
-        <button type="submit" className="hidden" />
+        <button type="submit" className="hidden" aria-label="Create subscription" />
       </form>
     </Dialog>
   );

@@ -1,163 +1,231 @@
-import { ClockCounterClockwiseIcon as History } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ProviderIcon } from "@/features/ai/components/icons/provider-icons";
-import { filterChatsByWorkspace } from "@/features/ai/lib/ai-workspace-scope";
-import { useSettingsStore } from "@/features/settings/stores/settings.store";
-import { useProjectStore } from "@/features/window/stores/project.store";
-import { useUIState } from "@/features/window/stores/ui-state.store";
-import Input from "@/ui/input";
+import { shareAgent } from "@/features/sharing/services/open-share";
+import { UploadIcon } from "@/ui/icons";
 import {
-  PaneChip,
-  PaneIconButton,
-  paneHeaderClassName,
-  paneTitleClassName,
-} from "@/features/panes/components/pane-chrome";
-import { cn } from "@/utils/cn";
+  ArrowDownIcon,
+  ArrowLeftIcon,
+  ArrowUpIcon,
+  PlusIcon,
+  SearchIcon,
+  WindowExpandIcon,
+  XIcon,
+} from "@/ui/icons";
+import { useEffect, useMemo, useRef } from "react";
+import { selectAgentSessions } from "@/features/ai/lib/agent-session-list";
+import { useProjectStore } from "@/features/window/stores/project.store";
+import { PaneContentHeader } from "@/features/panes/components/pane-content-chrome";
+import { Button } from "@/ui/button";
+import Input from "@/ui/input";
 import { useAIChatStore } from "../../stores/ai-chat.store";
-import ChatHistoryDropdown from "../history/sidebar";
-import { AgentSelector } from "../selectors/agent-selector";
-
-function EditableChatTitle({
-  title,
-  onUpdateTitle,
-}: {
-  title: string;
-  onUpdateTitle: (title: string) => void;
-}) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [editValue, setEditValue] = useState(title);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!isEditing) {
-      setEditValue(title);
-    }
-  }, [title, isEditing]);
-
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [isEditing]);
-
-  const handleSave = () => {
-    const trimmedValue = editValue.trim();
-    if (trimmedValue && trimmedValue !== title) {
-      onUpdateTitle(trimmedValue);
-    }
-    setIsEditing(false);
-  };
-
-  const handleCancel = () => {
-    setEditValue(title);
-    setIsEditing(false);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleSave();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      handleCancel();
-    }
-  };
-
-  if (isEditing) {
-    return (
-      <Input
-        ref={inputRef}
-        value={editValue}
-        onChange={(e) => setEditValue(e.target.value)}
-        onBlur={handleSave}
-        onKeyDown={handleKeyDown}
-        className="h-6 rounded-lg border-border/80 bg-primary-bg px-2.5 py-1 ui-text-xs font-medium focus:border-accent/40 focus:bg-hover"
-        style={{ minWidth: "100px", maxWidth: "200px" }}
-      />
-    );
-  }
-
-  return (
-    <span
-      className="block max-w-full cursor-pointer truncate rounded-lg px-2 py-1 ui-text-xs font-medium transition-colors hover:bg-hover"
-      onClick={() => setIsEditing(true)}
-      title="Click to rename chat"
-    >
-      {title}
-    </span>
-  );
-}
+import ChatHistoryDropdown from "../history/chat-history-dropdown";
+import { useNewAgentAction } from "../../hooks/use-new-agent-action";
+import { isAgentWindow, openAgentInNewWindow } from "@/features/ai/detached/agent-window-service";
+import { requestWindowClose } from "@/features/window/utils/request-window-close";
 
 interface ChatHeaderProps {
   chatId?: string | null;
-  onDeleteChat?: (chatId: string, event: React.MouseEvent) => void;
+  onDeleteChat?: (chatId: string) => void;
+  onSwitchChat: (chatId: string) => void;
+  isMessageSearchOpen: boolean;
+  messageSearchQuery: string;
+  onToggleMessageSearch: () => void;
+  onCloseMessageSearch: () => void;
+  onMessageSearchQueryChange: (query: string) => void;
+  messageSearchMatchCount: number;
+  activeMessageSearchIndex: number;
+  onPreviousMessageSearchMatch: () => void;
+  onNextMessageSearchMatch: () => void;
 }
 
-export function ChatHeader({ chatId, onDeleteChat }: ChatHeaderProps) {
+export function ChatHeader({
+  chatId,
+  onDeleteChat,
+  onSwitchChat,
+  isMessageSearchOpen,
+  messageSearchQuery,
+  onToggleMessageSearch,
+  onCloseMessageSearch,
+  onMessageSearchQueryChange,
+  messageSearchMatchCount,
+  activeMessageSearchIndex,
+  onPreviousMessageSearchMatch,
+  onNextMessageSearchMatch,
+}: ChatHeaderProps) {
   const currentChatId = useAIChatStore((state) => state.currentChatId);
   const chats = useAIChatStore((state) => state.chats);
   const workspacePath = useProjectStore((state) => state.rootFolderPath || null);
   const selectedAgentId = useAIChatStore((state) => state.selectedAgentId);
-  const isChatHistoryVisible = useAIChatStore((state) => state.isChatHistoryVisible);
-  const setIsChatHistoryVisible = useAIChatStore((state) => state.setIsChatHistoryVisible);
-  const updateChatTitle = useAIChatStore((state) => state.updateChatTitle);
-  const switchToChat = useAIChatStore((state) => state.switchToChat);
+  const setChatArchived = useAIChatStore((state) => state.actions.setChatArchived);
 
-  const { openSettingsDialog } = useUIState();
   const effectiveChatId = chatId ?? currentChatId;
+  const standalone = isAgentWindow();
   const currentChat = chats.find((chat) => chat.id === effectiveChatId);
   const currentAgentId = currentChat?.agentId ?? selectedAgentId;
-  const aiProviderId = useSettingsStore((state) => state.settings.aiProviderId);
-  const historyButtonRef = useRef<HTMLButtonElement>(null);
-  const currentHeaderIconId = currentAgentId === "custom" ? aiProviderId : currentAgentId;
+  const handleNewAgent = useNewAgentAction({ agentId: currentAgentId });
+  const messageSearchInputRef = useRef<HTMLInputElement>(null);
   const workspaceChats = useMemo(
-    () => filterChatsByWorkspace(chats, workspacePath),
+    () => selectAgentSessions(chats, { workspacePath, keepIds: [effectiveChatId] }),
+    [chats, effectiveChatId, workspacePath],
+  );
+  const archivedChats = useMemo(
+    () => selectAgentSessions(chats, { workspacePath, includeArchived: "only" }),
     [chats, workspacePath],
   );
+  const hasSearchQuery = messageSearchQuery.trim().length > 0;
+  const hasMessageSearchMatches = messageSearchMatchCount > 0;
+  const messageSearchPosition =
+    hasSearchQuery && hasMessageSearchMatches
+      ? `${activeMessageSearchIndex + 1}/${messageSearchMatchCount}`
+      : hasSearchQuery
+        ? "0/0"
+        : "";
+
+  useEffect(() => {
+    if (!isMessageSearchOpen) return;
+    requestAnimationFrame(() => messageSearchInputRef.current?.focus());
+  }, [isMessageSearchOpen]);
 
   return (
-    <div className={cn("relative z-[10020]", paneHeaderClassName())}>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <PaneChip className="size-6 justify-center px-0">
-            <ProviderIcon providerId={currentHeaderIconId} size={12} />
-          </PaneChip>
-          {effectiveChatId ? (
-            <EditableChatTitle
-              title={currentChat ? currentChat.title : "New Chat"}
-              onUpdateTitle={(title) => updateChatTitle(effectiveChatId, title)}
+    <div className="relative z-10020 shrink-0">
+      {isMessageSearchOpen ? (
+        <PaneContentHeader
+          surface="transparent"
+          separated={false}
+          context={
+            <Input
+              ref={messageSearchInputRef}
+              value={messageSearchQuery}
+              onChange={(event) => onMessageSearchQueryChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  onCloseMessageSearch();
+                  return;
+                }
+
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (event.shiftKey) {
+                    onPreviousMessageSearchMatch();
+                  } else {
+                    onNextMessageSearchMatch();
+                  }
+                }
+              }}
+              placeholder="Search messages"
+              variant="ghost"
+              leftIcon={SearchIcon}
             />
-          ) : (
-            <span className={cn(paneTitleClassName(), "truncate")}>New Chat</span>
-          )}
-        </div>
-      </div>
+          }
+          detail={messageSearchPosition}
+          actions={
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                iconOnly
+                disabled={!hasMessageSearchMatches}
+                onClick={onPreviousMessageSearchMatch}
+                tooltip="Previous match"
+                aria-label="Previous search match"
+              >
+                <ArrowUpIcon />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                iconOnly
+                disabled={!hasMessageSearchMatches}
+                onClick={onNextMessageSearchMatch}
+                tooltip="Next match"
+                aria-label="Next search match"
+              >
+                <ArrowDownIcon />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                iconOnly
+                onClick={onCloseMessageSearch}
+                tooltip="Close search"
+                aria-label="Close message search"
+              >
+                <XIcon />
+              </Button>
+            </>
+          }
+        />
+      ) : (
+        <PaneContentHeader
+          surface="transparent"
+          separated={false}
+          actions={
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                iconOnly
+                onClick={onToggleMessageSearch}
+                tooltip="Search messages"
+                aria-label="Search messages"
+              >
+                <SearchIcon />
+              </Button>
 
-      <div className="flex shrink-0 items-center gap-1.5">
-        <PaneIconButton
-          type="button"
-          ref={historyButtonRef}
-          onClick={() => setIsChatHistoryVisible(!isChatHistoryVisible)}
-          tooltip="Chat History"
-          tooltipSide="bottom"
-          aria-label="Toggle chat history"
-        >
-          <History />
-        </PaneIconButton>
+              <Button
+                variant="ghost"
+                iconOnly
+                tooltip="Share agent to web"
+                aria-label="Share agent to web"
+                disabled={!currentChat?.messages.length}
+                onClick={() => shareAgent(effectiveChatId ?? undefined)}
+              >
+                <UploadIcon />
+              </Button>
 
-        <AgentSelector variant="header" onOpenSettings={() => openSettingsDialog("ai")} />
-      </div>
+              {!standalone && (
+                <ChatHistoryDropdown
+                  chats={workspaceChats}
+                  archivedChats={archivedChats}
+                  currentChatId={effectiveChatId}
+                  onSwitchToChat={onSwitchChat}
+                  onSetChatArchived={setChatArchived}
+                  onDeleteChat={onDeleteChat ?? (() => {})}
+                />
+              )}
 
-      <ChatHistoryDropdown
-        isOpen={isChatHistoryVisible}
-        onClose={() => setIsChatHistoryVisible(false)}
-        chats={workspaceChats}
-        currentChatId={effectiveChatId}
-        onSwitchToChat={switchToChat}
-        onDeleteChat={onDeleteChat ?? (() => {})}
-        triggerRef={historyButtonRef}
-      />
+              {!standalone && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  iconOnly
+                  onClick={handleNewAgent}
+                  tooltip="New Agent"
+                  commandId="workbench.agentLauncher"
+                  aria-label="New Agent"
+                >
+                  <PlusIcon />
+                </Button>
+              )}
+              {effectiveChatId && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  iconOnly
+                  onClick={() =>
+                    standalone ? requestWindowClose() : void openAgentInNewWindow(effectiveChatId)
+                  }
+                  tooltip={standalone ? "Return agent to main window" : "Open agent in new window"}
+                  aria-label={
+                    standalone ? "Return agent to main window" : "Open agent in new window"
+                  }
+                >
+                  {standalone ? <ArrowLeftIcon /> : <WindowExpandIcon />}
+                </Button>
+              )}
+            </>
+          }
+        />
+      )}
     </div>
   );
 }

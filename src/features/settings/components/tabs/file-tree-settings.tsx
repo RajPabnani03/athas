@@ -1,18 +1,34 @@
 import { useEffect, useState } from "react";
-import {
-  FILE_TREE_DENSITY_OPTIONS,
-  type FileTreeDensity,
-} from "@/features/file-explorer/lib/file-tree-density";
-import { getDefaultSetting, useSettingsStore } from "@/features/settings/stores/settings.store";
+import { useShallow } from "zustand/react/shallow";
+import { getDefaultSetting } from "@/features/settings/config/default-settings";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import type { FileTreeSortOrder } from "@/features/settings/types/settings.types";
 import NumberInput from "@/ui/number-input";
 import Select from "@/ui/select";
-import Section, { SETTINGS_CONTROL_WIDTHS, SettingRow } from "../settings-section";
-import { controlFieldSurfaceVariants } from "@/ui/control-field";
+import Textarea from "@/ui/textarea";
+import Section, { SettingsView, SettingRow } from "../settings-section";
 import Switch from "@/ui/switch";
-import { cn } from "@/utils/cn";
 
 export const FileTreeSettings = () => {
-  const { settings, updateSetting } = useSettingsStore();
+  const settings = useSettingsStore(
+    useShallow((state) => ({
+      autoRevealActiveFileInFileTree: state.settings.autoRevealActiveFileInFileTree,
+      compactFoldersInFileTree: state.settings.compactFoldersInFileTree,
+      confirmBeforeFileDelete: state.settings.confirmBeforeFileDelete,
+      fileTreeIndentSize: state.settings.fileTreeIndentSize,
+      fileTreeSortOrder: state.settings.fileTreeSortOrder,
+      hiddenDirectoryPatterns: state.settings.hiddenDirectoryPatterns,
+      hiddenFilePatterns: state.settings.hiddenFilePatterns,
+      hideRootFolderInFileTree: state.settings.hideRootFolderInFileTree,
+      showFileIconsInFileTree: state.settings.showFileIconsInFileTree,
+      showFolderArrowsInFileTree: state.settings.showFolderArrowsInFileTree,
+      showGitignoredFilesInFileTree: state.settings.showGitignoredFilesInFileTree,
+      showGitStatusInFileTree: state.settings.showGitStatusInFileTree,
+      showHiddenFilesInFileTree: state.settings.showHiddenFilesInFileTree,
+      showIndentGuidesInFileTree: state.settings.showIndentGuidesInFileTree,
+    })),
+  );
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
 
   const [filePatternsInput, setFilePatternsInput] = useState(
     settings.hiddenFilePatterns.join(", "),
@@ -44,8 +60,25 @@ export const FileTreeSettings = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <SettingsView>
       <Section title="Display">
+        <SettingRow
+          label="Sort Order"
+          description="Choose whether folders stay above files or everything sorts by name"
+          onReset={() => updateSetting("fileTreeSortOrder", getDefaultSetting("fileTreeSortOrder"))}
+          canReset={settings.fileTreeSortOrder !== getDefaultSetting("fileTreeSortOrder")}
+        >
+          <Select
+            value={settings.fileTreeSortOrder}
+            options={[
+              { value: "folders-first", label: "Folders First" },
+              { value: "name", label: "Name" },
+            ]}
+            onChange={(value) => updateSetting("fileTreeSortOrder", value as FileTreeSortOrder)}
+            variant="default"
+          />
+        </SettingRow>
+
         <SettingRow
           label="Indent Size"
           description="Pixels per nesting level"
@@ -59,24 +92,60 @@ export const FileTreeSettings = () => {
             max="32"
             value={settings.fileTreeIndentSize}
             onChange={(val) => updateSetting("fileTreeIndentSize", val)}
-            className={SETTINGS_CONTROL_WIDTHS.numberCompact}
-            size="xs"
           />
         </SettingRow>
 
         <SettingRow
-          label="Density"
-          description="Choose file tree row spacing"
-          onReset={() => updateSetting("fileTreeDensity", getDefaultSetting("fileTreeDensity"))}
-          canReset={settings.fileTreeDensity !== getDefaultSetting("fileTreeDensity")}
+          label="Show File Icons"
+          description="Show themed file and folder icons"
+          onReset={() =>
+            updateSetting("showFileIconsInFileTree", getDefaultSetting("showFileIconsInFileTree"))
+          }
+          canReset={
+            settings.showFileIconsInFileTree !== getDefaultSetting("showFileIconsInFileTree")
+          }
         >
-          <Select
-            value={settings.fileTreeDensity}
-            options={FILE_TREE_DENSITY_OPTIONS}
-            onChange={(value) => updateSetting("fileTreeDensity", value as FileTreeDensity)}
-            className={SETTINGS_CONTROL_WIDTHS.default}
-            size="xs"
-            variant="default"
+          <Switch
+            checked={settings.showFileIconsInFileTree}
+            onChange={(checked) => updateSetting("showFileIconsInFileTree", checked)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Show Folder Arrows"
+          description="Show expand and collapse arrows beside folders"
+          onReset={() =>
+            updateSetting(
+              "showFolderArrowsInFileTree",
+              getDefaultSetting("showFolderArrowsInFileTree"),
+            )
+          }
+          canReset={
+            settings.showFolderArrowsInFileTree !== getDefaultSetting("showFolderArrowsInFileTree")
+          }
+        >
+          <Switch
+            checked={settings.showFolderArrowsInFileTree}
+            onChange={(checked) => updateSetting("showFolderArrowsInFileTree", checked)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Show Indent Guides"
+          description="Show vertical guides for nested folders"
+          onReset={() =>
+            updateSetting(
+              "showIndentGuidesInFileTree",
+              getDefaultSetting("showIndentGuidesInFileTree"),
+            )
+          }
+          canReset={
+            settings.showIndentGuidesInFileTree !== getDefaultSetting("showIndentGuidesInFileTree")
+          }
+        >
+          <Switch
+            checked={settings.showIndentGuidesInFileTree}
+            onChange={(checked) => updateSetting("showIndentGuidesInFileTree", checked)}
           />
         </SettingRow>
 
@@ -93,7 +162,6 @@ export const FileTreeSettings = () => {
           <Switch
             checked={settings.compactFoldersInFileTree}
             onChange={(checked) => updateSetting("compactFoldersInFileTree", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -110,7 +178,6 @@ export const FileTreeSettings = () => {
           <Switch
             checked={settings.hideRootFolderInFileTree}
             onChange={(checked) => updateSetting("hideRootFolderInFileTree", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -130,7 +197,6 @@ export const FileTreeSettings = () => {
           <Switch
             checked={settings.showHiddenFilesInFileTree}
             onChange={(checked) => updateSetting("showHiddenFilesInFileTree", checked)}
-            size="sm"
           />
         </SettingRow>
 
@@ -151,7 +217,60 @@ export const FileTreeSettings = () => {
           <Switch
             checked={!settings.showGitignoredFilesInFileTree}
             onChange={(checked) => updateSetting("showGitignoredFilesInFileTree", !checked)}
-            size="sm"
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Show Git Status"
+          description="Display Git color decorations beside changed files"
+          onReset={() =>
+            updateSetting("showGitStatusInFileTree", getDefaultSetting("showGitStatusInFileTree"))
+          }
+          canReset={
+            settings.showGitStatusInFileTree !== getDefaultSetting("showGitStatusInFileTree")
+          }
+        >
+          <Switch
+            checked={settings.showGitStatusInFileTree}
+            onChange={(checked) => updateSetting("showGitStatusInFileTree", checked)}
+          />
+        </SettingRow>
+      </Section>
+
+      <Section title="Behavior">
+        <SettingRow
+          label="Auto Reveal Active File"
+          description="Expand and scroll Files to the active editor file"
+          onReset={() =>
+            updateSetting(
+              "autoRevealActiveFileInFileTree",
+              getDefaultSetting("autoRevealActiveFileInFileTree"),
+            )
+          }
+          canReset={
+            settings.autoRevealActiveFileInFileTree !==
+            getDefaultSetting("autoRevealActiveFileInFileTree")
+          }
+        >
+          <Switch
+            checked={settings.autoRevealActiveFileInFileTree}
+            onChange={(checked) => updateSetting("autoRevealActiveFileInFileTree", checked)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Confirm Before Delete"
+          description="Ask for confirmation before deleting a file or folder"
+          onReset={() =>
+            updateSetting("confirmBeforeFileDelete", getDefaultSetting("confirmBeforeFileDelete"))
+          }
+          canReset={
+            settings.confirmBeforeFileDelete !== getDefaultSetting("confirmBeforeFileDelete")
+          }
+        >
+          <Switch
+            checked={settings.confirmBeforeFileDelete}
+            onChange={(checked) => updateSetting("confirmBeforeFileDelete", checked)}
           />
         </SettingRow>
       </Section>
@@ -168,7 +287,7 @@ export const FileTreeSettings = () => {
             getDefaultSetting("hiddenFilePatterns").join(",")
           }
         >
-          <textarea
+          <Textarea
             value={filePatternsInput}
             onChange={(e) => setFilePatternsInput(e.target.value)}
             onBlur={commitFilePatterns}
@@ -180,10 +299,8 @@ export const FileTreeSettings = () => {
             }}
             placeholder="*.log, *.tmp, **/*.bak"
             rows={2}
-            className={cn(
-              controlFieldSurfaceVariants({ variant: "secondary" }),
-              "ui-font ui-text-sm w-48 max-w-full resize-none px-2 py-1.5 placeholder:text-text-lighter",
-            )}
+            resize="none"
+            className="w-56 max-w-full"
           />
         </SettingRow>
 
@@ -198,7 +315,7 @@ export const FileTreeSettings = () => {
             getDefaultSetting("hiddenDirectoryPatterns").join(",")
           }
         >
-          <textarea
+          <Textarea
             value={directoryPatternsInput}
             onChange={(e) => setDirectoryPatternsInput(e.target.value)}
             onBlur={commitDirectoryPatterns}
@@ -210,13 +327,11 @@ export const FileTreeSettings = () => {
             }}
             placeholder="node_modules, .git, build/"
             rows={2}
-            className={cn(
-              controlFieldSurfaceVariants({ variant: "secondary" }),
-              "ui-font ui-text-sm w-48 max-w-full resize-none px-2 py-1.5 placeholder:text-text-lighter",
-            )}
+            resize="none"
+            className="w-56 max-w-full"
           />
         </SettingRow>
       </Section>
-    </div>
+    </SettingsView>
   );
 };

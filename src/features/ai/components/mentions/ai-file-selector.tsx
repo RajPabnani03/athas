@@ -1,30 +1,32 @@
-import { MagnifyingGlassIcon as Search } from "@phosphor-icons/react";
+import { ClockIcon, SearchIcon } from "@/ui/icons";
 import {
   Fragment,
   useEffect,
-  useId,
   useMemo,
   useRef,
-  type KeyboardEvent,
+  useState,
   type ReactNode,
   type RefObject,
 } from "react";
 import { useDebounce } from "use-debounce";
-import { useFffSearch } from "@/features/global-search/hooks/use-fff-search";
-import { useFileSearch } from "@/features/global-search/hooks/use-file-search";
-import { FileListItem } from "@/features/global-search/components/file-list-item";
-import type { FileCategory, FileItem } from "@/features/global-search/types/global-search.types";
-import type { FileEntry } from "@/features/file-system/types/app.types";
-import { CommandEmpty, CommandList } from "@/ui/command";
-import Input from "@/ui/input";
-import { cn } from "@/utils/cn";
+import { useFffSearch } from "@/features/file-search/hooks/use-fff-search";
 import {
-  chatComposerDropdownHeaderClassName,
-  chatComposerDropdownListClassName,
-} from "../input/chat-composer-control-styles";
+  canUseNativeFileSearch,
+  getNativeWorkspaceRootPaths,
+} from "@/features/file-search/utils/file-search-paths";
+import { shouldIgnoreSearchFile } from "@/features/file-search/utils/file-search-filtering";
+import { useFileSearch } from "@/features/global-search/hooks/use-file-search";
+import type { FileCategory, FileItem } from "@/features/file-search/types/file-search.types";
+import type { FileEntry } from "@/features/file-system/types/app.types";
+import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
+import { ThemedFileIcon } from "@/extensions/icon-themes/components/themed-file-icon";
+import { Combobox, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/ui/combobox";
+import { CommandItemBadge } from "@/ui/command";
+import { cn } from "@/utils/cn";
+import { getDirectoryPath } from "@/utils/path-helpers";
 
 interface AIFileSelectorProps {
-  files: FileEntry[];
+  files?: FileEntry[];
   query: string;
   onQueryChange?: (query: string) => void;
   onSelect: (file: FileItem) => void;
@@ -33,7 +35,7 @@ interface AIFileSelectorProps {
   onSelectedIndexChange?: (index: number) => void;
   showSearchInput?: boolean;
   searchInputRef?: RefObject<HTMLInputElement | null>;
-  listClassName?: string;
+  presentation?: "menu" | "panel";
   emptyLabel?: string;
   compact?: boolean;
   autoFocusSearchInput?: boolean;
@@ -59,8 +61,7 @@ function flattenFileSearchResults(categorizedFiles: ReturnType<typeof useFileSea
   return result;
 }
 
-const canUseBackendFileSearch = (rootPath: string | null | undefined): rootPath is string =>
-  Boolean(rootPath) && !rootPath?.startsWith("remote://") && !rootPath?.startsWith("diff://");
+const EMPTY_FILES: FileEntry[] = [];
 
 const categoryLabels: Record<FileCategory, string> = {
   open: "Open",
@@ -69,7 +70,7 @@ const categoryLabels: Record<FileCategory, string> = {
 };
 
 export function AIFileSelector({
-  files,
+  files = EMPTY_FILES,
   query,
   onQueryChange,
   onSelect,
@@ -78,7 +79,7 @@ export function AIFileSelector({
   onSelectedIndexChange,
   showSearchInput = true,
   searchInputRef,
-  listClassName,
+  presentation = "menu",
   emptyLabel = "No matching files found",
   compact = false,
   autoFocusSearchInput = false,
@@ -87,35 +88,75 @@ export function AIFileSelector({
   leadingContent,
   hasLeadingResults = false,
 }: AIFileSelectorProps) {
-  const listboxId = useId();
   const lastEmittedResultsSignatureRef = useRef<string | null>(null);
   const [debouncedQuery] = useDebounce(query, 50);
-  const isBackendSearchActive =
-    useBackendSearch && debouncedQuery.trim().length > 0 && canUseBackendFileSearch(rootFolderPath);
-  const { hits: backendHits } = useFffSearch(debouncedQuery, isBackendSearchActive, rootFolderPath);
-  const fileItems = useMemo<FileItem[]>(() => {
-    if (isBackendSearchActive) return [];
+  const workspaceFolders = useFileSystemStore((state) => state.workspaceFolders);
+  const getAllProjectFiles = useFileSystemStore((state) => state.getAllProjectFiles);
+  const workspaceKey = JSON.stringify([
+    rootFolderPath,
+    workspaceFolders.map((folder) => folder.path),
+  ]);
+  const [projectFiles, setProjectFiles] = useState<{
+    key: string;
+    files: FileEntry[];
+    error: boolean;
+  } | null>(null);
+  const needsProjectFiles = files.length === 0 && Boolean(rootFolderPath);
+  const currentProjectFiles = projectFiles?.key === workspaceKey ? projectFiles : null;
+  const isLoadingFiles = needsProjectFiles && !currentProjectFiles;
 
-    return files
-      .filter((file) => !file.isDir)
+  useEffect(() => {
+    if (!needsProjectFiles) return;
+    let cancelled = false;
+    setProjectFiles(null);
+    getAllProjectFiles().then(
+      (loadedFiles) => {
+        if (!cancelled) setProjectFiles({ key: workspaceKey, files: loadedFiles, error: false });
+      },
+      () => {
+        if (!cancelled) setProjectFiles({ key: workspaceKey, files: [], error: true });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [getAllProjectFiles, needsProjectFiles, workspaceKey]);
+
+  const effectiveFiles = files.length > 0 ? files : (currentProjectFiles?.files ?? EMPTY_FILES);
+  const nativeRootPaths = useMemo(
+    () => getNativeWorkspaceRootPaths(rootFolderPath, workspaceFolders),
+    [rootFolderPath, workspaceFolders],
+  );
+  const isBackendSearchActive =
+    useBackendSearch && debouncedQuery.trim().length > 0 && canUseNativeFileSearch(rootFolderPath);
+  const {
+    hits: backendHits,
+    error: backendError,
+    isSearching,
+  } = useFffSearch(debouncedQuery, isBackendSearchActive, nativeRootPaths);
+  const fileItems = useMemo<FileItem[]>(() => {
+    return effectiveFiles
+      .filter((file) => !file.isDir && !shouldIgnoreSearchFile(file.path))
       .map((file) => ({
         name: file.name,
         path: file.path,
         isDir: false,
       }));
-  }, [files, isBackendSearchActive]);
+  }, [effectiveFiles]);
   const categorizedFiles = useFileSearch(fileItems, debouncedQuery);
   const results = useMemo(() => {
-    if (isBackendSearchActive) {
-      return backendHits.map((hit, index) => ({
-        file: { name: hit.name, path: hit.path, isDir: false },
-        category: "other" as const,
-        index,
-      }));
+    if (isBackendSearchActive && !backendError) {
+      return backendHits
+        .filter((hit) => !shouldIgnoreSearchFile(hit.path))
+        .map((hit, index) => ({
+          file: { name: hit.name, path: hit.path, isDir: false },
+          category: "other" as const,
+          index,
+        }));
     }
 
     return flattenFileSearchResults(categorizedFiles);
-  }, [backendHits, categorizedFiles, isBackendSearchActive]);
+  }, [backendError, backendHits, categorizedFiles, isBackendSearchActive]);
   const resultFiles = useMemo(() => results.map(({ file }) => file), [results]);
   const resultFilesSignature = useMemo(
     () => resultFiles.map((file) => `${file.path}\0${file.name}`).join("\n"),
@@ -142,106 +183,115 @@ export function AIFileSelector({
     return () => cancelAnimationFrame(frame);
   }, [autoFocusSearchInput, searchInputRef, showSearchInput]);
 
-  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (results.length === 0) return;
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      onSelectedIndexChange?.(Math.min(selectedIndex + 1, results.length - 1));
-      return;
-    }
-
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      onSelectedIndexChange?.(Math.max(selectedIndex - 1, 0));
-      return;
-    }
-
-    if (event.key === "Home") {
-      event.preventDefault();
-      onSelectedIndexChange?.(0);
-      return;
-    }
-
-    if (event.key === "End") {
-      event.preventDefault();
-      onSelectedIndexChange?.(results.length - 1);
-      return;
-    }
-
-    if (event.key === "Enter" || event.key === "Tab") {
-      event.preventDefault();
-      const selected = results[selectedIndex] ?? results[0];
-      onSelect(selected.file);
-    }
-  };
-
   return (
-    <>
+    <Combobox<FileItem>
+      items={resultFiles}
+      value={null}
+      onValueChange={(file) => {
+        if (file) onSelect(file);
+      }}
+      inputValue={query}
+      onInputValueChange={(nextQuery) => onQueryChange?.(nextQuery)}
+      onItemHighlighted={(file) => {
+        if (!file) return;
+        const index = resultFiles.findIndex((result) => result.path === file.path);
+        if (index >= 0) onSelectedIndexChange?.(index);
+      }}
+      itemToStringLabel={(file) => file.name}
+      itemToStringValue={(file) => file.path}
+      isItemEqualToValue={(left, right) => left.path === right.path}
+      filter={() => true}
+      autoHighlight
+    >
       {showSearchInput && (
-        <div className={cn(chatComposerDropdownHeaderClassName, compact && "px-1.5 py-1.5")}>
-          <Input
+        <div
+          className={cn(
+            "border-border/60 border-b bg-surface/95 px-2 py-2",
+            compact && "px-1.5 py-1.5",
+          )}
+        >
+          <ComboboxInput
             ref={searchInputRef}
-            type="text"
             placeholder="Search files..."
-            value={query}
-            onChange={(event) => onQueryChange?.(event.target.value)}
             variant="ghost"
-            size={compact ? "xs" : "sm"}
-            leftIcon={Search}
+            leftIcon={SearchIcon}
+            showTrigger={false}
             className="w-full"
             aria-label="Search files"
-            aria-activedescendant={
-              results.length > 0 ? `ai-file-selector-option-${selectedIndex}` : undefined
-            }
-            aria-controls={listboxId}
-            aria-expanded="true"
-            aria-autocomplete="list"
-            role="combobox"
-            onKeyDown={handleSearchKeyDown}
           />
         </div>
       )}
 
-      <CommandList>
-        <div
-          className={cn("items-container", chatComposerDropdownListClassName, listClassName)}
-          id={listboxId}
-          role="listbox"
-          aria-label="File list"
-        >
-          {leadingContent}
-          {results.length === 0 && !hasLeadingResults ? (
-            <CommandEmpty>{emptyLabel}</CommandEmpty>
-          ) : (
-            results.map(({ file, category, index }, resultIndex) => {
-              const previousCategory = results[resultIndex - 1]?.category;
-              const showCategoryHeader = category !== "other" && category !== previousCategory;
+      <ComboboxList
+        className={cn(
+          "items-container min-h-0 flex-1 overflow-y-auto bg-surface/95 p-1.5 overscroll-none",
+          compact && "p-0",
+          presentation === "menu" ? "max-h-66" : "max-h-full",
+        )}
+        aria-label="File list"
+        aria-busy={isLoadingFiles || isSearching}
+      >
+        {leadingContent}
+        <ComboboxEmpty>
+          {hasLeadingResults
+            ? null
+            : isSearching || isLoadingFiles
+              ? "Loading project files…"
+              : currentProjectFiles?.error
+                ? "Could not load project files. Reopen to retry."
+                : !rootFolderPath && files.length === 0
+                  ? "Open a project to attach files"
+                  : emptyLabel}
+        </ComboboxEmpty>
+        {results.map(({ file, category, index }, resultIndex) => {
+          const previousCategory = results[resultIndex - 1]?.category;
+          const showCategoryHeader = category !== "other" && category !== previousCategory;
+          const directoryPath = getDirectoryPath(file.path, rootFolderPath);
 
-              return (
-                <Fragment key={`${category}-${file.path}`}>
-                  {showCategoryHeader && (
-                    <div className="ui-text-xs px-2 pt-1.5 pb-1 font-medium leading-[1.35] text-text-lighter/75">
-                      {categoryLabels[category]}
-                    </div>
+          return (
+            <Fragment key={`${category}-${file.path}`}>
+              {showCategoryHeader ? (
+                <div
+                  className={cn(
+                    "px-2 font-medium text-subtle-foreground/75",
+                    compact
+                      ? "ui-text-sm pt-1 pb-0.5 leading-normal"
+                      : "ui-text-base pt-1.5 pb-1 leading-row",
                   )}
-                  <FileListItem
-                    id={`ai-file-selector-option-${index}`}
-                    file={file}
-                    category={category}
-                    index={index}
-                    isSelected={index === selectedIndex}
-                    onClick={() => onSelect(file)}
-                    onPreview={() => onSelectedIndexChange?.(index)}
-                    rootFolderPath={rootFolderPath}
-                    compact={compact}
-                  />
-                </Fragment>
-              );
-            })
-          )}
-        </div>
-      </CommandList>
-    </>
+                >
+                  {categoryLabels[category]}
+                </div>
+              ) : null}
+              <ComboboxItem
+                value={file}
+                showIndicator={false}
+                aria-selected={index === selectedIndex}
+                className={cn(
+                  compact ? "min-h-7 gap-1.5 rounded-md py-1" : "min-h-8 gap-2 py-2",
+                  index === selectedIndex && "bg-selected",
+                )}
+              >
+                <span className="grid size-4 shrink-0 place-items-center">
+                  <ThemedFileIcon fileName={file.name} isDir={false} />
+                </span>
+                <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <span className="truncate text-foreground">{file.name}</span>
+                  {directoryPath ? (
+                    <span className="truncate text-subtle-foreground/80">{directoryPath}</span>
+                  ) : null}
+                </span>
+                {category === "open" ? (
+                  <CommandItemBadge>open</CommandItemBadge>
+                ) : category === "recent" ? (
+                  <CommandItemBadge>
+                    <ClockIcon />
+                  </CommandItemBadge>
+                ) : null}
+              </ComboboxItem>
+            </Fragment>
+          );
+        })}
+      </ComboboxList>
+    </Combobox>
   );
 }

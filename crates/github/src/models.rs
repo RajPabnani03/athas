@@ -59,6 +59,8 @@ pub struct StatusCheck {
    pub conclusion: Option<String>,
    #[serde(rename = "workflowName", default)]
    pub workflow_name: Option<String>,
+   #[serde(rename = "detailsUrl", default)]
+   pub details_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -78,11 +80,52 @@ pub struct ReviewRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PullRequestReview {
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub login: String,
+   #[serde(rename = "avatarUrl", default)]
+   pub avatar_url: Option<String>,
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub state: String,
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub body: String,
+   #[serde(rename = "submittedAt", default)]
+   pub submitted_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Label {
    #[serde(default, deserialize_with = "deserialize_string_or_default")]
    pub name: String,
    #[serde(default, deserialize_with = "deserialize_string_or_default")]
    pub color: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GitHubNotification {
+   pub id: String,
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub title: String,
+   #[serde(rename = "subjectType")]
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub subject_type: String,
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub reason: String,
+   #[serde(default, deserialize_with = "deserialize_bool_or_default")]
+   pub unread: bool,
+   #[serde(rename = "updatedAt")]
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub updated_at: String,
+   #[serde(rename = "lastReadAt")]
+   pub last_read_at: Option<String>,
+   #[serde(rename = "repositoryFullName")]
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub repository_full_name: String,
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub url: String,
+   #[serde(rename = "subjectUrl")]
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub subject_url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -145,6 +188,14 @@ pub struct PullRequestDetails {
    pub merge_state_status: Option<String>,
    #[serde(default)]
    pub mergeable: Option<String>,
+   #[serde(rename = "mergedAt", default)]
+   pub merged_at: Option<String>,
+   #[serde(rename = "mergedBy", default)]
+   pub merged_by: Option<PullRequestAuthor>,
+   #[serde(rename = "closedAt", default)]
+   pub closed_at: Option<String>,
+   #[serde(default, deserialize_with = "deserialize_vec_or_default")]
+   pub reviews: Vec<PullRequestReview>,
    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
    pub labels: Vec<Label>,
    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
@@ -163,6 +214,8 @@ pub struct PullRequestFile {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PullRequestComment {
+   #[serde(default)]
+   pub id: i64,
    #[serde(default, deserialize_with = "deserialize_author_or_default")]
    pub author: PullRequestAuthor,
    #[serde(default, deserialize_with = "deserialize_string_or_default")]
@@ -170,6 +223,11 @@ pub struct PullRequestComment {
    #[serde(rename = "createdAt")]
    #[serde(default, deserialize_with = "deserialize_string_or_default")]
    pub created_at: String,
+   #[serde(rename = "updatedAt")]
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub updated_at: String,
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -192,6 +250,8 @@ pub struct IssueListItem {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct IssueComment {
+   #[serde(default)]
+   pub id: i64,
    #[serde(default, deserialize_with = "deserialize_author_or_default")]
    pub author: PullRequestAuthor,
    #[serde(default, deserialize_with = "deserialize_string_or_default")]
@@ -199,6 +259,31 @@ pub struct IssueComment {
    #[serde(rename = "createdAt")]
    #[serde(default, deserialize_with = "deserialize_string_or_default")]
    pub created_at: String,
+   #[serde(rename = "updatedAt")]
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub updated_at: String,
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct IssueMilestone {
+   pub number: i64,
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub title: String,
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub state: String,
+   #[serde(rename = "dueOn", default)]
+   pub due_on: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct IssueType {
+   pub id: i64,
+   #[serde(default, deserialize_with = "deserialize_string_or_default")]
+   pub name: String,
+   #[serde(default)]
+   pub description: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -224,6 +309,20 @@ pub struct IssueDetails {
    pub labels: Vec<Label>,
    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
    pub assignees: Vec<PullRequestAuthor>,
+   #[serde(rename = "stateReason", default)]
+   pub state_reason: Option<String>,
+   #[serde(default)]
+   pub locked: bool,
+   #[serde(rename = "activeLockReason", default)]
+   pub active_lock_reason: Option<String>,
+   #[serde(default)]
+   pub milestone: Option<IssueMilestone>,
+   #[serde(rename = "issueType", default)]
+   pub issue_type: Option<IssueType>,
+   #[serde(rename = "closedAt", default)]
+   pub closed_at: Option<String>,
+   #[serde(rename = "closedBy", default)]
+   pub closed_by: Option<PullRequestAuthor>,
    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
    pub comments: Vec<IssueComment>,
 }
@@ -238,6 +337,10 @@ pub struct WorkflowRunStep {
    pub conclusion: Option<String>,
    #[serde(default)]
    pub number: Option<i64>,
+   #[serde(rename = "startedAt", default)]
+   pub started_at: Option<String>,
+   #[serde(rename = "completedAt", default)]
+   pub completed_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -284,6 +387,18 @@ pub struct WorkflowRunDetails {
    pub created_at: Option<String>,
    #[serde(rename = "updatedAt", default)]
    pub updated_at: Option<String>,
+   #[serde(rename = "runStartedAt", default)]
+   pub run_started_at: Option<String>,
+   #[serde(rename = "runNumber", default)]
+   pub run_number: Option<i64>,
+   #[serde(rename = "runAttempt", default)]
+   pub run_attempt: Option<i64>,
+   #[serde(rename = "workflowId", default)]
+   pub workflow_id: Option<i64>,
+   #[serde(default)]
+   pub actor: Option<PullRequestAuthor>,
+   #[serde(rename = "headCommitMessage", default)]
+   pub head_commit_message: Option<String>,
    #[serde(default, deserialize_with = "deserialize_string_or_default")]
    pub url: String,
    #[serde(rename = "headBranch", default)]
@@ -312,6 +427,24 @@ pub struct WorkflowRunListItem {
    pub conclusion: Option<String>,
    #[serde(rename = "updatedAt", default)]
    pub updated_at: Option<String>,
+   #[serde(rename = "createdAt", default)]
+   pub created_at: Option<String>,
+   #[serde(rename = "runStartedAt", default)]
+   pub run_started_at: Option<String>,
+   #[serde(rename = "runNumber", default)]
+   pub run_number: Option<i64>,
+   #[serde(rename = "runAttempt", default)]
+   pub run_attempt: Option<i64>,
+   #[serde(rename = "workflowId", default)]
+   pub workflow_id: Option<i64>,
+   #[serde(default)]
+   pub actor: Option<PullRequestAuthor>,
+   #[serde(rename = "triggeringActor", default)]
+   pub triggering_actor: Option<PullRequestAuthor>,
+   #[serde(rename = "pullRequestNumbers", default)]
+   pub pull_request_numbers: Vec<i64>,
+   #[serde(rename = "headCommitMessage", default)]
+   pub head_commit_message: Option<String>,
    #[serde(default, deserialize_with = "deserialize_string_or_default")]
    pub url: String,
    #[serde(rename = "headBranch", default)]

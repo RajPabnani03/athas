@@ -1,17 +1,20 @@
 import {
-  ArrowClockwiseIcon as ArrowClockwise,
-  ClipboardTextIcon as ClipboardText,
-  CodeIcon as Code,
-  ColumnsIcon as Columns,
-  DatabaseIcon as Database,
-  DownloadIcon as Download,
-  MinusCircleIcon as MinusCircle,
-  PlusCircleIcon as PlusCircle,
-  RadioButtonIcon as RadioButton,
-  TrashIcon as Trash,
-} from "@phosphor-icons/react";
+  ArrowClockwiseIcon,
+  BroadcastIcon,
+  ClipboardTextIcon,
+  CodeIcon,
+  ColumnsIcon,
+  DatabaseIcon,
+  DownloadIcon,
+  MinusCircleIcon,
+  PlusCircleIcon,
+  TrashIcon,
+} from "@/ui/icons";
+import { PathBreadcrumb } from "@/features/editor/components/toolbar/path-breadcrumb";
+import { PaneContentHeader } from "@/features/panes/components/pane-content-chrome";
 import { Button } from "@/ui/button";
-import { cn } from "@/utils/cn";
+import { Tabs, TabsList, TabsTrigger } from "@/ui/tabs";
+import { databaseChipClassName } from "../utils/database-surface";
 import { formatQueryResultSummary } from "../lib/query-result-summary";
 import type {
   DatabaseInfo,
@@ -22,6 +25,7 @@ import type {
 
 interface TableToolbarProps {
   fileName: string;
+  selectedObjectName?: string | null;
   dbInfo: DatabaseInfo | null;
   selectedObjectKind?: DatabaseObjectKind;
   subscriptionInfo?: PostgresSubscriptionInfo | null;
@@ -51,6 +55,7 @@ const VIEW_TABS: { mode: ViewMode; label: string }[] = [
 
 export default function TableToolbar({
   fileName,
+  selectedObjectName,
   dbInfo,
   selectedObjectKind = "table",
   subscriptionInfo,
@@ -91,112 +96,98 @@ export default function TableToolbar({
   const jsonLabel = isCustomQuery ? "Copy visible query page as JSON" : "Copy as JSON";
 
   return (
-    <div className="px-3 py-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <Database className="text-text-lighter" />
-            <span className="ui-font ui-text-sm min-w-0 truncate text-text">{fileName}</span>
-            {dbInfo && (
-              <span className="ui-font ui-text-xs shrink-0 text-text-lighter">
-                {dbInfo.tables}t {dbInfo.indexes}i
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-1 rounded-md border border-border/60 bg-secondary-bg/60 p-0.5">
-            {VIEW_TABS.map(({ mode, label }) => (
-              <Button
-                key={mode}
-                onClick={() => setViewMode(mode)}
-                variant={viewMode === mode ? "default" : "ghost"}
-                compact
-                className={cn(
-                  "rounded px-2.5 ui-text-xs text-text-lighter",
-                  viewMode === mode ? "text-text" : "text-text-lighter",
-                )}
-                aria-label={`Switch to ${label} view`}
-                tooltip={`Switch to ${label} view`}
-              >
-                {label}
-              </Button>
-            ))}
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
+    <PaneContentHeader
+      context={
+        <PathBreadcrumb
+          segments={[fileName, ...(selectedObjectName ? [selectedObjectName] : [])]}
+          icons={[<DatabaseIcon key="database" />]}
+          ariaLabel="Database object"
+        />
+      }
+      detail={dbInfo ? `${dbInfo.tables} tables · ${dbInfo.indexes} indexes` : undefined}
+      actions={
+        <>
+          <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as ViewMode)}>
+            <TabsList variant="bare">
+              {VIEW_TABS.map(({ mode, label }) => (
+                <TabsTrigger key={mode} value={mode} aria-label={`Switch to ${label} view`}>
+                  {label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
           {viewMode === "data" && !isCustomQuery && !isSubscription && (
             <Button
               onClick={() => setShowColumnTypes(!showColumnTypes)}
               variant="ghost"
-              compact
-              className="rounded-md px-2 text-text-lighter"
+              iconOnly
               aria-label="Toggle column types"
               tooltip={showColumnTypes ? "Hide column types" : "Show column types"}
             >
-              <Columns />
+              <ColumnsIcon />
             </Button>
           )}
           {resultSummary && (
-            <span className="px-2 ui-font ui-text-xs text-text-lighter">{resultSummary}</span>
+            <span
+              className={databaseChipClassName("px-2 font-sans ui-text-sm text-subtle-foreground")}
+            >
+              {resultSummary}
+            </span>
           )}
           {viewMode === "data" && (
             <Button
               onClick={() => setIsCustomQuery(true)}
               variant="ghost"
-              compact
-              className="rounded-md px-2 text-text-lighter"
+              iconOnly
               disabled={isCustomQuery}
               aria-label="Open SQL editor"
               tooltip="Open SQL editor"
             >
-              <Code />
+              <CodeIcon />
             </Button>
           )}
           {onCreateSubscription && (
             <Button
               onClick={onCreateSubscription}
               variant="ghost"
-              className="rounded-md px-2 text-text-lighter"
               aria-label="Create subscription"
               tooltip="Create subscription"
-              compact
+              iconOnly
             >
-              <RadioButton />
+              <BroadcastIcon />
             </Button>
           )}
           {isSubscription && subscriptionInfo && onToggleSubscription && (
             <Button
               onClick={onToggleSubscription}
               variant="ghost"
-              className="rounded-md px-2 text-text-lighter"
               aria-label={subscriptionInfo.enabled ? "Disable subscription" : "Enable subscription"}
               tooltip={subscriptionInfo.enabled ? "Disable subscription" : "Enable subscription"}
-              compact
+              iconOnly
             >
-              {subscriptionInfo.enabled ? <MinusCircle /> : <PlusCircle />}
+              {subscriptionInfo.enabled ? <MinusCircleIcon /> : <PlusCircleIcon />}
             </Button>
           )}
           {isSubscription && onRefreshSubscription && (
             <Button
               onClick={onRefreshSubscription}
               variant="ghost"
-              className="rounded-md px-2 text-text-lighter"
               aria-label="Refresh subscription"
               tooltip="Refresh subscription"
-              compact
+              iconOnly
             >
-              <ArrowClockwise />
+              <ArrowClockwiseIcon />
             </Button>
           )}
           {isSubscription && onDropSubscription && (
             <Button
               onClick={onDropSubscription}
               variant="ghost"
-              className="rounded-md px-2 text-text-lighter"
               aria-label="Drop subscription"
               tooltip="Drop subscription"
-              compact
+              iconOnly
             >
-              <Trash />
+              <TrashIcon />
             </Button>
           )}
           {hasData && (
@@ -204,27 +195,25 @@ export default function TableToolbar({
               <Button
                 onClick={exportAsCSV}
                 variant="ghost"
-                className="rounded-md px-2 text-text-lighter"
                 aria-label={exportLabel}
                 tooltip={exportTooltip}
-                compact
+                iconOnly
               >
-                <Download />
+                <DownloadIcon optical="md" />
               </Button>
               <Button
                 onClick={copyAsJSON}
                 variant="ghost"
-                className="rounded-md px-2 text-text-lighter"
                 aria-label={jsonLabel}
                 tooltip={jsonTooltip}
-                compact
+                iconOnly
               >
-                <ClipboardText />
+                <ClipboardTextIcon />
               </Button>
             </>
           )}
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    />
   );
 }

@@ -1,99 +1,129 @@
-import { useEffect, useRef } from "react";
-import AIChat from "@/features/ai/components/chat/ai-chat";
-import { AgentLauncher } from "@/features/ai/components/agent-launcher";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useChatInitialization } from "@/features/ai/hooks/use-chat-initialization";
 import { useCollaborationPresence } from "@/features/collaboration/hooks/use-collaboration-presence";
-import CommandPalette from "@/features/command-palette/components/command-palette";
-import { ConnectionDialog } from "@/features/database/components/connection/connection-dialog";
-import {
-  DATABASE_SIDEBAR_FILES_DROPPED_EVENT,
-  getDroppedDatabaseFilePaths,
-} from "@/features/database/utils/database-file-drop";
 import { initializeDebuggerEventBridge } from "@/features/debugger/services/debug-adapter-events";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
-import LinuxFolderPickerDialog from "@/features/file-system/components/linux-folder-picker-dialog";
-import { ProjectNameMenu } from "@/features/file-system/components/project-name-menu";
-import { ExtensionGenerationCommand } from "@/features/generate/components/extension-generation-command";
+import { getBufferById } from "@/features/editor/utils/buffer-index";
 import { getSymlinkInfo } from "@/features/file-system/controllers/platform";
-import type { FileEntry } from "@/features/file-system/types/app.types";
 import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
 import { useFileSystemFolderDrop } from "@/features/file-system/hooks/use-file-system-folder-drop";
 import { openDroppedWorkspacePaths } from "@/features/file-system/utils/open-dropped-workspace-paths";
 import { useGitStore } from "@/features/git/stores/git.store";
+import { isGitChangeRelevant, subscribeToGitChanges } from "@/features/git/events/git-events";
 import { useOnboardingStore } from "@/features/onboarding/stores/onboarding.store";
-import { SplitViewRoot } from "@/features/panes/components/split-view-root";
+import { CachedWorkspaceSplitViews } from "@/features/panes/components/split-view-root";
 import { usePaneKeyboard } from "@/features/panes/hooks/use-pane-keyboard";
-import QuickOpen from "@/features/quick-open/components/quick-open";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
-import VimCommandBar from "@/features/vim/components/vim-command-bar";
-import { useVimKeyboard } from "@/features/vim/hooks/use-vim-keyboard";
 import { useVimStore } from "@/features/vim/stores/vim.store";
+import { isWslPath } from "@/features/wsl/utils/wsl-path";
 import { useTerminalStore } from "@/features/terminal/stores/terminal.store";
 import { useMenuEventsWrapper } from "@/features/window/hooks/use-menu-events-wrapper";
-import { WindowCloseGuard } from "@/features/window/components/window-close-guard";
 import { useWorkspaceTabsStore } from "@/features/window/stores/workspace-tabs.store";
 import { useUIState } from "@/features/window/stores/ui-state.store";
-import { ExtensionDialogs } from "@/extensions/ui/components/extension-dialog";
-import { toast } from "@/ui/toast";
+import { toast } from "sonner";
+import { cn } from "@/utils/cn";
 import { frontendTrace } from "@/utils/frontend-trace";
+import { recordStartupMilestone } from "@/features/bootstrap/startup-performance";
 import { getInternalTabDragData } from "@/features/tabs/utils/internal-tab-drag";
-import { VimSearchBar } from "../../vim/components/vim-search-bar";
-import CustomTitleBarWithSettings from "../../window/components/title-bar/custom-title-bar";
-import { TerminalHost } from "@/features/terminal/components/terminal-host";
-import BottomPane from "./bottom-pane/bottom-pane";
-import Footer from "./footer/footer";
+import { isSidebarViewAvailable } from "@/features/layout/utils/sidebar-pane-utils";
+import { getCollapsedActivityBarWidth } from "@/features/layout/utils/activity-bar-layout";
+import TitleBarWithSettings from "../../window/components/title-bar/title-bar";
 import { ResizablePane } from "./resizable-pane";
-import { MainSidebar, SidebarActivityRail } from "./sidebar/main-sidebar";
+import { ActivityBar } from "./sidebar/activity-bar";
+import { SidebarPane } from "./sidebar/sidebar-pane";
+import { useResponsiveWorkbenchLayout } from "../hooks/use-responsive-workbench-layout";
 
-const EMPTY_PROJECT_FILES: FileEntry[] = [];
+const CommandPalette = lazy(() => import("@/features/command-palette/components/command-palette"));
+const ConnectionDialog = lazy(() =>
+  import("@/features/database/components/connection/connection-dialog").then((module) => ({
+    default: module.ConnectionDialog,
+  })),
+);
+const LinuxFolderPickerDialog = lazy(
+  () => import("@/features/file-system/components/linux-folder-picker-dialog"),
+);
+const QuickOpen = lazy(() => import("@/features/quick-open/components/quick-open"));
+const WindowCloseGuard = lazy(() =>
+  import("@/features/window/components/window-close-guard").then((module) => ({
+    default: module.WindowCloseGuard,
+  })),
+);
+const ExtensionDialogs = lazy(() =>
+  import("@/extensions/ui/components/extension-dialog").then((module) => ({
+    default: module.ExtensionDialogs,
+  })),
+);
+const TerminalHost = lazy(() =>
+  import("@/features/terminal/components/terminal-host").then((module) => ({
+    default: module.TerminalHost,
+  })),
+);
+const BottomPane = lazy(() => import("./bottom-pane/bottom-pane"));
 
 export function MainLayout() {
+  const [deferredSurfacesReady, setDeferredSurfacesReady] = useState(false);
+
   useChatInitialization();
   usePaneKeyboard();
   useCollaborationPresence();
 
-  const {
-    isSidebarVisible,
-    isRightSidebarVisible,
-    activeRightSidebarView,
-    isDatabaseConnectionVisible,
-    setIsDatabaseConnectionVisible,
-  } = useUIState();
-  const { settings } = useSettingsStore();
+  const isSidebarVisible = useUIState((state) => state.isSidebarVisible);
+  const isBottomPaneVisible = useUIState((state) => state.isBottomPaneVisible);
+  const activityRailExpanded = useSettingsStore((state) => state.settings.activityRailExpanded);
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
+  const responsiveLayout = useResponsiveWorkbenchLayout(activityRailExpanded);
+  const renderedActivityRailExpanded = responsiveLayout.activityBarExpanded;
+  const isWorkspaceManagementActive = useBufferStore(
+    (state) => getBufferById(state.buffers, state.activeBufferId)?.type === "workspaces",
+  );
+  const renderedSidebarVisible =
+    isSidebarVisible && !responsiveLayout.narrow && !isWorkspaceManagementActive;
+  const activityRailWidth = useSettingsStore((state) => state.settings.activityRailWidth);
+  const uiFontSize = useSettingsStore((state) => state.settings.uiFontSize);
+  const sidebarWidth = useSettingsStore((state) => state.settings.sidebarWidth);
+  const rightSidebarWidth = useSettingsStore((state) => state.settings.rightSidebarWidth);
+  const showOutline = useSettingsStore((state) => state.settings.showOutline);
+  const isRightSidebarVisible = useUIState((state) => state.isRightSidebarVisible);
+  const activeRightSidebarView = useUIState((state) => state.activeRightSidebarView);
+  const setIsRightSidebarVisible = useUIState((state) => state.setIsRightSidebarVisible);
+  const hasActiveEditor = useBufferStore((state) => {
+    const activeBuffer = getBufferById(state.buffers, state.activeBufferId);
+    return activeBuffer?.type === "editor";
+  });
+  const renderedRightSidebarVisible =
+    isRightSidebarVisible &&
+    !responsiveLayout.narrow &&
+    isSidebarViewAvailable(activeRightSidebarView, hasActiveEditor && showOutline);
+  const isDatabaseConnectionVisible = useUIState((state) => state.isDatabaseConnectionVisible);
+  const setIsDatabaseConnectionVisible = useUIState(
+    (state) => state.setIsDatabaseConnectionVisible,
+  );
+  const renderedActivityRailWidth = renderedActivityRailExpanded
+    ? activityRailWidth
+    : getCollapsedActivityBarWidth(uiFontSize);
+  const leftPaneReservedWidth =
+    renderedActivityRailWidth + (renderedRightSidebarVisible ? rightSidebarWidth : 0);
+  const rightPaneReservedWidth =
+    renderedActivityRailWidth + (renderedSidebarVisible ? sidebarWidth : 0);
+  const vimRelativeLineNumbers = useSettingsStore((state) => state.settings.vimRelativeLineNumbers);
   const relativeLineNumbers = useVimStore.use.relativeLineNumbers();
   const { setRelativeLineNumbers } = useVimStore.use.actions();
-  const buffers = useBufferStore.use.buffers();
-  const activeBufferId = useBufferStore.use.activeBufferId();
   const handleOpenFolderByPath = useFileSystemStore.use.handleOpenFolderByPath?.();
   const handleFileOpen = useFileSystemStore.use.handleFileOpen?.();
   const rootFolderPath = useFileSystemStore.use.rootFolderPath?.();
-  const allProjectFiles = useFileSystemStore(
-    (state) => state.projectFilesCache?.files ?? EMPTY_PROJECT_FILES,
-  );
   const switchToProject = useFileSystemStore.use.switchToProject?.();
   const setIsSwitchingProject = useFileSystemStore.use.setIsSwitchingProject?.();
   const refreshWorkspaceGitStatus = useGitStore((state) => state.actions.refreshWorkspaceGitStatus);
   const setWorkspaceGitStatus = useGitStore((state) => state.actions.setWorkspaceGitStatus);
   const onboardingOpen = useOnboardingStore((state) => state.isOpen);
   const onboardingContext = useOnboardingStore((state) => state.context);
-  const consumeOnboardingOpenRequest = useOnboardingStore((state) => state.consumeOpenRequest);
+  const consumeOnboardingOpenRequest = useOnboardingStore(
+    (state) => state.actions.consumeOpenRequest,
+  );
   const openOnboardingBuffer = useBufferStore.use.actions().openOnboardingBuffer;
-
   const hasRestoredWorkspace = useRef(false);
   const { isDraggingOver } = useFileSystemFolderDrop(async (paths) => {
     if (!paths || paths.length === 0) return;
-
-    if (isRightSidebarVisible && activeRightSidebarView === "databases" && rootFolderPath) {
-      const databasePaths = getDroppedDatabaseFilePaths(paths);
-      if (databasePaths.length > 0) {
-        window.dispatchEvent(
-          new CustomEvent(DATABASE_SIDEBAR_FILES_DROPPED_EVENT, {
-            detail: { paths: databasePaths },
-          }),
-        );
-        return;
-      }
-    }
 
     const result = await openDroppedWorkspacePaths(paths, {
       getPathInfo: getSymlinkInfo,
@@ -112,13 +142,35 @@ export function MainLayout() {
     if (result.openedFolderCount + result.openedFileCount === 0) {
       toast.warning("No supported dropped files or folders could be opened.");
     }
-  });
+  }, !rootFolderPath);
 
-  const sidebarPosition = settings.sidebarPosition;
   const terminalWidthMode = useTerminalStore((state) => state.widthMode);
-  const showInlineAiChat = settings.isAIChatVisible;
-  const showLeftSidebarTabs = settings.sidebarTabsPosition === "left";
-  const activeBuffer = buffers.find((buffer) => buffer.id === activeBufferId) ?? null;
+  const isEditorBottomPaneVisible =
+    terminalWidthMode === "editor" && deferredSurfacesReady && isBottomPaneVisible;
+  const roundMainContentLeftEdge = !renderedSidebarVisible;
+  const roundMainContentRightEdge = !renderedRightSidebarVisible;
+  useEffect(() => {
+    if (activeRightSidebarView !== "outline") return;
+
+    const shouldShowOutline = hasActiveEditor && showOutline;
+    if (isRightSidebarVisible !== shouldShowOutline) {
+      setIsRightSidebarVisible(shouldShowOutline);
+    }
+  }, [
+    activeRightSidebarView,
+    hasActiveEditor,
+    isRightSidebarVisible,
+    setIsRightSidebarVisible,
+    showOutline,
+  ]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      window.setTimeout(() => setDeferredSurfacesReady(true), 0);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   useEffect(() => {
     void initializeDebuggerEventBridge();
@@ -132,31 +184,15 @@ export function MainLayout() {
   }, [consumeOnboardingOpenRequest, onboardingContext, onboardingOpen, openOnboardingBuffer]);
 
   useEffect(() => {
-    if (settings.vimRelativeLineNumbers !== relativeLineNumbers) {
-      setRelativeLineNumbers(settings.vimRelativeLineNumbers, {
+    if (vimRelativeLineNumbers !== relativeLineNumbers) {
+      setRelativeLineNumbers(vimRelativeLineNumbers, {
         persist: false,
       });
     }
-  }, [settings.vimRelativeLineNumbers, relativeLineNumbers, setRelativeLineNumbers]);
+  }, [vimRelativeLineNumbers, relativeLineNumbers, setRelativeLineNumbers]);
 
   // Initialize event listeners
   useMenuEventsWrapper();
-
-  // Initialize vim mode handling
-  useVimKeyboard({
-    onSave: () => {
-      // Dispatch the same save event that existing keyboard shortcuts use
-      window.dispatchEvent(new CustomEvent("menu-save"));
-    },
-    onGoToLine: (line: number) => {
-      // Dispatch go to line event
-      window.dispatchEvent(
-        new CustomEvent("menu-go-to-line", {
-          detail: { line },
-        }),
-      );
-    },
-  });
 
   // Restore workspace on app startup
   useEffect(() => {
@@ -164,10 +200,10 @@ export function MainLayout() {
 
     const resolveRestorableActiveTab = async () => {
       while (true) {
-        const activeTab = useWorkspaceTabsStore.getState().getActiveProjectTab();
+        const activeTab = useWorkspaceTabsStore.getState().actions.getActiveProjectTab();
         if (!activeTab) return null;
 
-        if (activeTab.path.startsWith("remote://")) {
+        if (activeTab.path.startsWith("remote://") || isWslPath(activeTab.path)) {
           return activeTab;
         }
 
@@ -180,7 +216,7 @@ export function MainLayout() {
           console.warn("Persisted workspace no longer exists:", activeTab.path, error);
         }
 
-        useWorkspaceTabsStore.getState().removeProjectTab(activeTab.id);
+        useWorkspaceTabsStore.getState().actions.removeProjectTab(activeTab.id);
         toast.warning(`Removed missing project "${activeTab.name}"`);
       }
     };
@@ -207,14 +243,18 @@ export function MainLayout() {
           frontendTrace("info", "workspace-open", "startupRestore:end", {
             tabPath: activeTab.path,
           });
+          recordStartupMilestone("workspace:ready");
         } catch (error) {
           console.error("Failed to restore workspace:", error);
           frontendTrace("error", "workspace-open", "startupRestore:error", {
             tabPath: activeTab.path,
           });
+          recordStartupMilestone("workspace:error");
           // Make sure to clear the flag even if restoration fails
           setIsSwitchingProject(false);
         }
+      } else {
+        recordStartupMilestone("workspace:ready");
       }
     };
 
@@ -229,100 +269,87 @@ export function MainLayout() {
 
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    const refreshGitState = (event?: Event) => {
-      const filePath =
-        event instanceof CustomEvent && typeof event.detail?.filePath === "string"
-          ? event.detail.filePath
-          : null;
-
-      if (filePath && !filePath.startsWith(rootFolderPath)) {
-        return;
-      }
+    const unsubscribe = subscribeToGitChanges((change) => {
+      if (!isGitChangeRelevant(change, rootFolderPath)) return;
 
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
         void refreshWorkspaceGitStatus(rootFolderPath);
       }, 300);
-    };
-
-    window.addEventListener("git-status-updated", refreshGitState);
-    window.addEventListener("git-status-changed", refreshGitState);
+    });
 
     return () => {
-      window.removeEventListener("git-status-updated", refreshGitState);
-      window.removeEventListener("git-status-changed", refreshGitState);
+      unsubscribe();
       if (timeoutId) clearTimeout(timeoutId);
     };
   }, [rootFolderPath, refreshWorkspaceGitStatus, setWorkspaceGitStatus]);
 
   return (
-    <div className="athas-layout-shell relative flex size-full flex-col overflow-hidden bg-secondary-bg">
+    <div className="athas-layout-shell relative flex size-full flex-col overflow-hidden bg-surface">
       {/* Drag-and-drop overlay */}
       {isDraggingOver && !getInternalTabDragData() && (
-        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-primary-bg/90 backdrop-blur-sm">
-          <div className="rounded-lg border-2 border-accent border-dashed bg-secondary-bg px-8 py-6">
-            <p className="ui-text-base font-semibold text-text">
+        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm">
+          <div className="rounded-xl border-2 border-primary border-dashed bg-surface px-8 py-6">
+            <p className="ui-text-base font-semibold text-foreground">
               Drop folder to open project, or file to open buffer
             </p>
           </div>
         </div>
       )}
 
-      <CustomTitleBarWithSettings />
+      <TitleBarWithSettings
+        activityBarExpanded={renderedActivityRailExpanded}
+        onActivityBarExpandedChange={(expanded) => {
+          if (responsiveLayout.compact) {
+            responsiveLayout.setActivityBarExpanded(expanded);
+          } else {
+            void updateSetting("activityRailExpanded", expanded);
+          }
+        }}
+      />
 
-      <div className="athas-workbench-glass relative z-10 flex flex-1 flex-col overflow-hidden">
-        <div className="flex flex-1 flex-row overflow-hidden" style={{ minHeight: 0 }}>
-          {sidebarPosition === "left" ? (
-            <>
-              {showLeftSidebarTabs ? <SidebarActivityRail /> : null}
-              <ResizablePane
-                position="left"
-                widthKey="sidebarWidth"
-                hidden={!isSidebarVisible}
-                edgePadding={!showLeftSidebarTabs}
-              >
-                <MainSidebar showActivityRail={!showLeftSidebarTabs} paneLevel="primary" />
-              </ResizablePane>
-            </>
-          ) : null}
+      <div className="athas-workbench-glass relative z-10 flex flex-1 flex-col overflow-hidden pb-workbench">
+        <div className="flex flex-1 flex-row overflow-hidden pr-workbench" style={{ minHeight: 0 }}>
+          <ActivityBar expanded={renderedActivityRailExpanded} />
+          <ResizablePane
+            position="left"
+            widthKey="sidebarWidth"
+            hidden={!renderedSidebarVisible}
+            reservedWidth={leftPaneReservedWidth}
+          >
+            <SidebarPane paneLevel="primary" />
+          </ResizablePane>
 
-          {/* Main content area with split view */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 px-2">
-            <div className="athas-glass-island relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border/70 bg-primary-bg">
-              <SplitViewRoot />
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div
+              className={cn(
+                "athas-glass-island relative min-h-0 flex-1 overflow-hidden border-border/70 border-y border-r bg-background",
+                roundMainContentLeftEdge &&
+                  (isEditorBottomPaneVisible ? "rounded-tl-xl border-l" : "rounded-l-xl border-l"),
+                roundMainContentRightEdge &&
+                  (isEditorBottomPaneVisible ? "rounded-tr-xl" : "rounded-r-xl"),
+              )}
+            >
+              <CachedWorkspaceSplitViews />
             </div>
-            {terminalWidthMode === "editor" && <BottomPane />}
+            {terminalWidthMode === "editor" && deferredSurfacesReady && (
+              <Suspense fallback={null}>
+                <BottomPane
+                  embedded
+                  roundLeftEdge={roundMainContentLeftEdge}
+                  roundRightEdge={roundMainContentRightEdge}
+                />
+              </Suspense>
+            )}
           </div>
 
-          {/* Right side panes are ordered from inner to edge. */}
-          {showInlineAiChat ? (
-            <ResizablePane position="right" widthKey="aiChatWidth">
-              <AIChat
-                mode="chat"
-                activeBuffer={activeBuffer}
-                buffers={buffers}
-                allProjectFiles={allProjectFiles}
-              />
-            </ResizablePane>
-          ) : null}
-
-          {sidebarPosition === "right" ? (
-            <>
-              {showLeftSidebarTabs ? <SidebarActivityRail /> : null}
-              <ResizablePane
-                position="right"
-                widthKey="sidebarWidth"
-                hidden={!isSidebarVisible}
-                edgePadding={!showLeftSidebarTabs}
-              >
-                <MainSidebar showActivityRail={!showLeftSidebarTabs} paneLevel="primary" />
-              </ResizablePane>
-            </>
-          ) : null}
-
-          <ResizablePane position="right" widthKey="sidebarWidth" hidden={!isRightSidebarVisible}>
-            <MainSidebar
-              showActivityRail={false}
+          <ResizablePane
+            position="right"
+            widthKey="rightSidebarWidth"
+            hidden={!renderedRightSidebarVisible}
+            reservedWidth={rightPaneReservedWidth}
+          >
+            <SidebarPane
               paneLevel="edge"
               activeView={activeRightSidebarView}
               isGitActive={false}
@@ -331,33 +358,30 @@ export function MainLayout() {
           </ResizablePane>
         </div>
 
-        {terminalWidthMode === "full" && (
-          <div className="px-2">
-            <BottomPane />
+        {terminalWidthMode === "full" && deferredSurfacesReady && (
+          <div className="px-workbench">
+            <Suspense fallback={null}>
+              <BottomPane />
+            </Suspense>
           </div>
         )}
       </div>
 
-      <Footer />
-
       {/* Global modals and overlays */}
-      <QuickOpen />
-      <VimCommandBar />
-      <VimSearchBar />
-      <CommandPalette />
-      <ExtensionGenerationCommand />
-      <AgentLauncher />
-      <ProjectNameMenu />
-
-      {/* Dialog components */}
-      <ConnectionDialog
-        isOpen={isDatabaseConnectionVisible}
-        onClose={() => setIsDatabaseConnectionVisible(false)}
-      />
-      <LinuxFolderPickerDialog />
-      <WindowCloseGuard />
-      <ExtensionDialogs />
-      <TerminalHost />
+      {deferredSurfacesReady ? (
+        <Suspense fallback={null}>
+          <QuickOpen />
+          <CommandPalette />
+          <ConnectionDialog
+            isOpen={isDatabaseConnectionVisible}
+            onClose={() => setIsDatabaseConnectionVisible(false)}
+          />
+          <LinuxFolderPickerDialog />
+          <WindowCloseGuard />
+          <ExtensionDialogs />
+          <TerminalHost />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

@@ -24,22 +24,22 @@
 - Never change `AGENTS.md` unless the user explicitly asks.
 - Do not prefix unused variables with an underscore; delete them instead.
 - Do not use emojis in commit messages, logs, or documentation.
+- When adding a broadly useful user-facing action, add or update its command-palette entry; do not mirror low-level or context-only controls.
 - Validate the relevant checks after making changes instead of stopping at code edits.
 
 ## Branches And Releases
 
-- Default to working directly on `master`.
-- If a branch is needed, branch from `master`.
+- Default to working directly on `main`.
+- If a branch is needed, branch from `main`.
 - Keep branch names short and descriptive.
-- Keep releases and release tags on `master`.
+- Keep releases and release tags on `main`.
 
 ## Commits
 
 - Keep commits focused. One logical change per commit.
 - Commit titles should be short, direct, and describe the outcome of the change.
 - Start commit messages with an uppercase letter.
-- Add a short commit body when the change benefits from extra context.
-- Prefer a short wrapped commit body in plain language.
+- Every commit must include a short wrapped body in plain language.
 - Wrap commit body lines before the commitlint line-length limit instead of leaving warnings behind.
 - Commit bodies should explain what changed and why without headings, boilerplate, or filler.
 - When useful, end the commit message with a separate `Fixes ...` or `Closes ...` line.
@@ -53,22 +53,57 @@
 - Follow existing code style and keep changes aligned with nearby code.
 - Use kebab-case for file and folder names by default.
 - React component files, hook files, and utility files should use descriptive kebab-case names such as `settings-dialog.tsx`, `use-keymaps.ts`, or `theme-loader.ts`.
+- Import React hooks directly and call them by name, such as `useEffect(...)`, instead of qualifying hooks through the React namespace.
 - Avoid new vague filenames such as `helpers.ts`, `misc.ts`, or `utils.ts` when the file can be named after what it actually does.
 - Avoid unnecessary comments in UI components; prefer self-explanatory code.
 - Avoid unnecessary `cn(...)` calls; use it only for conditional or merged class names.
 - Use Tailwind utilities for normal component styling.
+- Keep app-wide CSS in `src/styles/` for base reset, fonts, scrollbars, theme tokens, shared syntax tokens, and platform/window overrides only.
+- Keep feature CSS next to the feature and import it from the owning component entrypoint; use it only for generated markup, third-party DOM, editor layers, or selectors Tailwind cannot express clearly.
+- Prefer `src/ui` primitives and CVA variants for reusable UI styling instead of feature-specific wrapper classes or new global CSS selectors.
 - Do not add exported Tailwind class string constants such as `*_CLASS_NAME`; use CVA variants or UI primitives for reusable styling.
 - Use CSS variables for theme colors; do not hardcode hex values in UI code.
 - Keep font size, font family, theme colors, keymaps, and shortcuts in their existing system-level homes instead of redefining them ad hoc in feature components.
-- Never use hardcoded font-size utilities such as `text-[11px]` in UI code; use the shared UI font-size classes such as `ui-text-xs`, `ui-text-sm`, and related system primitives instead.
+- Never use hardcoded font-size utilities such as `text-[11px]` in UI code; use the shared UI font-size classes such as `ui-text-sm`, `ui-text-base`, and related system primitives instead.
 - Interactive elements must remain accessible, including accessible names for icon-only controls and usable keyboard/focus behavior.
+
+## UI Design System
+
+- Treat `src/ui` primitives and `src/styles/theme.css` as the source of truth for reusable visual behavior.
+- Do not create `src/ui/tests` or add tests for UI primitives that only assert rendering, class names, data slots, variants, or upstream Base UI/Shadcn behavior. Test product behavior in the owning feature instead unless the user explicitly requests a primitive-level regression test.
+- Before creating UI markup or a new component, search `src/ui` and at least two comparable feature surfaces for an existing primitive or composition.
+- Feature components may control placement, responsive layout, and domain content. They must not redefine a shared primitive's height, radius, border, background, typography, or interaction states with local utility classes.
+- When a primitive is missing a needed visual behavior, add a named semantic prop or CVA variant to the primitive and migrate every current consumer that represents the same pattern.
+- Do not create pass-through wrappers, exported Tailwind class constants, or feature-local copies of shared controls. Keep a wrapper only when it owns behavior or a stable composition reused by multiple consumers.
+- If the same visual utility sequence appears in two feature consumers, move that contract into a shared primitive before finishing the change.
+- New app-wide visual concepts require semantic variables in `src/styles/theme.css`, derived from the existing theme colors when possible. Do not add feature-local color mixes or hardcoded light/dark values.
+- Prefer spacing and surface contrast over borders. Borders should communicate a real boundary and should be owned by the primitive rather than added independently by consumers.
+- Keep `className` escape hatches focused on layout and placement. Repeated visual overrides are evidence that the primitive API needs a semantic variant.
+- There is one menu family: the Base UI `DropdownMenu*` primitives. Build a menu as `DropdownMenu` + `DropdownMenuTrigger` + `DropdownMenuContent` and let the primitive own open state — do not hand-roll `isOpen`/`anchorRef`/`aria-expanded`. A menu positioned at a coordinate takes `anchor={usePointAnchor(point)}` with `positionMethod="fixed"`, or `ContextMenuPopup` when it is a plain right-click menu. Items built as data render through `DropdownMenuItems`.
+- Anchored overlays (`DropdownMenuContent`, `DropdownMenuSubContent`, `PopoverContent`, `ComboboxContent`) take their width from the `size` preset in `src/ui/overlay-size.ts` — `compact`, `default`, `wide`, `panel`, `trigger`, `auto`. Never set `w-*`, `min-w-*`, or `max-w-*` on them through `className`. Adding a value to that scale is a design-system decision, not a per-surface one.
+- A menu's scroll cap is owned by its `viewport` variant, never by `max-h-*` in `className`: `default` grows to the available height, `list` caps a plain long list, `searchable` caps a list with a search header.
+- A menu that contains `DropdownMenuSearch` must use `viewport="searchable"` and wrap its rows in `DropdownMenuViewport`, and should own its query through `useMenuSearch` (`src/ui/menu-search.ts`) so clearing-on-close and deferred filtering stay identical everywhere. Render "no results" with `DropdownMenuEmpty`, not a disabled item holding a string. The exception is a query that doubles as an input value rather than a pure filter — `git-branch-manager` types a new branch name into its search box — where local state is correct.
+- `Select`'s popup takes its minimum width from the same scale, through `menuSize`. Never pass a pixel number for an overlay dimension.
+- Reach for the prop before the class: `ScrollArea` has `fill` (`flex` / `block`) instead of `flex-1` / `h-full`, `Empty` has `variant` (`region` / `inline`), `Textarea` has `font` and `resize`, `CommandInput` has `variant` (`inline` / `field` / `surface`). Adding a repeated utility string to a primitive consumer is a sign the prop is missing.
+- `bun check:design` reports design-system drift. It is advisory and never fails the build, but a change should not add findings to it.
+- When touching a shared primitive, audit all import sites and remove confirmed dead or redundant code in that primitive's module.
+- Before finishing UI work, verify light and dark themes plus hover, active, focus-visible, disabled, overflow, and resized states in the real Tauri app when practical.
+
+## Icons
+
+- Three registries, three sets of rules. `src/ui/icons.tsx` owns UI icons: one outline drawing per product concept, tinted with `currentColor`. `src/ui/brand-marks.tsx` owns third-party marks, which keep their own artwork and stay out of the stroke system. Icon themes under `src/extensions/icon-themes/` own file-type art, which the user can replace.
+- `src/ui/icons.tsx` is the only module allowed to import `nucleo-ui-outline-18`. Add a new icon by exporting it there, never by reaching into the library from a feature.
+- One concept, one name, one drawing. Two exports must never wrap the same Nucleo drawing, and an export's name must describe what it draws. Import icons under their own name; `import { XIcon as Close }` splits one concept back into two vocabularies.
+- Icons carry no stroke decisions at the call site. Stroke lives in `src/styles/icons.css`, pinned to real pixels with `vector-effect: non-scaling-stroke` so it does not drift when the UI font size scales the 18px drawing grid. Choose weight with the `optical` prop only: `sm` (1.25px) up to 20px, `md` (1.5px) to 28px, `lg` (2px) above that. A numeric `size` picks the tier on its own.
+- Pin a concept in `src/ui/icon-concepts.ts` when it shows up in more than one feature and more than one glyph would be defensible. Two concepts must never resolve to the same icon.
+- Use line chevrons for disclosure, expansion, submenu, and directional navigation controls. Reserve triangular play icons for actions that actually start or resume something.
+- Prefer sizing icons by inheritance (the default `1em`) so they track the UI font size. Reach for an explicit `size` only when the icon is not sitting next to text.
+- `src/features/settings/tests/ui-icon-contract.test.ts` enforces the structural half of these rules. Run it after touching the icon layer.
 
 ## Zustand
 
-- Always use the `createSelectors` wrapper for stores.
-- Group store actions inside an `actions` object.
-- Use `getState()` to access other stores inside actions instead of passing dependent state through parameters.
-- Use `immer` when store updates are deeply nested.
+- New React Zustand stores should use the shared `createSelectors` helper.
+- Keep store actions grouped under an `actions` object.
 
 ## Code Organization
 

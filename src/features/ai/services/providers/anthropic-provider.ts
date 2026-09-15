@@ -30,7 +30,7 @@ export class AnthropicProvider extends AIProvider {
         .map((model) => ({
           id: model.id,
           name: model.display_name || model.id,
-          maxTokens: model.max_tokens,
+          maxOutputTokens: model.max_tokens,
         }));
     } catch (error) {
       console.error(`${this.id} model fetch error:`, error);
@@ -64,7 +64,16 @@ export class AnthropicProvider extends AIProvider {
       ...(systemMessage ? { system: systemMessage.content } : {}),
       messages: nonSystemMessages.map((m) => ({
         role: m.role,
-        content: m.content,
+        content:
+          m.role === "user" && m.images?.length
+            ? [
+                ...m.images.map((image) => ({
+                  type: "image",
+                  source: { type: "base64", media_type: image.mediaType, data: image.data },
+                })),
+                ...(m.content ? [{ type: "text", text: m.content }] : []),
+              ]
+            : m.content,
       })),
     };
   }
@@ -81,7 +90,7 @@ export class AnthropicProvider extends AIProvider {
           "anthropic-dangerous-direct-browser-access": "true",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           max_tokens: 1,
           messages: [{ role: "user", content: "hi" }],
         }),

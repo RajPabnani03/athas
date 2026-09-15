@@ -76,7 +76,6 @@ export const keybindingPresetDefinitions: Record<KeybindingPreset, KeybindingPre
     description: "Match common VS Code shortcuts.",
     overrides: [
       { key: "cmd+n", command: "file.new", source: "preset" },
-      { key: "ctrl+g", command: "editor.goToLine", source: "preset" },
       { key: "cmd+alt+f", command: "workbench.showFindReplace", source: "preset" },
       { key: "cmd+shift+m", command: "workbench.toggleDiagnostics", source: "preset" },
     ],
@@ -84,10 +83,14 @@ export const keybindingPresetDefinitions: Record<KeybindingPreset, KeybindingPre
   jetbrains: createPresetDefinition({
     label: "JetBrains",
     description: "Match common JetBrains IDE shortcuts.",
+    disabledCommands: [
+      "workbench.newWindow",
+      "workbench.toggleActivitySidebar",
+      "workbench.toggleSidebar",
+    ],
     overrides: [
       { key: "cmd+shift+a", command: "workbench.commandPalette", source: "preset" },
       { key: "cmd+shift+n", command: "file.quickOpen", source: "preset" },
-      { key: "cmd+l", command: "editor.goToLine", source: "preset" },
       { key: "cmd+1", command: "workbench.showFileExplorer", source: "preset" },
       { key: "cmd+9", command: "workbench.showSourceControl", source: "preset" },
       { key: "cmd+b", command: "editor.goToDefinition", source: "preset" },
@@ -102,7 +105,6 @@ export const keybindingPresetDefinitions: Record<KeybindingPreset, KeybindingPre
       { key: "cmd+shift+d", command: "editor.duplicateLine", source: "preset" },
       { key: "cmd+k cmd+b", command: "workbench.toggleSidebar", source: "preset" },
       { key: "cmd+shift+p", command: "workbench.commandPalette", source: "preset" },
-      { key: "ctrl+g", command: "editor.goToLine", source: "preset" },
       { key: "cmd+shift+f", command: "workbench.showGlobalSearch", source: "preset" },
     ],
   }),
@@ -116,7 +118,6 @@ export const keybindingPresetDefinitions: Record<KeybindingPreset, KeybindingPre
       { key: "cmd+5", command: "workbench.toggleDiagnostics", source: "preset" },
       { key: "cmd+0", command: "workbench.toggleSidebar", source: "preset" },
       { key: "cmd+shift+f", command: "workbench.showGlobalSearch", source: "preset" },
-      { key: "cmd+l", command: "editor.goToLine", source: "preset" },
     ],
   }),
   atom: createPresetDefinition({
@@ -129,7 +130,6 @@ export const keybindingPresetDefinitions: Record<KeybindingPreset, KeybindingPre
       { key: "cmd+alt+f", command: "workbench.showFindReplace", source: "preset" },
       { key: "ctrl+`", command: "workbench.toggleTerminalAlt", source: "preset" },
       { key: "cmd+shift+d", command: "editor.duplicateLine", source: "preset" },
-      { key: "ctrl+g", command: "editor.goToLine", source: "preset" },
     ],
   }),
   emacs: createPresetDefinition({
@@ -145,12 +145,12 @@ export const keybindingPresetDefinitions: Record<KeybindingPreset, KeybindingPre
       { key: "ctrl+w", command: "editor.cut", source: "preset" },
       { key: "ctrl+y", command: "editor.paste", source: "preset" },
       { key: "ctrl+s", command: "workbench.showFind", source: "preset" },
-      { key: "alt+g g", command: "editor.goToLine", source: "preset" },
     ],
   }),
   zed: createPresetDefinition({
     label: "Zed",
     description: "Match common Zed shortcuts.",
+    disabledCommands: ["workbench.toggleActivitySidebar"],
     overrides: [
       { key: "cmd+shift+p", command: "workbench.commandPalette", source: "preset" },
       { key: "cmd+p", command: "file.quickOpen", source: "preset" },

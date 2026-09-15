@@ -1,61 +1,28 @@
-import { cva } from "class-variance-authority";
+import { Switch as SwitchPrimitive } from "@base-ui/react/switch";
 import { cn } from "@/utils/cn";
 
-interface SwitchProps {
+interface SwitchProps extends Omit<SwitchPrimitive.Root.Props, "onCheckedChange"> {
   checked: boolean;
   onChange: (checked: boolean) => void;
-  disabled?: boolean;
-  size?: "sm" | "md";
-  className?: string;
 }
 
-const switchTrackVariants = cva(
-  [
-    "peer rounded border bg-secondary-bg transition-[transform,background-color,border-color,box-shadow] duration-[var(--app-duration-normal)] ease-[var(--app-ease-smooth)] peer-active:scale-[var(--app-press-scale)]",
-    "after:absolute after:rounded after:bg-text after:shadow-[var(--shadow-card)] after:transition-[transform,background-color,box-shadow] after:duration-[var(--app-duration-normal)] after:ease-[var(--app-ease-smooth)] after:content-['']",
-    "border-border peer-checked:border-accent peer-checked:bg-accent peer-checked:after:bg-primary-bg",
-    "peer-focus:ring-1 peer-focus:ring-border-strong/35",
-  ],
-  {
-    variants: {
-      size: {
-        sm: "h-3.5 w-7 after:top-[2px] after:left-[2px] after:h-2.5 after:w-2.5 peer-checked:after:translate-x-3.5",
-        md: "h-5 w-9 after:top-[2px] after:left-[2px] after:h-4 after:w-4 peer-checked:after:translate-x-4",
-      },
-    },
-    defaultVariants: {
-      size: "md",
-    },
-  },
-);
+const switchClassName =
+  "group/switch relative inline-flex h-3.5 w-7 shrink-0 items-center rounded-full border border-border bg-surface p-px outline-none transition-[background-color,border-color,box-shadow] duration-normal ease-smooth data-checked:border-primary data-checked:bg-primary focus-visible:border-border-strong focus-visible:ring-1 focus-visible:ring-border-strong/35 data-disabled:cursor-not-allowed data-disabled:opacity-50";
 
-export default function Switch({
-  checked,
-  onChange,
-  disabled = false,
-  size = "md",
-  className,
-}: SwitchProps) {
+const switchThumbClassName =
+  "pointer-events-none block size-2.5 rounded-full bg-foreground shadow-(--shadow-card) transition-[transform,background-color,box-shadow] duration-normal ease-smooth group-data-checked/switch:translate-x-3.5 group-data-checked/switch:bg-background";
+
+export default function Switch({ checked, onChange, className, ...props }: SwitchProps) {
   return (
-    <label
+    <SwitchPrimitive.Root
       data-setting-interactive-root="true"
       data-setting-primary-control="true"
-      className={cn(
-        "relative inline-flex cursor-pointer items-center",
-        disabled && "cursor-not-allowed opacity-50",
-        className,
-      )}
+      checked={checked}
+      onCheckedChange={onChange}
+      className={cn(switchClassName, className)}
+      {...props}
     >
-      <input
-        type="checkbox"
-        role="switch"
-        aria-checked={checked}
-        className="peer sr-only"
-        checked={checked}
-        onChange={(e) => !disabled && onChange(e.target.checked)}
-        disabled={disabled}
-      />
-      <div className={switchTrackVariants({ size })} />
-    </label>
+      <SwitchPrimitive.Thumb className={switchThumbClassName} />
+    </SwitchPrimitive.Root>
   );
 }

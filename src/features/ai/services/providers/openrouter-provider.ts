@@ -1,3 +1,4 @@
+import { toOpenAIMessage } from "@/features/ai/lib/image-attachments";
 import {
   AIProvider,
   type ProviderHeaders,
@@ -22,6 +23,7 @@ export class OpenRouterProvider extends AIProvider {
         data?: Array<{
           id: string;
           name?: string;
+          context_length?: number;
           top_provider?: { max_completion_tokens?: number };
         }>;
       };
@@ -29,7 +31,8 @@ export class OpenRouterProvider extends AIProvider {
       return (data.data || []).map((model) => ({
         id: model.id,
         name: model.name || model.id,
-        maxTokens: model.top_provider?.max_completion_tokens,
+        contextWindow: model.context_length,
+        maxOutputTokens: model.top_provider?.max_completion_tokens,
       }));
     } catch (error) {
       console.error(`${this.id} model fetch error:`, error);
@@ -40,8 +43,9 @@ export class OpenRouterProvider extends AIProvider {
   buildHeaders(apiKey?: string): ProviderHeaders {
     const headers: ProviderHeaders = {
       "Content-Type": "application/json",
+      Accept: "text/event-stream, application/json",
       "HTTP-Referer": "https://localhost",
-      "X-Title": "Code Editor",
+      "X-Title": "Athas",
     };
 
     if (apiKey) {
@@ -54,8 +58,8 @@ export class OpenRouterProvider extends AIProvider {
   buildPayload(request: StreamRequest): any {
     return {
       model: request.modelId,
-      messages: request.messages,
-      max_tokens: request.maxTokens,
+      messages: request.messages.map(toOpenAIMessage),
+      max_completion_tokens: request.maxTokens,
       temperature: request.temperature,
       stream: true,
     };

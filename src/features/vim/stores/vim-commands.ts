@@ -1,4 +1,5 @@
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { useEditorAppStore } from "@/features/editor/stores/editor-app.store";
 import { useEditorStateStore } from "@/features/editor/stores/state.store";
 import { useEditorViewStore } from "@/features/editor/stores/view.store";
 import { useUIState } from "@/features/window/stores/ui-state.store";
@@ -17,8 +18,7 @@ const writeCommand: VimCommand = {
   aliases: ["w"],
   description: "Save the current file",
   execute: async () => {
-    // Trigger save event that existing save handler will catch
-    window.dispatchEvent(new CustomEvent("vim-save"));
+    await useEditorAppStore.getState().actions.handleSave();
   },
 };
 
@@ -28,16 +28,13 @@ const writeQuitCommand: VimCommand = {
   aliases: ["x"],
   description: "Save and close the current file",
   execute: async () => {
-    // Save first, then close
-    window.dispatchEvent(new CustomEvent("vim-save"));
+    const bufferId = useBufferStore.getState().activeBufferId;
+    if (!bufferId) return;
 
-    // Wait a moment for save to complete, then close buffer
-    setTimeout(() => {
-      const { activeBufferId, actions } = useBufferStore.getState();
-      if (activeBufferId) {
-        actions.closeBuffer(activeBufferId);
-      }
-    }, 100);
+    const saved = await useEditorAppStore.getState().actions.handleSave();
+    if (saved) {
+      useBufferStore.getState().actions.closeBuffer(bufferId);
+    }
   },
 };
 
@@ -62,8 +59,7 @@ const forceQuitCommand: VimCommand = {
   execute: async () => {
     const { activeBufferId, actions } = useBufferStore.getState();
     if (activeBufferId) {
-      // Force close without save prompt
-      actions.closeBuffer(activeBufferId);
+      actions.closeBufferForce(activeBufferId);
     }
   },
 };
@@ -99,9 +95,8 @@ const gotoCommand: VimCommand = {
     if (args && args.length > 0) {
       const lineNumber = parseInt(args[0]);
       if (!Number.isNaN(lineNumber)) {
-        // Dispatch go to line event
         window.dispatchEvent(
-          new CustomEvent("vim-goto-line", {
+          new CustomEvent("menu-go-to-line", {
             detail: { line: lineNumber },
           }),
         );
@@ -239,12 +234,6 @@ export const parseAndExecuteVimCommand = async (commandInput: string): Promise<b
     const newContent = newLines.join("\n");
     bufferState.actions.updateBufferContent(activeBufferId, newContent);
 
-    const textarea = document.querySelector(".editor-textarea") as HTMLTextAreaElement;
-    if (textarea) {
-      textarea.value = newContent;
-      textarea.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-
     return true;
   }
 
@@ -271,21 +260,4 @@ export const parseAndExecuteVimCommand = async (commandInput: string): Promise<b
   // Command not found
   console.warn("Unknown vim command:", commandName);
   return false;
-};
-
-// Get command suggestions for autocomplete
-export const getVimCommandSuggestions = (input: string): VimCommand[] => {
-  if (!input.trim()) {
-    return vimCommands.slice(0, 10); // Return first 10 commands
-  }
-
-  const lowerInput = input.toLowerCase();
-
-  return vimCommands
-    .filter(
-      (cmd) =>
-        cmd.name.toLowerCase().startsWith(lowerInput) ||
-        cmd.aliases?.some((alias) => alias.toLowerCase().startsWith(lowerInput)),
-    )
-    .slice(0, 10); // Limit to 10 suggestions
 };

@@ -1,9 +1,10 @@
-import type { Settings } from "@/features/settings/stores/settings.store";
+import type { Settings } from "@/features/settings/types/settings.types";
+import { getWslShellId, parseWslPath } from "@/features/wsl/utils/wsl-path";
 import type { Shell, TerminalProfile } from "../types/terminal.types";
 
 export const SYSTEM_DEFAULT_PROFILE_ID = "system-default";
 export const DEFAULT_SHELL_OPTION_VALUE = "system";
-export const DEFAULT_PROFILE_LABEL = "Default Terminal";
+const DEFAULT_PROFILE_LABEL = "Default Terminal";
 
 export interface ResolvedTerminalLaunch {
   shell?: string;
@@ -13,9 +14,9 @@ export interface ResolvedTerminalLaunch {
   profileId?: string;
 }
 
-export const getShellProfileId = (shellId: string) => `shell:${shellId}`;
+const getShellProfileId = (shellId: string) => `shell:${shellId}`;
 
-export const getBuiltInTerminalProfiles = (shells: Shell[]): TerminalProfile[] => [
+const getBuiltInTerminalProfiles = (shells: Shell[]): TerminalProfile[] => [
   {
     id: SYSTEM_DEFAULT_PROFILE_ID,
     name: DEFAULT_PROFILE_LABEL,
@@ -33,7 +34,7 @@ export const getAllTerminalProfiles = (
   customProfiles: TerminalProfile[],
 ): TerminalProfile[] => [...getBuiltInTerminalProfiles(shells), ...customProfiles];
 
-export const resolveTerminalProfile = (
+const resolveTerminalProfile = (
   profileId: string | undefined,
   shells: Shell[],
   customProfiles: TerminalProfile[],
@@ -63,9 +64,10 @@ export const resolveTerminalLaunch = ({
     settings.terminalDefaultShellId !== DEFAULT_SHELL_OPTION_VALUE
       ? settings.terminalDefaultShellId
       : undefined;
-  const shell = profile?.shell || fallbackShell;
   const initialCommand = profile?.startupCommands?.filter(Boolean).join("\n") || undefined;
   const workingDirectory = profile?.startupDirectory?.trim() || currentDirectory;
+  const wslInfo = parseWslPath(workingDirectory);
+  const shell = wslInfo ? getWslShellId(wslInfo.distro) : profile?.shell || fallbackShell;
 
   return {
     shell,

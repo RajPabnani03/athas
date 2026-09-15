@@ -1,26 +1,40 @@
 import {
-  ArrowSquareOutIcon as ArrowSquareOut,
-  BracketsCurlyIcon as Braces,
-  CaretDownIcon as CaretDown,
-  CaretRightIcon as CaretRight,
-  CheckIcon as Check,
-  CodeIcon as Code,
-  CopyIcon as Copy,
-  FunnelIcon as Funnel,
+  BracketsCurlyIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  CodeIcon,
+  CopyIcon,
+  FilterIcon,
   FunctionIcon,
-  MagnifyingGlassIcon as Search,
-  SquaresFourIcon as SquaresFour,
-} from "@phosphor-icons/react";
+  GridIcon,
+  OpenExternalIcon,
+} from "@/ui/icons";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ContextMenu, useContextMenu, type ContextMenuItem } from "@/ui/context-menu";
-import type { MenuItem } from "@/ui/dropdown";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/ui/dropdown";
 import { writeClipboardText } from "@/utils/clipboard";
 import { readFileContent } from "@/features/file-system/controllers/file-operations";
 import { openFile } from "@/features/file-system/controllers/platform";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
-import { SidebarEmptyActionState, SidebarEmptyState, SidebarSearchFilterRow } from "@/ui/sidebar";
+import { EmptyState } from "@/ui/empty";
+import { SidebarHeader, SidebarIconButton, SidebarSearchPopover, SidebarPanel } from "@/ui/sidebar";
+import { ScrollArea } from "@/ui/scroll-area";
+import { Spinner } from "@/ui/spinner";
 import { useDocumentOutline } from "../hooks/use-document-outline";
-import type { OutlineSymbol } from "../types/outline-symbol.types";
+import { getOutlineRevealScrollTop } from "../utils/outline-scroll";
 import { getVisibleOutlineSymbols, openOutlineSymbol } from "../utils/outline-symbols";
 import { OutlineSymbolRow } from "./outline-symbol-row";
 
@@ -38,11 +52,11 @@ const OUTLINE_FILTER_OPTIONS: Array<{
   label: string;
   icon: ReactNode;
 }> = [
-  { id: "types", label: "Types", icon: <SquaresFour /> },
+  { id: "types", label: "Types", icon: <GridIcon /> },
   { id: "functions", label: "Functions", icon: <FunctionIcon /> },
-  { id: "properties", label: "Properties", icon: <Braces /> },
-  { id: "variables", label: "Variables", icon: <Code /> },
-  { id: "other", label: "Other", icon: <Code /> },
+  { id: "properties", label: "Properties", icon: <BracketsCurlyIcon /> },
+  { id: "variables", label: "Variables", icon: <CodeIcon /> },
+  { id: "other", label: "Other", icon: <CodeIcon /> },
 ];
 
 function matchesOutlineFilter(kind: string, selectedFilters: Set<OutlineFilter>) {
@@ -59,16 +73,15 @@ function matchesOutlineFilter(kind: string, selectedFilters: Set<OutlineFilter>)
 
 export function OutlineSidebar() {
   const [query, setQuery] = useState("");
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [selectedFilters, setSelectedFilters] = useState<Set<OutlineFilter>>(
     () => new Set(OUTLINE_FILTER_OPTIONS.map((option) => option.id)),
   );
-  const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
-  const symbolContextMenu = useContextMenu<OutlineSymbol>();
   const [focusedSymbolId, setFocusedSymbolId] = useState<string | null>(null);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
-  const { activeBuffer, symbols, isLoading, isSupported } = useDocumentOutline(true);
+  const { activeBuffer, symbols, isLoading, isSupported } = useDocumentOutline({ isActive: true });
   const openBuffer = useBufferStore.use.actions().openBuffer;
   const filteredSymbols = useMemo(
     () => symbols.filter((symbol) => matchesOutlineFilter(symbol.kind, selectedFilters)),
@@ -93,28 +106,6 @@ export function OutlineSidebar() {
       return nextFilters;
     });
   }, []);
-  const outlineFilterMenuItems = useMemo<MenuItem[]>(
-    () => [
-      {
-        id: "all",
-        label: "All",
-        icon: <Funnel />,
-        keybinding: areAllFiltersSelected ? <Check className="size-3.5 text-accent" /> : null,
-        onClick: setAllFilters,
-      },
-      { id: "sep-filters", label: "", separator: true, onClick: () => {} },
-      ...OUTLINE_FILTER_OPTIONS.map((option) => ({
-        id: option.id,
-        label: option.label,
-        icon: option.icon,
-        keybinding: selectedFilters.has(option.id) ? (
-          <Check className="size-3.5 text-accent" />
-        ) : null,
-        onClick: () => toggleFilter(option.id),
-      })),
-    ],
-    [areAllFiltersSelected, selectedFilters, setAllFilters, toggleFilter],
-  );
   const focusedSymbolIndex = focusedSymbolId
     ? visibleSymbols.findIndex((symbol) => symbol.id === focusedSymbolId)
     : -1;
@@ -166,19 +157,39 @@ export function OutlineSidebar() {
     setCollapsedIds(new Set());
   };
 
+  const revealSymbol = useCallback((symbolId: string) => {
+    const viewport = scrollViewportRef.current;
+    const row = rowRefs.current.get(symbolId);
+    if (!viewport || !row) return;
+
+    const viewportRect = viewport.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const nextScrollTop = getOutlineRevealScrollTop({
+      scrollTop: viewport.scrollTop,
+      viewportTop: viewportRect.top,
+      viewportBottom: viewportRect.bottom,
+      rowTop: rowRect.top,
+      rowBottom: rowRect.bottom,
+    });
+
+    if (nextScrollTop !== null) {
+      viewport.scrollTo({ top: nextScrollTop, behavior: "auto" });
+    }
+  }, []);
+
   const focusSymbolAtIndex = (index: number) => {
     const symbol = visibleSymbols[index];
     if (!symbol) return;
 
     setFocusedSymbolId(symbol.id);
-    requestAnimationFrame(() => rowRefs.current.get(symbol.id)?.focus());
+    requestAnimationFrame(() => {
+      rowRefs.current.get(symbol.id)?.focus({ preventScroll: true });
+      revealSymbol(symbol.id);
+    });
   };
 
   const focusSearch = () => {
-    requestAnimationFrame(() => {
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
-    });
+    setIsSearchOpen(true);
   };
 
   const handleSidebarKeyDown = (event: React.KeyboardEvent) => {
@@ -204,13 +215,6 @@ export function OutlineSidebar() {
     event: React.KeyboardEvent<HTMLButtonElement>,
     symbol: (typeof visibleSymbols)[number],
   ) => {
-    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
-      event.preventDefault();
-      const rect = event.currentTarget.getBoundingClientRect();
-      symbolContextMenu.openAt({ x: rect.left + 16, y: rect.bottom }, symbol);
-      return;
-    }
-
     const currentIndex = visibleSymbols.findIndex(
       (visibleSymbol) => visibleSymbol.id === symbol.id,
     );
@@ -267,140 +271,158 @@ export function OutlineSidebar() {
     void writeClipboardText(text);
   };
 
-  const symbolContextMenuItems = useMemo<ContextMenuItem[]>(() => {
-    const symbol = symbolContextMenu.data;
-    if (!symbol) return [];
-
-    const location = `${symbol.filePath}:${symbol.line + 1}:${symbol.character + 1}`;
-    const isCollapsed = collapsedIds.has(symbol.id);
-
-    return [
-      {
-        id: "go-to-symbol",
-        label: "Go to Symbol",
-        icon: <ArrowSquareOut />,
-        onClick: () => {
-          setFocusedSymbolId(symbol.id);
-          openOutlineSymbol(symbol);
-        },
-      },
-      {
-        id: "copy-name",
-        label: "Copy Name",
-        icon: <Copy />,
-        onClick: () => copyText(symbol.name),
-      },
-      {
-        id: "copy-location",
-        label: "Copy Location",
-        icon: <Copy />,
-        onClick: () => copyText(location),
-      },
-      { id: "sep-outline-actions", label: "", separator: true, onClick: () => {} },
-      {
-        id: "toggle-collapse",
-        label: isCollapsed ? "Expand" : "Collapse",
-        icon: isCollapsed ? <CaretDown /> : <CaretRight />,
-        disabled: symbol.childCount === 0,
-        onClick: () => toggleSymbol(symbol),
-      },
-      {
-        id: "collapse-all",
-        label: "Collapse All",
-        icon: <CaretRight />,
-        disabled: symbolsWithChildren.length === 0,
-        onClick: collapseAllSymbols,
-      },
-      {
-        id: "expand-all",
-        label: "Expand All",
-        icon: <CaretDown />,
-        disabled: collapsedIds.size === 0,
-        onClick: expandAllSymbols,
-      },
-    ];
-  }, [collapsedIds, symbolContextMenu.data, symbolsWithChildren]);
-
   return (
-    <div
-      className="flex h-full min-h-0 flex-col bg-primary-bg"
-      onKeyDownCapture={handleSidebarKeyDown}
-    >
-      <SidebarSearchFilterRow
-        value={query}
-        onChange={setQuery}
-        searchIcon={Search}
-        placeholder="Search"
-        searchAriaLabel="Search outline"
-        searchInputRef={searchInputRef}
-        searchInputProps={{
-          onKeyDown: (event) => {
+    <SidebarPanel onKeyDownCapture={handleSidebarKeyDown}>
+      <SidebarHeader>
+        <SidebarSearchPopover
+          value={query}
+          onChange={setQuery}
+          open={isSearchOpen}
+          onOpenChange={setIsSearchOpen}
+          aria-label="Search outline"
+          onKeyDown={(event) => {
             if (event.key === "ArrowDown" && visibleSymbols.length > 0) {
               event.preventDefault();
               focusSymbolAtIndex(0);
             }
+          }}
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <SidebarIconButton
+                active={!areAllFiltersSelected}
+                tooltip="Filter outline"
+                aria-label="Filter outline"
+              />
+            }
+          >
+            <FilterIcon />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem
+              disabled={areAllFiltersSelected}
+              closeOnClick={false}
+              onClick={setAllFilters}
+            >
+              <FilterIcon />
+              Show All
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {OUTLINE_FILTER_OPTIONS.map((option) => (
+              <DropdownMenuCheckboxItem
+                key={option.id}
+                checked={selectedFilters.has(option.id)}
+                closeOnClick={false}
+                onCheckedChange={() => toggleFilter(option.id)}
+              >
+                {option.icon}
+                {option.label}
+              </DropdownMenuCheckboxItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </SidebarHeader>
+
+      <ScrollArea
+        fill="flex"
+        viewportClassName="overscroll-none"
+        viewportProps={{
+          ref: scrollViewportRef,
+          style: {
+            overflowAnchor: "none",
+            scrollBehavior: "auto",
+            scrollPaddingBlock: "4px",
           },
         }}
-        filterOpen={isFilterMenuOpen}
-        onFilterOpenChange={setIsFilterMenuOpen}
-        filterItems={outlineFilterMenuItems}
-        filterActive={!areAllFiltersSelected}
-        filterTooltip="Filter Outline"
-        filterAriaLabel="Filter outline"
-        filterCloseOnSelect={false}
-        filterMenuClassName="w-fit min-w-fit"
-      />
-
-      <div className="custom-scrollbar-thin min-h-0 flex-1 overflow-y-auto p-1">
+        contentPadding="xs"
+      >
         {!isSupported ? (
-          <SidebarEmptyActionState
+          <EmptyState
+            layout="sidebar"
             message={activeBuffer ? "No outline for the active file." : "No active file."}
-            actionLabel="Open a File"
-            onAction={() => void handleOpenFile()}
+            action={{ label: "Open a File", onClick: () => void handleOpenFile() }}
           />
         ) : isLoading ? (
-          <SidebarEmptyState>Loading outline...</SidebarEmptyState>
+          <EmptyState
+            layout="sidebar"
+            message={<Spinner label="Loading outline" showLabel compact />}
+          />
         ) : visibleSymbols.length === 0 ? (
-          <SidebarEmptyState>No symbols found.</SidebarEmptyState>
+          <EmptyState layout="sidebar" message="No symbols found." />
         ) : (
           visibleSymbols.map((symbol) => (
-            <OutlineSymbolRow
-              key={symbol.id}
-              ref={(node) => {
-                if (node) {
-                  rowRefs.current.set(symbol.id, node);
-                } else {
-                  rowRefs.current.delete(symbol.id);
-                }
-              }}
-              symbol={symbol}
-              compact
-              selected={symbol.id === focusedSymbolId}
-              collapsed={collapsedIds.has(symbol.id)}
-              onClick={handleSymbolClick}
-              onToggle={toggleSymbol}
-              onMouseEnter={() => setFocusedSymbolId(symbol.id)}
-              onContextMenu={(event) => {
-                setFocusedSymbolId(symbol.id);
-                symbolContextMenu.open(event, symbol);
-              }}
-              onKeyDown={(event) => handleSymbolKeyDown(event, symbol)}
-              tabIndex={
-                symbol.id === focusedSymbolId ||
-                (focusedSymbolIndex === -1 && symbol === visibleSymbols[0])
-                  ? 0
-                  : -1
-              }
-            />
+            <ContextMenu key={symbol.id}>
+              <ContextMenuTrigger onContextMenu={() => setFocusedSymbolId(symbol.id)}>
+                <OutlineSymbolRow
+                  ref={(node) => {
+                    if (node) {
+                      rowRefs.current.set(symbol.id, node);
+                    } else {
+                      rowRefs.current.delete(symbol.id);
+                    }
+                  }}
+                  symbol={symbol}
+                  compact
+                  selected={symbol.id === focusedSymbolId}
+                  collapsed={collapsedIds.has(symbol.id)}
+                  onClick={handleSymbolClick}
+                  onToggle={toggleSymbol}
+                  onKeyDown={(event) => handleSymbolKeyDown(event, symbol)}
+                  tabIndex={
+                    symbol.id === focusedSymbolId ||
+                    (focusedSymbolIndex === -1 && symbol === visibleSymbols[0])
+                      ? 0
+                      : -1
+                  }
+                />
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem
+                  onClick={() => {
+                    setFocusedSymbolId(symbol.id);
+                    openOutlineSymbol(symbol);
+                  }}
+                >
+                  <OpenExternalIcon />
+                  Go to Symbol
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => copyText(symbol.name)}>
+                  <CopyIcon />
+                  Copy Name
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onClick={() =>
+                    copyText(`${symbol.filePath}:${symbol.line + 1}:${symbol.character + 1}`)
+                  }
+                >
+                  <CopyIcon />
+                  Copy Location
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  disabled={symbol.childCount === 0}
+                  onClick={() => toggleSymbol(symbol)}
+                >
+                  {collapsedIds.has(symbol.id) ? <ChevronDownIcon /> : <ChevronRightIcon />}
+                  {collapsedIds.has(symbol.id) ? "Expand" : "Collapse"}
+                </ContextMenuItem>
+                <ContextMenuItem
+                  disabled={symbolsWithChildren.length === 0}
+                  onClick={collapseAllSymbols}
+                >
+                  <ChevronRightIcon />
+                  Collapse All
+                </ContextMenuItem>
+                <ContextMenuItem disabled={collapsedIds.size === 0} onClick={expandAllSymbols}>
+                  <ChevronDownIcon />
+                  Expand All
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
           ))
         )}
-      </div>
-      <ContextMenu
-        isOpen={symbolContextMenu.isOpen}
-        position={symbolContextMenu.position}
-        items={symbolContextMenuItems}
-        onClose={symbolContextMenu.close}
-      />
-    </div>
+      </ScrollArea>
+    </SidebarPanel>
   );
 }

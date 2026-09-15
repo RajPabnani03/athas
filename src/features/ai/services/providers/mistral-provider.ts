@@ -1,3 +1,4 @@
+import { toOpenAIMessage } from "@/features/ai/lib/image-attachments";
 import {
   AIProvider,
   type ProviderHeaders,
@@ -31,7 +32,7 @@ export class MistralProvider extends AIProvider {
         .map((model) => ({
           id: model.id,
           name: model.name || formatMistralModelName(model.id),
-          maxTokens: model.max_context_length,
+          contextWindow: model.max_context_length,
         }));
     } catch (error) {
       console.error(`${this.id} model fetch error:`, error);
@@ -54,7 +55,7 @@ export class MistralProvider extends AIProvider {
   buildPayload(request: StreamRequest): Record<string, unknown> {
     return {
       model: request.modelId,
-      messages: request.messages,
+      messages: request.messages.map(toOpenAIMessage),
       max_tokens: request.maxTokens,
       temperature: request.temperature,
       stream: true,

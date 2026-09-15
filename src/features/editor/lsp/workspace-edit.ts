@@ -62,7 +62,9 @@ export function isWorkspaceEdit(value: unknown): value is WorkspaceEdit {
     isObject(value.changes) &&
     Object.values(value.changes).every((edits) => Array.isArray(edits) && edits.every(isTextEdit));
   const hasDocumentChanges =
-    Array.isArray(value.documentChanges) && value.documentChanges.some(isTextDocumentEdit);
+    Array.isArray(value.documentChanges) &&
+    value.documentChanges.length > 0 &&
+    value.documentChanges.every(isTextDocumentEdit);
 
   return hasChanges || hasDocumentChanges;
 }
@@ -72,10 +74,18 @@ export function filePathFromUri(uri: string): string {
 
   try {
     const url = new URL(uri);
-    return decodeURIComponent(url.pathname);
+    const path = decodeURIComponent(url.pathname);
+    if (url.hostname) return `//${url.hostname}${path}`;
+    return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path;
   } catch {
     return decodeURIComponent(uri.replace(/^file:\/\//, ""));
   }
+}
+
+export function fileUriFromPath(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, "/");
+  const pathname = normalized.startsWith("/") ? normalized : `/${normalized}`;
+  return `file://${encodeURI(pathname).replace(/#/g, "%23").replace(/\?/g, "%3F")}`;
 }
 
 function buildLineStartOffsets(content: string): number[] {
@@ -152,8 +162,10 @@ export function collectWorkspaceTextEdits(edit: WorkspaceEdit): Map<string, LspT
 async function readEditableSource(
   filePath: string,
 ): Promise<{ bufferId: string | null; content: string }> {
-  const { useBufferStore } = await import("../stores/buffer.store");
-  const { readFile } = await import("@/features/file-system/controllers/platform");
+  const [{ useBufferStore }, { readFile }] = await Promise.all([
+    import("../stores/buffer.store"),
+    import("@/features/file-system/controllers/platform"),
+  ]);
   const { buffers } = useBufferStore.getState();
   const openBuffer = buffers.find(
     (buffer) => buffer.type === "editor" && !buffer.isVirtual && buffer.path === filePath,
@@ -167,10 +179,22 @@ async function readEditableSource(
 }
 
 async function writeEditableSource(filePath: string, bufferId: string | null, content: string) {
-  const { useBufferStore } = await import("../stores/buffer.store");
-  const { writeFile } = await import("@/features/file-system/controllers/platform");
+  const [{ useBufferStore }, { trackImmediateBufferHistoryChange }, { writeFile }] =
+    await Promise.all([
+      import("../stores/buffer.store"),
+      import("../stores/buffer-history-tracking"),
+      import("@/features/file-system/controllers/platform"),
+    ]);
 
   if (bufferId) {
+    const buffer = useBufferStore.getState().buffers.find((candidate) => candidate.id === bufferId);
+    if (buffer?.type === "editor") {
+      trackImmediateBufferHistoryChange({
+        bufferId,
+        currentContent: buffer.content,
+        nextContent: content,
+      });
+    }
     useBufferStore.getState().actions.updateBufferContent(bufferId, content, true);
     return;
   }

@@ -1,32 +1,55 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import type { HTMLAttributes } from "react";
-import { cn } from "@/utils/cn";
 
 const badgeVariants = cva(
-  "ui-font inline-flex h-[var(--app-ui-badge-height,1.5rem)] items-center justify-center rounded-md font-normal leading-none",
+  "ui-text-sm inline-flex max-w-full items-center justify-center gap-1 rounded-full border-0 px-2 py-0.5 font-normal leading-none tabular-nums",
   {
     variants: {
       variant: {
-        default: "border border-border/60 bg-primary-bg/70 text-text-lighter",
-        accent: "bg-accent/10 text-accent",
-        muted: "text-text-lighter",
-        error: "border border-error/30 bg-error/5 text-error/90",
+        default: "bg-background/70 text-subtle-foreground",
+        muted: "bg-accent/55 text-subtle-foreground",
+        accent: "bg-primary/10 text-primary",
+        success: "bg-success/10 text-success",
+        warning: "bg-warning/10 text-warning",
+        error: "bg-destructive/8 text-destructive",
       },
-      size: {
-        default: "ui-text-sm px-2 py-0.5",
-        sm: "ui-text-sm px-2 py-0.5",
-        compact: "ui-text-sm px-1.5 py-0.5",
-      },
+      size: { default: "h-6", compact: "h-5" },
+      font: { default: "font-sans", mono: "font-mono" },
+      truncate: { true: "min-w-0 shrink overflow-hidden", false: "shrink-0" },
     },
-    defaultVariants: {
-      variant: "default",
-      size: "default",
-    },
+    defaultVariants: { variant: "default", size: "default", font: "default", truncate: false },
   },
 );
 
-type BadgeProps = HTMLAttributes<HTMLSpanElement> & VariantProps<typeof badgeVariants>;
+type BadgeProps = Omit<HTMLAttributes<HTMLSpanElement>, "className" | "style" | "color"> &
+  VariantProps<typeof badgeVariants> & {
+    className?: never;
+    style?: never;
+    labelColor?: string;
+  };
 
-export default function Badge({ className, variant, size, ...props }: BadgeProps) {
-  return <span className={cn(badgeVariants({ variant, size }), className)} {...props} />;
+export default function Badge({
+  variant,
+  size,
+  font,
+  truncate,
+  labelColor,
+  children,
+  ...props
+}: BadgeProps) {
+  const color =
+    labelColor && /^#?[\da-f]{6}$/i.test(labelColor)
+      ? `#${labelColor.replace(/^#/, "")}`
+      : undefined;
+  return (
+    <span
+      {...props}
+      className={badgeVariants({ variant, size, font, truncate })}
+      style={color ? { color, backgroundColor: `${color}20` } : undefined}
+    >
+      {truncate ? <span className="min-w-0 truncate">{children}</span> : children}
+    </span>
+  );
 }
+
+export { badgeVariants };

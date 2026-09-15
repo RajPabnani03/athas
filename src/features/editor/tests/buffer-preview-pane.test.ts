@@ -145,7 +145,7 @@ describe("buffer preview pane integration", () => {
     expect(pane?.pinnedBufferIds).toEqual([previewId]);
   });
 
-  it("opens a new tab placeholder in the active pane", async () => {
+  it("opens independent new tabs and only consumes the active one", async () => {
     const { useBufferStore } = await import("../stores/buffer.store");
     const bufferActions = useBufferStore.getState().actions;
     const paneActions = usePaneStore.getState().actions;
@@ -157,25 +157,64 @@ describe("buffer preview pane integration", () => {
       content: "",
     });
     const newTabId = bufferActions.openContent({ type: "newTab" });
+    const secondNewTabId = bufferActions.openContent({ type: "newTab" });
 
     const newTabBuffer = useBufferStore.getState().buffers.find((buffer) => buffer.id === newTabId);
     expect(newTabBuffer?.type).toBe("newTab");
-    expect(paneActions.getPaneById(ROOT_PANE_ID)?.bufferIds).toEqual([editorId, newTabId]);
-    expect(paneActions.getPaneById(ROOT_PANE_ID)?.activeBufferId).toBe(newTabId);
-    expect(useBufferStore.getState().activeBufferId).toBe(newTabId);
+    expect(paneActions.getPaneById(ROOT_PANE_ID)?.bufferIds).toEqual([
+      editorId,
+      newTabId,
+      secondNewTabId,
+    ]);
+    expect(paneActions.getPaneById(ROOT_PANE_ID)?.activeBufferId).toBe(secondNewTabId);
+
+    const replacementId = bufferActions.openContent({
+      type: "editor",
+      path: "/workspace/b.ts",
+      name: "b.ts",
+      content: "",
+    });
+
+    expect(paneActions.getPaneById(ROOT_PANE_ID)?.bufferIds).toEqual([
+      editorId,
+      newTabId,
+      replacementId,
+    ]);
+    expect(useBufferStore.getState().buffers.some((buffer) => buffer.id === newTabId)).toBe(true);
+    expect(useBufferStore.getState().buffers.some((buffer) => buffer.id === secondNewTabId)).toBe(
+      false,
+    );
   });
 
-  it("opens references as a singleton buffer like diagnostics", async () => {
+  it("opens tool buffers as singletons", async () => {
     const { useBufferStore } = await import("../stores/buffer.store");
     const bufferActions = useBufferStore.getState().actions;
 
+    const firstSearchId = bufferActions.openGlobalSearchBuffer();
+    const secondSearchId = bufferActions.openGlobalSearchBuffer();
     const firstReferencesId = bufferActions.openReferencesBuffer();
     const secondReferencesId = bufferActions.openReferencesBuffer();
     const diagnosticsId = bufferActions.openDiagnosticsBuffer();
+    const firstSettingsId = bufferActions.openSettingsBuffer();
+    const secondSettingsId = bufferActions.openSettingsBuffer();
+    const firstExtensionsId = bufferActions.openExtensionsBuffer();
+    const secondExtensionsId = bufferActions.openExtensionsBuffer();
+    const firstContinuousAgentsId = bufferActions.openContinuousAgentsBuffer();
+    const secondContinuousAgentsId = bufferActions.openContinuousAgentsBuffer();
 
+    expect(secondSearchId).toBe(firstSearchId);
     expect(secondReferencesId).toBe(firstReferencesId);
+    expect(secondSettingsId).toBe(firstSettingsId);
+    expect(secondExtensionsId).toBe(firstExtensionsId);
+    expect(secondContinuousAgentsId).toBe(firstContinuousAgentsId);
     expect(useBufferStore.getState().buffers).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          id: firstSearchId,
+          type: "globalSearch",
+          path: "search://global",
+          name: "Search",
+        }),
         expect.objectContaining({
           id: firstReferencesId,
           type: "references",
@@ -187,6 +226,58 @@ describe("buffer preview pane integration", () => {
           type: "diagnostics",
           path: "diagnostics://problems",
           name: "Diagnostics",
+        }),
+        expect.objectContaining({
+          id: firstSettingsId,
+          type: "settings",
+          path: "settings://preferences",
+          name: "Settings",
+        }),
+        expect.objectContaining({
+          id: firstExtensionsId,
+          type: "extensions",
+          path: "extensions://marketplace",
+          name: "Integrations",
+        }),
+        expect.objectContaining({
+          id: firstContinuousAgentsId,
+          type: "continuousAgents",
+          path: "continuous-agents://workspace",
+          name: "Continuous Agents",
+        }),
+      ]),
+    );
+  });
+
+  it("opens singular integration pages as reusable tabs", async () => {
+    const { useBufferStore } = await import("../stores/buffer.store");
+    const bufferActions = useBufferStore.getState().actions;
+
+    const typescriptId = bufferActions.openExtensionBuffer("athas.typescript", "TypeScript");
+    const rustId = bufferActions.openExtensionBuffer("athas.rust", "Rust");
+    const reopenedTypescriptId = bufferActions.openExtensionBuffer(
+      "athas.typescript",
+      "TypeScript Language Support",
+    );
+
+    expect(reopenedTypescriptId).toBe(typescriptId);
+    expect(rustId).not.toBe(typescriptId);
+    expect(useBufferStore.getState().activeBufferId).toBe(typescriptId);
+    expect(useBufferStore.getState().buffers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: typescriptId,
+          type: "extension",
+          extensionId: "athas.typescript",
+          name: "TypeScript Language Support",
+          path: "extension://athas.typescript",
+        }),
+        expect.objectContaining({
+          id: rustId,
+          type: "extension",
+          extensionId: "athas.rust",
+          name: "Rust",
+          path: "extension://athas.rust",
         }),
       ]),
     );

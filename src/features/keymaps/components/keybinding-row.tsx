@@ -1,19 +1,18 @@
 import { useState } from "react";
-import { WarningCircleIcon as WarningCircle } from "@phosphor-icons/react";
+import { WarningCircleIcon } from "@/ui/icons";
 import { cva } from "class-variance-authority";
+import { Alert, AlertDescription } from "@/ui/alert";
 import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
-import KeybindingDisplay from "@/ui/keybinding";
+import { TableCell, TableRow } from "@/ui/table";
+import KeybindingDisplay from "./keybinding";
 import { cn } from "@/utils/cn";
 import { useKeybindingConflicts } from "../hooks/use-keybinding-conflicts";
 import { useKeymapStore } from "../stores/keymaps.store";
 import type { Command, Keybinding } from "../types/keymaps.types";
 import { KeybindingInput } from "./keybinding-input";
 
-export const keybindingTableGridCols = cva(
-  "grid-cols-[minmax(220px,2fr)_minmax(156px,1fr)_minmax(128px,1.25fr)_72px_92px]",
-);
-export const keybindingTableMinWidth = cva("min-w-[700px]");
+export const keybindingTableMinWidth = cva("min-w-175");
 
 interface KeybindingRowProps {
   command: Command;
@@ -22,29 +21,23 @@ interface KeybindingRowProps {
 
 export function KeybindingRow({ command, keybinding }: KeybindingRowProps) {
   const [isEditing, setIsEditing] = useState(false);
-  const { addKeybinding, updateKeybinding, removeKeybinding } = useKeymapStore.use.actions();
+  const { addKeybinding, removeKeybinding } = useKeymapStore.use.actions();
+  const displayedKey = keybinding?.enabled === false ? undefined : keybinding?.key;
   const { hasConflict, conflictingCommands } = useKeybindingConflicts(
-    keybinding?.key || "",
+    displayedKey || "",
     command.id,
     keybinding?.when,
   );
 
   const handleSave = (newKey: string) => {
-    if (keybinding?.source === "user") {
-      // Update existing user keybinding
-      updateKeybinding(command.id, { key: newKey });
-    } else {
-      // Remove any existing user override first, then add new one
-      // This handles both "no keybinding" and "default/extension keybinding" cases
-      removeKeybinding(command.id);
-      addKeybinding({
-        key: newKey,
-        command: command.id,
-        source: "user",
-        enabled: true,
-        when: keybinding?.when,
-      });
-    }
+    removeKeybinding(command.id);
+    addKeybinding({
+      key: newKey,
+      command: command.id,
+      source: "user",
+      enabled: true,
+      when: keybinding?.when,
+    });
     setIsEditing(false);
   };
 
@@ -65,101 +58,93 @@ export function KeybindingRow({ command, keybinding }: KeybindingRowProps) {
       : source === "default"
         ? "Default"
         : source === "extension"
-          ? "Extension"
+          ? "Integration"
           : "User";
 
   return (
-    <div
-      className={cn(
-        "grid gap-4 border-b border-border px-2 py-2 transition-colors hover:bg-hover",
-        "gap-3 px-1.5 py-1.5",
-        keybindingTableGridCols(),
-        keybindingTableMinWidth(),
-        hasConflict && "bg-error/5 hover:bg-error/10",
-      )}
-    >
-      <div className="min-w-0">
-        <div className="ui-font ui-text-sm truncate text-text">{command.title}</div>
-        <div className="ui-font ui-text-xs mt-0.5 truncate text-text-lighter">
-          {command.category} • {command.id}
-        </div>
-      </div>
+    <>
+      <TableRow className={cn(hasConflict && "bg-destructive/5 hover:bg-destructive/10")}>
+        <TableCell className="min-w-0">
+          <div className="font-sans ui-text-sm truncate text-foreground">{command.title}</div>
+          <div className="font-sans ui-text-sm mt-0.5 truncate text-subtle-foreground">
+            {command.category} • {command.id}
+          </div>
+        </TableCell>
 
-      <div className="flex items-center">
-        {isEditing ? (
-          <KeybindingInput
-            commandId={command.id}
-            value={keybinding?.key}
-            onSave={handleSave}
-            onCancel={() => setIsEditing(false)}
-          />
-        ) : (
-          <Button
-            type="button"
-            onClick={() => setIsEditing(true)}
-            variant="default"
-            compact
-            className="ui-text-sm flex h-7 w-full items-center justify-start px-1.5 hover:border-accent"
-            aria-label={`Edit keybinding for ${command.title}`}
-          >
-            {keybinding?.key ? (
-              <KeybindingDisplay binding={keybinding.key} />
-            ) : (
-              <span className="text-text-lighter">Not assigned</span>
+        <TableCell>
+          {isEditing ? (
+            <KeybindingInput
+              commandId={command.id}
+              value={displayedKey}
+              onSave={handleSave}
+              onCancel={() => setIsEditing(false)}
+            />
+          ) : (
+            <Button
+              type="button"
+              onClick={() => setIsEditing(true)}
+              variant="default"
+              width="full"
+              align="start"
+              aria-label={`Edit keybinding for ${command.title}`}
+            >
+              {displayedKey ? (
+                <KeybindingDisplay binding={displayedKey} />
+              ) : (
+                <span className="text-subtle-foreground">Not assigned</span>
+              )}
+            </Button>
+          )}
+        </TableCell>
+
+        <TableCell className="truncate text-subtle-foreground">
+          {keybinding?.when || command.keybinding ? keybinding?.when || "-" : "-"}
+        </TableCell>
+
+        <TableCell>
+          <Badge variant={isUserOverride ? "accent" : "default"}>{sourceLabel}</Badge>
+        </TableCell>
+
+        <TableCell>
+          <div className="flex items-center gap-1">
+            {isUserOverride && (
+              <Button
+                type="button"
+                onClick={handleReset}
+                variant="ghost"
+                tooltip="Reset to default"
+                aria-label="Reset to default keybinding"
+              >
+                Reset
+              </Button>
             )}
-          </Button>
-        )}
-      </div>
-
-      <div className="ui-font ui-text-xs flex items-center truncate text-text-lighter">
-        {keybinding?.when || command.keybinding ? keybinding?.when || "-" : "-"}
-      </div>
-
-      <div className="flex items-center">
-        <Badge
-          variant={isUserOverride ? "accent" : "default"}
-          size="compact"
-          className="h-6 min-w-[68px] px-2"
-        >
-          {sourceLabel}
-        </Badge>
-      </div>
-
-      <div className="flex items-center gap-1">
-        {isUserOverride && (
-          <Button
-            type="button"
-            onClick={handleReset}
-            variant="ghost"
-            className="ui-text-xs text-text-lighter hover:text-text"
-            tooltip="Reset to default"
-            aria-label="Reset to default keybinding"
-            compact
-          >
-            Reset
-          </Button>
-        )}
-        {keybinding && (
-          <Button
-            type="button"
-            onClick={handleRemove}
-            variant="ghost"
-            className="ui-text-xs text-text-lighter hover:text-error"
-            tooltip="Remove keybinding"
-            aria-label="Remove keybinding"
-            compact
-          >
-            Remove
-          </Button>
-        )}
-      </div>
+            {keybinding && (
+              <Button
+                type="button"
+                onClick={handleRemove}
+                variant="danger"
+                tooltip="Remove keybinding"
+                aria-label="Remove keybinding"
+              >
+                Remove
+              </Button>
+            )}
+          </div>
+        </TableCell>
+      </TableRow>
 
       {hasConflict && (
-        <div className="ui-font ui-text-xs col-span-5 flex items-start gap-1.5 rounded-lg border border-error/20 bg-error/5 px-2.5 py-2 text-error">
-          <WarningCircle className="mt-0.5 shrink-0" size={14} weight="duotone" />
-          <span>Conflicts with: {conflictingCommands.map((c) => c.title).join(", ")}</span>
-        </div>
+        <TableRow className="bg-destructive/5 hover:bg-destructive/5">
+          <TableCell colSpan={5} className="pt-0">
+            <Alert tone="error" className="py-1.5">
+              <WarningCircleIcon />
+              <AlertDescription>
+                Conflicts with: {conflictingCommands.map((conflict) => conflict.title).join(", ")}
+              </AlertDescription>
+            </Alert>
+          </TableCell>
+        </TableRow>
       )}
-    </div>
+    </>
   );
 }

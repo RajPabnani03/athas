@@ -1,6 +1,6 @@
 import { type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  canUseHostedProvider,
+  canUseIntelligenceProvider,
   canUseProviderWithoutApiKey,
 } from "@/features/ai/lib/provider-access";
 import { useAIChatStore } from "@/features/ai/stores/ai-chat.store";
@@ -8,12 +8,13 @@ import { getProviderById } from "@/features/ai/types/providers.types";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { useAuthStore } from "@/features/window/stores/auth.store";
 import { useInlineEditToolbarStore } from "@/features/editor/stores/inline-edit-toolbar.store";
-import { toast } from "@/ui/toast";
+import { toast } from "sonner";
 import {
   InlineEditError,
   requestInlineEdit,
 } from "@/features/editor/services/editor-inline-edit-service";
 import { EDITOR_CONSTANTS } from "@/features/editor/config/constants";
+import { buildLineOffsets } from "@/features/editor/engines/monaco/position";
 import type { Position, Range } from "@/features/editor/types/editor.types";
 import {
   calculateCursorPositionFromContent,
@@ -35,6 +36,8 @@ const INLINE_EDIT_POPOVER_MARGIN = 8;
 const INLINE_EDIT_POPOVER_X_OFFSET = 0;
 const INLINE_EDIT_POPOVER_Y_OFFSET = 6;
 const INLINE_EDIT_TOP_THRESHOLD = 64;
+const EMPTY_LINES = [""];
+const EMPTY_LINE_OFFSETS = [0];
 
 interface UseInlineEditOptions {
   enabled?: boolean;
@@ -42,8 +45,6 @@ interface UseInlineEditOptions {
   inputRef?: React.RefObject<HTMLTextAreaElement | null>;
   buffer: { id: string; content: string; path: string; language: string } | undefined;
   selection: Range | undefined;
-  lines: string[];
-  lineOffsets: number[];
   fontSize: number;
   fontFamily: string;
   lineHeight: number;
@@ -76,8 +77,6 @@ export function useInlineEdit({
   inputRef,
   buffer,
   selection,
-  lines,
-  lineOffsets,
   fontSize,
   fontFamily,
   lineHeight,
@@ -99,6 +98,15 @@ export function useInlineEdit({
     enabled &&
     inlineEditRequested &&
     (!inlineEditTargetViewKey || !viewKey || inlineEditTargetViewKey === viewKey);
+  const inlineEditContent = buffer?.content ?? "";
+  const lines = useMemo(
+    () => (inlineEditVisible ? inlineEditContent.split(/\r?\n/) : EMPTY_LINES),
+    [inlineEditContent, inlineEditVisible],
+  );
+  const lineOffsets = useMemo(
+    () => (inlineEditVisible ? buildLineOffsets(inlineEditContent) : EMPTY_LINE_OFFSETS),
+    [inlineEditContent, inlineEditVisible],
+  );
   const inlineEditToolbarActions = useInlineEditToolbarStore.use.actions();
   const inlineEditPopoverRef = useRef<HTMLDivElement>(null);
   const inlineEditInstructionRef = useRef<HTMLInputElement>(null);
@@ -123,10 +131,10 @@ export function useInlineEdit({
 
   const aiProviderId = useSettingsStore((state) => state.settings.aiProviderId);
   const aiModelId = useSettingsStore((state) => state.settings.aiModelId);
-  const updateSetting = useSettingsStore((state) => state.updateSetting);
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const subscription = useAuthStore((state) => state.subscription);
-  const checkAllProviderApiKeys = useAIChatStore((state) => state.checkAllProviderApiKeys);
+  const checkAllProviderApiKeys = useAIChatStore((state) => state.actions.checkAllProviderApiKeys);
 
   const getSelectionAnchorPosition = useCallback((): { line: number; column: number } | null => {
     if (!selection || selection.start.offset === selection.end.offset) return null;
@@ -359,12 +367,14 @@ export function useInlineEdit({
 
     const hasStoredProviderKey =
       useAIChatStore.getState().providerApiKeys.get(aiProviderId) || false;
-    const canUseProvider = canUseProviderWithoutApiKey({
-      providerId: aiProviderId,
-      subscription,
-      hasStoredKey: hasStoredProviderKey,
-      requiresApiKey: provider?.requiresApiKey ?? true,
-    });
+    const canUseProvider =
+      canUseIntelligenceProvider(aiProviderId, subscription) ||
+      canUseProviderWithoutApiKey({
+        providerId: aiProviderId,
+        subscription,
+        hasStoredKey: hasStoredProviderKey,
+        requiresApiKey: provider?.requiresApiKey ?? true,
+      });
 
     if (!canUseProvider) {
       await checkAllProviderApiKeys();
@@ -377,10 +387,10 @@ export function useInlineEdit({
     }
 
     const hasProviderKey = useAIChatStore.getState().providerApiKeys.get(aiProviderId) || false;
-    const useHosted = !hasProviderKey && canUseHostedProvider(aiProviderId, subscription);
+    const useHosted = !hasProviderKey && canUseIntelligenceProvider(aiProviderId, subscription);
 
     if (useHosted && !isAuthenticated) {
-      toast.error("Please sign in to use hosted inline edit.");
+      toast.error("Please sign in to use Athas Intelligence.");
       return;
     }
 
@@ -404,6 +414,7 @@ export function useInlineEdit({
       const { editedText } = await requestInlineEdit(
         {
           provider: aiProviderId,
+          feature: "inline-edit",
           model: aiModelId,
           beforeSelection,
           selectedText,

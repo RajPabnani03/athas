@@ -1,11 +1,11 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { UsersThreeIcon as UsersThree } from "@phosphor-icons/react";
+import { getServiceUrls } from "@/config/services";
+import { UsersIcon } from "@/ui/icons";
 import { useCollaborationRuntimeStore } from "@/features/collaboration/stores/collaboration-runtime.store";
 import { useAuthStore } from "@/features/window/stores/auth.store";
 import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
-import { getApiBase } from "@/utils/api-base";
-import Section, { SettingRow } from "../settings-section";
+import Section, { SettingsView, SettingRow } from "../settings-section";
 
 export const CollaborationSettings = () => {
   const user = useAuthStore((state) => state.user);
@@ -33,30 +33,24 @@ export const CollaborationSettings = () => {
   );
 
   const openDashboardCollaboration = () => {
-    void openUrl(new URL("/dashboard/collaboration", getApiBase()).toString());
+    void openUrl(getServiceUrls().dashboardCollaborationUrl);
   };
 
   return (
-    <div className="space-y-4">
+    <SettingsView>
       <Section
         title={workspace?.name ?? "Collaboration"}
         description="Teams workspace status. Manage members, channels, invites, and policies in the web dashboard."
       >
-        <SettingRow label="Dashboard" description="Open the full collaboration workspace.">
-          <Button
-            type="button"
-            variant="default"
-            className="ui-text-sm"
-            onClick={openDashboardCollaboration}
-            compact
-          >
-            <UsersThree />
+        <SettingRow label="Dashboard" description="Open the full collaboration workspace">
+          <Button type="button" variant="default" onClick={openDashboardCollaboration}>
+            <UsersIcon />
             Open
           </Button>
         </SettingRow>
 
         <SettingRow label="Members" description={`${invitations.length} pending invitations`}>
-          <Badge variant="default" size="compact">
+          <Badge variant="default">
             {activeMembers.length}/{members.length} active
           </Badge>
         </SettingRow>
@@ -65,9 +59,7 @@ export const CollaborationSettings = () => {
           label="Channels"
           description={selectedChannel ? `Joined #${selectedChannel.slug}` : "No channel selected"}
         >
-          <Badge variant="default" size="compact">
-            {channels.length} channels
-          </Badge>
+          <Badge variant="default">{channels.length} channels</Badge>
         </SettingRow>
 
         <SettingRow
@@ -75,13 +67,10 @@ export const CollaborationSettings = () => {
           description={followedMember ? `Following ${followedMember.name}` : "Not following anyone"}
         >
           <div className="flex items-center gap-2">
-            <Badge variant="default" size="compact">
-              {collaboration?.presence.length ?? 0} sessions
-            </Badge>
+            <Badge variant="default">{collaboration?.presence.length ?? 0} sessions</Badge>
             <Button
               type="button"
               variant="default"
-              className="ui-text-sm"
               disabled={!presenceTarget.channelId && !presenceTarget.followingUserId}
               onClick={() => {
                 collaborationRuntimeActions.setPresenceChannel(null);
@@ -101,16 +90,13 @@ export const CollaborationSettings = () => {
               : "No active document stream"
           }
         >
-          <Badge
-            variant={activeDocumentStream.status === "error" ? "error" : "default"}
-            size="compact"
-          >
+          <Badge variant={activeDocumentStream.status === "error" ? "error" : "default"}>
             {activeDocumentStream.status}
           </Badge>
         </SettingRow>
 
         <SettingRow label="Workspace Rules" description={`Invites: ${invitePolicy}`}>
-          <Badge variant="default" size="compact">
+          <Badge variant="default">
             Seats {seatLimit} · Updates {updateLimit}
           </Badge>
         </SettingRow>
@@ -127,7 +113,6 @@ export const CollaborationSettings = () => {
               <Button
                 type="button"
                 variant={presenceTarget.channelId === channel.id ? "accent" : "default"}
-                className="ui-text-sm"
                 disabled={!collaboration?.capabilities.presence}
                 onClick={() => collaborationRuntimeActions.setPresenceChannel(channel.id)}
               >
@@ -141,7 +126,6 @@ export const CollaborationSettings = () => {
               <Button
                 type="button"
                 variant={presenceTarget.followingUserId === member.userId ? "accent" : "default"}
-                className="ui-text-sm"
                 disabled={!collaboration?.capabilities.presence}
                 onClick={() => collaborationRuntimeActions.setFollowingUser(member.userId)}
               >
@@ -151,6 +135,6 @@ export const CollaborationSettings = () => {
           ))}
         </Section>
       ) : null}
-    </div>
+    </SettingsView>
   );
 };

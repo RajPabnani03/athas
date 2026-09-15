@@ -1,6 +1,7 @@
 use super::types::{DownloadInfo, ExtensionMetadata, InstallProgress, InstallStatus};
 use crate::runtime::AthasAppHandle as AppHandle;
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use std::{
    fs,
    path::{Path, PathBuf},
@@ -12,18 +13,27 @@ pub struct ExtensionInstaller {
    extensions_dir: PathBuf,
 }
 
-fn validate_extension_id(extension_id: &str) -> Result<()> {
+#[derive(Deserialize)]
+struct InstalledManifest {
+   id: String,
+   name: String,
+   #[serde(rename = "displayName")]
+   display_name: Option<String>,
+   version: String,
+}
+
+pub fn validate_extension_id(extension_id: &str) -> Result<()> {
    if extension_id.is_empty() || extension_id.len() > 128 {
-      anyhow::bail!("Invalid extension id length");
+      anyhow::bail!("Invalid integration id length");
    }
    if extension_id.contains("..") || extension_id.contains('/') || extension_id.contains('\\') {
-      anyhow::bail!("Invalid extension id path characters");
+      anyhow::bail!("Invalid integration id path characters");
    }
    if !extension_id
       .chars()
       .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-')
    {
-      anyhow::bail!("Invalid extension id characters");
+      anyhow::bail!("Invalid integration id characters");
    }
    Ok(())
 }
@@ -55,7 +65,7 @@ impl ExtensionInstaller {
       validate_extension_id(extension_id)?;
 
       log::info!(
-         "Downloading extension {} from {}",
+         "Downloading integration {} from {}",
          extension_id,
          download_info.url
       );
@@ -77,7 +87,7 @@ impl ExtensionInstaller {
          let status = response.status();
          let hint = if status == reqwest::StatusCode::NOT_FOUND {
             format!(
-               ". The package URL is missing from the extensions CDN: {}. Deploy the package or \
+               ". The package URL is missing from the integrations CDN: {}. Deploy the package or \
                 point Athas at a local extensions CDN.",
                download_info.url
             )
@@ -85,13 +95,13 @@ impl ExtensionInstaller {
             String::new()
          };
 
-         anyhow::bail!("Failed to download extension {extension_id}: HTTP {status}{hint}");
+         anyhow::bail!("Failed to download integration {extension_id}: HTTP {status}{hint}");
       }
       let bytes = response.bytes().await?;
 
       if download_info.size > 0 && bytes.len() as u64 != download_info.size {
          anyhow::bail!(
-            "Downloaded extension size mismatch for {}: expected {}, got {}",
+            "Downloaded integration size mismatch for {}: expected {}, got {}",
             extension_id,
             download_info.size,
             bytes.len()
@@ -99,7 +109,7 @@ impl ExtensionInstaller {
       }
 
       log::info!(
-         "Downloaded {} bytes for extension {}",
+         "Downloaded {} bytes for integration {}",
          bytes.len(),
          extension_id
       );
@@ -119,7 +129,7 @@ impl ExtensionInstaller {
          let checksum = sha256::digest(bytes.as_ref());
          if checksum != download_info.checksum {
             anyhow::bail!(
-               "Checksum mismatch for extension {}: expected {}, got {}",
+               "Checksum mismatch for integration {}: expected {}, got {}",
                extension_id,
                download_info.checksum,
                checksum
@@ -129,11 +139,11 @@ impl ExtensionInstaller {
 
       if download_info.checksum.is_empty() {
          log::info!(
-            "Checksum verification skipped for extension {}",
+            "Checksum verification skipped for integration {}",
             extension_id
          );
       } else {
-         log::info!("Checksum verified for extension {}", extension_id);
+         log::info!("Checksum verified for integration {}", extension_id);
       }
 
       // Save to temporary file
@@ -149,7 +159,7 @@ impl ExtensionInstaller {
       validate_extension_id(extension_id)?;
 
       log::info!(
-         "Extracting extension {} from {:?}",
+         "Extracting integration {} from {:?}",
          extension_id,
          archive_path
       );
@@ -164,13 +174,12 @@ impl ExtensionInstaller {
          },
       );
 
-      let extension_dir = self.extensions_dir.join(extension_id);
-
-      // Remove old version if exists
+      let extension_dir = self
+         .extensions_dir
+         .join(format!(".installing-{extension_id}"));
       if extension_dir.exists() {
          fs::remove_dir_all(&extension_dir)?;
       }
-
       fs::create_dir_all(&extension_dir)?;
 
       // Extract tar.gz
@@ -181,12 +190,12 @@ impl ExtensionInstaller {
          let mut entry = entry?;
          let unpacked = entry.unpack_in(&extension_dir)?;
          if !unpacked {
-            anyhow::bail!("Archive entry attempted to escape extension directory");
+            anyhow::bail!("Archive entry attempted to escape integration directory");
          }
       }
 
       log::info!(
-         "Extension {} extracted to {:?}",
+         "Integration {} extracted to {:?}",
          extension_id,
          extension_dir
       );
@@ -197,6 +206,35 @@ impl ExtensionInstaller {
       Ok(extension_dir)
    }
 
+   fn commit_extension(&self, extension_id: &str, staged_dir: &Path) -> Result<()> {
+      let extension_dir = self.extensions_dir.join(extension_id);
+      let backup_dir = self
+         .extensions_dir
+         .join(format!(".previous-{extension_id}"));
+
+      if !extension_dir.exists() && backup_dir.exists() {
+         fs::rename(&backup_dir, &extension_dir)?;
+      } else if backup_dir.exists() {
+         fs::remove_dir_all(&backup_dir)?;
+      }
+
+      if extension_dir.exists() {
+         fs::rename(&extension_dir, &backup_dir)?;
+      }
+
+      if let Err(error) = fs::rename(staged_dir, &extension_dir) {
+         if backup_dir.exists() {
+            let _ = fs::rename(&backup_dir, &extension_dir);
+         }
+         return Err(error.into());
+      }
+
+      if backup_dir.exists() {
+         fs::remove_dir_all(backup_dir)?;
+      }
+      Ok(())
+   }
+
    /// Install extension from download info
    pub async fn install_extension(
       &self,
@@ -205,7 +243,7 @@ impl ExtensionInstaller {
    ) -> Result<()> {
       validate_extension_id(&extension_id)?;
 
-      log::info!("Installing extension {}", extension_id);
+      log::info!("Installing integration {}", extension_id);
 
       // Emit initial progress
       let _ = self.app_handle.emit(
@@ -224,13 +262,57 @@ impl ExtensionInstaller {
          .await?;
 
       // Extract the extension
-      let _ = self.extract_extension(&extension_id, &archive_path).await?;
+      let staged_dir = self.extract_extension(&extension_id, &archive_path).await?;
+      let manifest_path = staged_dir.join("extension.json");
+      let canonical_staged_dir = staged_dir.canonicalize()?;
+      let canonical_manifest_path = match manifest_path.canonicalize() {
+         Ok(path) if path.starts_with(&canonical_staged_dir) => path,
+         Ok(_) => {
+            fs::remove_dir_all(&staged_dir)?;
+            anyhow::bail!("Integration manifest escaped its package directory");
+         }
+         Err(error) => {
+            fs::remove_dir_all(&staged_dir)?;
+            return Err(error).context("Integration package is missing extension.json");
+         }
+      };
+      let manifest_bytes = match fs::read(&canonical_manifest_path)
+         .with_context(|| format!("Integration package is missing {}", manifest_path.display()))
+      {
+         Ok(bytes) => bytes,
+         Err(error) => {
+            fs::remove_dir_all(&staged_dir)?;
+            return Err(error);
+         }
+      };
+      let manifest_result: Result<InstalledManifest> = serde_json::from_slice(&manifest_bytes)
+         .context("Integration package contains an invalid manifest");
+      let manifest = match manifest_result {
+         Ok(manifest) => manifest,
+         Err(error) => {
+            fs::remove_dir_all(&staged_dir)?;
+            return Err(error);
+         }
+      };
+      if manifest.id != extension_id {
+         fs::remove_dir_all(&staged_dir)?;
+         anyhow::bail!(
+            "Integration manifest id mismatch: expected {}, got {}",
+            extension_id,
+            manifest.id
+         );
+      }
+      if manifest.name.trim().is_empty() || manifest.version.trim().is_empty() {
+         fs::remove_dir_all(&staged_dir)?;
+         anyhow::bail!("Integration manifest name and version must not be empty");
+      }
+      self.commit_extension(&extension_id, &staged_dir)?;
 
       // Save metadata
       let metadata = ExtensionMetadata {
          id: extension_id.clone(),
-         name: extension_id.clone(),
-         version: "1.0.0".to_string(), // TODO: Get from manifest
+         name: manifest.display_name.unwrap_or(manifest.name),
+         version: manifest.version,
          installed_at: chrono::Utc::now().to_rfc3339(),
          enabled: true,
       };
@@ -248,7 +330,7 @@ impl ExtensionInstaller {
          },
       );
 
-      log::info!("Extension {} installed successfully", extension_id);
+      log::info!("Integration {} installed successfully", extension_id);
       Ok(())
    }
 
@@ -256,14 +338,14 @@ impl ExtensionInstaller {
    pub fn uninstall_extension(&self, extension_id: &str) -> Result<()> {
       validate_extension_id(extension_id)?;
 
-      log::info!("Uninstalling extension {}", extension_id);
+      log::info!("Uninstalling integration {}", extension_id);
 
       let extension_dir = self.extensions_dir.join(extension_id);
       if extension_dir.exists() {
          fs::remove_dir_all(&extension_dir)?;
-         log::info!("Extension {} uninstalled successfully", extension_id);
+         log::info!("Integration {} uninstalled successfully", extension_id);
       } else {
-         log::warn!("Extension {} not found", extension_id);
+         log::warn!("Integration {} not found", extension_id);
       }
 
       // Remove metadata

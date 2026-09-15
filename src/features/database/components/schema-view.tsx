@@ -1,40 +1,42 @@
 import {
-  CalendarIcon as Calendar,
-  FileTextIcon as FileText,
-  FunnelIcon as Filter,
-  HashIcon as Hash,
-  KeyIcon as Key,
-  LinkIcon as Link,
-  TextTIcon as Type,
-} from "@phosphor-icons/react";
+  CalendarIcon,
+  FileTextIcon,
+  FilterIcon,
+  HashIcon,
+  KeyIcon,
+  LinkIcon,
+  TextIcon,
+} from "@/ui/icons";
 import { Button } from "@/ui/button";
+import { ScrollArea } from "@/ui/scroll-area";
 import {
   formatForeignKeyLabel,
   getColumnConstraintLabels,
   mapForeignKeysByColumn,
 } from "../lib/database-schema";
 import type { ColumnInfo, ForeignKeyInfo } from "../types/common.types";
+import { databaseCardClassName } from "../utils/database-surface";
 
-const COLUMN_ICONS: Record<string, { icon: typeof Hash; color: string }> = {
-  int: { icon: Hash, color: "text-accent" },
-  num: { icon: Hash, color: "text-accent" },
-  text: { icon: Type, color: "text-text-lighter" },
-  varchar: { icon: Type, color: "text-text-lighter" },
-  char: { icon: Type, color: "text-text-lighter" },
-  date: { icon: Calendar, color: "text-accent" },
-  time: { icon: Calendar, color: "text-accent" },
-  blob: { icon: FileText, color: "text-text-lighter" },
-  binary: { icon: FileText, color: "text-text-lighter" },
+const COLUMN_ICONS: Record<string, { icon: typeof HashIcon; color: string }> = {
+  int: { icon: HashIcon, color: "text-primary" },
+  num: { icon: HashIcon, color: "text-primary" },
+  text: { icon: TextIcon, color: "text-subtle-foreground" },
+  varchar: { icon: TextIcon, color: "text-subtle-foreground" },
+  char: { icon: TextIcon, color: "text-subtle-foreground" },
+  date: { icon: CalendarIcon, color: "text-primary" },
+  time: { icon: CalendarIcon, color: "text-primary" },
+  blob: { icon: FileTextIcon, color: "text-subtle-foreground" },
+  binary: { icon: FileTextIcon, color: "text-subtle-foreground" },
 };
 
 function getColumnIcon(type: string, isPrimaryKey: boolean, isForeignKey: boolean) {
-  if (isPrimaryKey) return <Key className="text-text-lighter" />;
-  if (isForeignKey) return <Link className="text-accent" />;
+  if (isPrimaryKey) return <KeyIcon className="text-subtle-foreground" />;
+  if (isForeignKey) return <LinkIcon className="text-primary" />;
   const lowerType = type.toLowerCase();
   for (const [key, { icon: Icon, color }] of Object.entries(COLUMN_ICONS)) {
     if (lowerType.includes(key)) return <Icon className={color} />;
   }
-  return <Type className="text-text-lighter" />;
+  return <TextIcon className="text-subtle-foreground" />;
 }
 
 interface SchemaViewProps {
@@ -55,31 +57,31 @@ export default function SchemaView({
   const fkMap = mapForeignKeysByColumn(foreignKeys);
 
   return (
-    <div className="flex-1 overflow-auto ui-font">
+    <ScrollArea fill="flex" className="font-sans" orientation="both">
       <div className="px-3 py-3">
-        <div className="ui-text-sm text-text">{tableName}</div>
-        <div className="ui-text-xs text-text-lighter">{columns.length} columns</div>
+        <div className="ui-text-sm text-foreground">{tableName}</div>
+        <div className="ui-text-sm text-subtle-foreground">{columns.length} columns</div>
       </div>
-      <div className="mx-3 mb-3 divide-y divide-border/60 rounded-lg border border-border/60 bg-secondary-bg/40">
+      <div className={databaseCardClassName("mx-3 mb-3 divide-y divide-border/60")}>
         {columns.map((column) => {
           const fk = fkMap.get(column.name);
           const constraintLabels = getColumnConstraintLabels(column);
           return (
             <div
               key={column.name}
-              className="flex items-center justify-between px-3 py-2 transition-colors hover:bg-hover"
+              className="flex items-center justify-between px-3 py-2 transition-colors hover:bg-accent"
             >
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 {getColumnIcon(column.type, column.primary_key, !!fk)}
-                <span className="truncate ui-text-sm text-text">{column.name}</span>
-                <span className="ui-text-xs text-text-lighter">{column.type}</span>
+                <span className="truncate ui-text-sm text-foreground">{column.name}</span>
+                <span className="ui-text-sm text-subtle-foreground">{column.type}</span>
                 {constraintLabels.map((label) => (
-                  <span key={label} className="truncate ui-text-xs text-text-lighter">
+                  <span key={label} className="truncate ui-text-sm text-subtle-foreground">
                     {label}
                   </span>
                 ))}
                 {fk && (
-                  <span className="truncate ui-text-xs text-accent">
+                  <span className="truncate ui-text-sm text-primary">
                     {formatForeignKeyLabel(fk)}
                   </span>
                 )}
@@ -89,16 +91,16 @@ export default function SchemaView({
                   type="button"
                   variant="ghost"
                   onClick={() => onAddFilter(column.name)}
-                  className="rounded-md text-text-lighter opacity-60 hover:text-text hover:opacity-100"
                   aria-label={`Filter by ${column.name}`}
+                  iconOnly
                 >
-                  <Filter />
+                  <FilterIcon />
                 </Button>
               )}
             </div>
           );
         })}
       </div>
-    </div>
+    </ScrollArea>
   );
 }

@@ -1,5 +1,3 @@
-import type { EditorAPI } from "@/features/editor/types/editor-extension.types";
-import { BaseThemeExtension } from "./base-theme-extension";
 // Import all theme JSON files
 import ayuThemes from "./builtin/ayu.json";
 import athasThemes from "./builtin/athas.json";
@@ -11,36 +9,24 @@ import githubThemes from "./builtin/github.json";
 import nordThemes from "./builtin/nord.json";
 import oneThemes from "./builtin/one.json";
 import solarizedThemes from "./builtin/solarized.json";
+import { parseThemeFile, toThemeDefinition } from "./theme-file";
+import type { ThemeFile } from "./theme-schema";
 import tokyoNightThemes from "./builtin/tokyo-night.json";
 import vitesseThemes from "./builtin/vitesse.json";
-import type { ThemeDefinition } from "./types";
+import type { ThemeDefinition } from "./theme.types";
 
-/**
- * New theme format from JSON files
- */
-interface JsonTheme {
-  id: string;
-  name: string;
-  description?: string;
-  appearance: "dark" | "light";
-  colors: Record<string, string>;
-  syntax: Record<string, string>;
-}
-
-interface ThemeFile {
-  name: string;
-  author?: string;
-  description?: string;
-  themes: JsonTheme[];
-}
-
-export class ThemeLoader extends BaseThemeExtension {
-  readonly name = "Theme Loader";
-  readonly version = "1.0.0";
-  readonly description = "Loads themes from JSON configuration files";
+class ThemeLoader {
   themes: ThemeDefinition[] = [];
+  private initializationPromise: Promise<void> | null = null;
 
-  async onInitialize(_editor: EditorAPI): Promise<void> {
+  initialize(): Promise<void> {
+    if (!this.initializationPromise) {
+      this.initializationPromise = this.loadBundledThemes();
+    }
+    return this.initializationPromise;
+  }
+
+  private async loadBundledThemes(): Promise<void> {
     try {
       // Combine all theme files
       const allThemeFiles: ThemeFile[] = [
@@ -58,11 +44,9 @@ export class ThemeLoader extends BaseThemeExtension {
         vitesseThemes as ThemeFile,
       ];
 
-      // Flatten all themes from all files
-      const allThemes: JsonTheme[] = allThemeFiles.flatMap((file) => file.themes);
+      const allThemes = allThemeFiles.flatMap((file) => file.themes);
 
-      // Convert to ThemeDefinition format
-      this.themes = allThemes.map((jsonTheme) => this.convertJsonToThemeDefinition(jsonTheme));
+      this.themes = allThemes.map(toThemeDefinition);
 
       // Register themes with the theme registry
       const { themeRegistry } = await import("./theme-registry");
@@ -76,33 +60,6 @@ export class ThemeLoader extends BaseThemeExtension {
     }
   }
 
-  private convertJsonToThemeDefinition(jsonTheme: JsonTheme): ThemeDefinition {
-    const cssVariables: Record<string, string> = {};
-    for (const [key, value] of Object.entries(jsonTheme.colors)) {
-      cssVariables[`--${key}`] = value;
-      cssVariables[`--color-${key}`] = value;
-    }
-
-    const syntaxTokens: Record<string, string> = {};
-    for (const [key, value] of Object.entries(jsonTheme.syntax)) {
-      syntaxTokens[`--syntax-${key}`] = value;
-      syntaxTokens[`--color-syntax-${key}`] = value;
-    }
-
-    const isDark = jsonTheme.appearance === "dark";
-
-    return {
-      id: jsonTheme.id,
-      name: jsonTheme.name,
-      description: jsonTheme.description || "",
-      category: isDark ? "Dark" : "Light",
-      cssVariables,
-      syntaxTokens,
-      isDark,
-      icon: undefined,
-    };
-  }
-
   async loadFromFile(filePath: string): Promise<ThemeDefinition[]> {
     try {
       // Read JSON file
@@ -111,16 +68,15 @@ export class ThemeLoader extends BaseThemeExtension {
         throw new Error(`Failed to fetch theme file: ${response.statusText}`);
       }
 
-      const themeFile: ThemeFile = await response.json();
-      return themeFile.themes.map((jsonTheme) => this.convertJsonToThemeDefinition(jsonTheme));
+      const themeFile = parseThemeFile(await response.json());
+      return themeFile.themes.map(toThemeDefinition);
     } catch (error) {
       console.error(`ThemeLoader: Failed to load theme from ${filePath}:`, error);
       return [];
     }
   }
 
-  async getCachedThemes(): Promise<ThemeDefinition[]> {
-    // Since themes are now loaded directly via imports, just return the loaded themes
+  getCachedThemes(): ThemeDefinition[] {
     return this.themes;
   }
 }

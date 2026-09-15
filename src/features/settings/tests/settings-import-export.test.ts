@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { defaultSettings } from "@/features/settings/config/default-settings";
+import { SETTINGS_SCHEMA_VERSION } from "@/features/settings/lib/settings-migrations";
 import {
   createSettingsExportPayload,
   parseSettingsImportJson,
@@ -13,7 +14,7 @@ describe("settings import/export", () => {
     });
 
     expect(payload.format).toBe("athas.settings");
-    expect(payload.version).toBe(1);
+    expect(payload.version).toBe(SETTINGS_SCHEMA_VERSION);
     expect(payload.settings.fontSize).toBe(15);
   });
 
@@ -40,10 +41,73 @@ describe("settings import/export", () => {
         settings: {
           ...defaultSettings,
           wordWrap: true,
+          coreFeatures: {
+            ...defaultSettings.coreFeatures,
+            debugger: false,
+          },
         },
       }),
     );
 
     expect(imported?.wordWrap).toBe(true);
+    expect(imported?.coreFeatures.debugger).toBe(true);
+  });
+
+  it("preserves Debugger preferences from the current settings schema", () => {
+    const imported = parseSettingsImportJson(
+      JSON.stringify({
+        format: "athas.settings",
+        version: SETTINGS_SCHEMA_VERSION,
+        exportedAt: "2026-08-29T00:00:00.000Z",
+        settings: {
+          ...defaultSettings,
+          coreFeatures: {
+            ...defaultSettings.coreFeatures,
+            debugger: false,
+          },
+        },
+      }),
+    );
+
+    expect(imported?.coreFeatures.debugger).toBe(false);
+  });
+
+  it("disables compact folders when importing settings from the previous schema", () => {
+    const imported = parseSettingsImportJson(
+      JSON.stringify({
+        format: "athas.settings",
+        version: 3,
+        exportedAt: "2026-08-30T00:00:00.000Z",
+        settings: {
+          ...defaultSettings,
+          compactFoldersInFileTree: true,
+        },
+      }),
+    );
+
+    expect(imported?.compactFoldersInFileTree).toBe(false);
+  });
+
+  it("preserves a compact folders opt-in from the current settings schema", () => {
+    const imported = parseSettingsImportJson(
+      JSON.stringify({
+        format: "athas.settings",
+        version: SETTINGS_SCHEMA_VERSION,
+        exportedAt: "2026-08-31T00:00:00.000Z",
+        settings: {
+          ...defaultSettings,
+          compactFoldersInFileTree: true,
+        },
+      }),
+    );
+
+    expect(imported?.compactFoldersInFileTree).toBe(true);
+  });
+
+  it("preserves the shared sidebar width when importing legacy settings", () => {
+    const imported = parseSettingsImportJson(JSON.stringify({ sidebarWidth: 340 }));
+
+    expect(imported?.sidebarWidth).toBe(340);
+    expect(imported?.rightSidebarWidth).toBe(340);
   });
 });

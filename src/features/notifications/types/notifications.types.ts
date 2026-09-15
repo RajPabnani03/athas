@@ -1,12 +1,29 @@
 import type { ReactNode } from "react";
-import type { NotificationEntry } from "@/ui/toast";
 
-export type NotificationFilter = "all" | NotificationEntry["type"];
+export type NotificationType = "info" | "success" | "warning" | "error";
+export type NotificationCategory = "athas" | "agent" | "github";
+export type NotificationCategoryFilter = "all" | NotificationCategory;
 
-export type NotificationItemAction = {
+export interface NotificationEntry {
   id: string;
-  label: string;
-  icon: ReactNode;
-  onSelect: () => void;
-  variant?: "default" | "danger";
-};
+  message: string;
+  description?: string;
+  type: NotificationType;
+  category: NotificationCategory;
+  createdAt: number;
+  updatedAt: number;
+  read: boolean;
+}
+
+export interface ToastInput {
+  key?: string;
+  message: string;
+  description?: string;
+  type: NotificationType;
+  duration?: number;
+  icon?: ReactNode;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
+}

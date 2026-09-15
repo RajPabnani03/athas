@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { Terminal as TerminalType } from "@/features/terminal/types/terminal.types";
+import type {
+  Terminal as TerminalType,
+  TerminalCommandNavigationDirection,
+  TerminalEmulatorHandle,
+  TerminalSessionHandle,
+} from "@/features/terminal/types/terminal.types";
 import { TerminalErrorBoundary } from "./terminal-error-boundary";
 import { TerminalSlot } from "./terminal-slot";
 
@@ -9,10 +14,7 @@ interface TerminalSessionProps {
   isVisible?: boolean;
   onDirectoryChange?: (terminalId: string, directory: string) => void;
   onActivity?: (terminalId: string) => void;
-  onRegisterRef?: (
-    terminalId: string,
-    ref: { focus: () => void; showSearch: () => void } | null,
-  ) => void;
+  onRegisterRef?: (terminalId: string, ref: TerminalSessionHandle | null) => void;
   onTerminalExit?: (terminalId: string) => void;
 }
 
@@ -39,7 +41,14 @@ const TerminalSession = ({
 
       requestAnimationFrame(() => {
         const textarea = ref.terminal?.textarea;
-        if (textarea && document.activeElement !== textarea) {
+        const terminalElement = ref.terminal?.element;
+        const activeElement = document.activeElement;
+        const hasTerminalFocus =
+          activeElement === textarea ||
+          activeElement === terminalElement ||
+          terminalElement?.contains(activeElement);
+
+        if (textarea && !hasTerminalFocus) {
           tryFocus();
         }
       });
@@ -57,19 +66,51 @@ const TerminalSession = ({
     focusTerminal();
   }, [focusTerminal]);
 
-  const handleTerminalRef = useCallback((ref: any) => {
+  const navigateCommand = useCallback((direction: TerminalCommandNavigationDirection) => {
+    xtermInstanceRef.current?.navigateCommand(direction);
+  }, []);
+
+  const clear = useCallback(() => {
+    xtermInstanceRef.current?.clear();
+  }, []);
+
+  const selectAll = useCallback(() => {
+    xtermInstanceRef.current?.selectAll();
+  }, []);
+
+  const copyLastCommandOutput = useCallback(() => {
+    xtermInstanceRef.current?.copyLastCommandOutput();
+  }, []);
+
+  const handleTerminalRef = useCallback((ref: TerminalEmulatorHandle) => {
     xtermInstanceRef.current = ref;
     terminalRef.current = ref;
   }, []);
 
   useEffect(() => {
     if (onRegisterRef) {
-      onRegisterRef(terminal.id, { focus: focusTerminal, showSearch });
+      onRegisterRef(terminal.id, {
+        focus: focusTerminal,
+        showSearch,
+        navigateCommand,
+        clear,
+        selectAll,
+        copyLastCommandOutput,
+      });
       return () => {
         onRegisterRef(terminal.id, null);
       };
     }
-  }, [terminal.id, onRegisterRef, focusTerminal, showSearch]);
+  }, [
+    terminal.id,
+    onRegisterRef,
+    focusTerminal,
+    showSearch,
+    navigateCommand,
+    clear,
+    selectAll,
+    copyLastCommandOutput,
+  ]);
 
   useEffect(() => {
     if (isActive && onActivity) {
@@ -84,7 +125,10 @@ const TerminalSession = ({
           sessionId={terminal.id}
           isActive={isActive}
           isVisible={isVisible}
+          shell={terminal.shell}
           initialCommand={terminal.initialCommand}
+          environment={terminal.environment}
+          workingDirectory={terminal.currentDirectory}
           remoteConnectionId={terminal.remoteConnectionId}
           onTerminalExit={onTerminalExit}
           onTerminalRef={handleTerminalRef}

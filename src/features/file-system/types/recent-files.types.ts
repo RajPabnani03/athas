@@ -8,17 +8,17 @@ export interface RecentFile {
   external?: boolean;
 }
 
-export interface RecentFileMetadata {
+interface RecentFileMetadata {
   workspacePath?: string | null;
   external?: boolean;
 }
 
-interface RecentFilesState {
+export interface RecentFilesState {
   recentFiles: RecentFile[];
   maxRecentFiles: number;
 }
 
-interface RecentFilesActions {
+export interface RecentFilesActions {
   addOrUpdateRecentFile: (path: string, name: string, metadata?: RecentFileMetadata) => void;
   getRecentFilesOrderedByFrecency: () => RecentFile[];
   removeRecentFile: (path: string) => void;
@@ -26,4 +26,6 @@ interface RecentFilesActions {
   pruneOldFiles: () => void;
 }
 
-export type RecentFilesStore = RecentFilesState & RecentFilesActions;
+export interface RecentFilesStore extends RecentFilesState {
+  actions: RecentFilesActions;
+}

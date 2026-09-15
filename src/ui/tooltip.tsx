@@ -1,20 +1,22 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react";
 import { cva } from "class-variance-authority";
 import type React from "react";
-import Keybinding from "@/ui/keybinding";
+import Keybinding from "@/features/keymaps/components/keybinding";
 import { cn } from "@/utils/cn";
 
 interface TooltipProps {
   content: string;
   children: React.ReactNode;
-  side?: "top" | "bottom" | "left" | "right";
   shortcut?: string;
-  className?: string;
-  triggerClassName?: string;
+  width?: "content" | "full" | "grow" | null;
+}
+
+interface AnchoredTooltipProps extends Omit<TooltipProps, "children"> {
+  anchor: Element | null;
 }
 
 const tooltipContentVariants = cva(
-  "ui-text-sm pointer-events-none z-[99999] whitespace-nowrap rounded-lg border border-border/70 bg-secondary-bg/95 px-2.5 py-1.5 text-text shadow-[var(--shadow-popover)] backdrop-blur-sm transition-[opacity,transform,filter] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] [filter:blur(0)] data-[ending-style]:opacity-0 data-[ending-style]:[filter:blur(2px)] data-[side=bottom]:data-[ending-style]:-translate-y-1 data-[side=bottom]:data-[starting-style]:-translate-y-1 data-[side=bottom]:data-[starting-style]:opacity-0 data-[side=bottom]:data-[starting-style]:[filter:blur(2px)] data-[side=left]:data-[ending-style]:translate-x-1 data-[side=left]:data-[starting-style]:translate-x-1 data-[side=left]:data-[starting-style]:opacity-0 data-[side=left]:data-[starting-style]:[filter:blur(2px)] data-[side=right]:data-[ending-style]:-translate-x-1 data-[side=right]:data-[starting-style]:-translate-x-1 data-[side=right]:data-[starting-style]:opacity-0 data-[side=right]:data-[starting-style]:[filter:blur(2px)] data-[side=top]:data-[ending-style]:translate-y-1 data-[side=top]:data-[starting-style]:translate-y-1 data-[side=top]:data-[starting-style]:opacity-0 data-[side=top]:data-[starting-style]:[filter:blur(2px)]",
+  "ui-text-chrome pointer-events-none z-99999 whitespace-nowrap rounded-lg border border-border/50 bg-surface/90 px-2.5 py-1.5 text-subtle-foreground shadow-(--shadow-card) backdrop-blur-md transition-[opacity,transform] duration-fast ease-smooth data-ending-style:opacity-0 data-[side=bottom]:data-ending-style:-translate-y-0.5 data-[side=bottom]:data-starting-style:-translate-y-0.5 data-[side=bottom]:data-starting-style:opacity-0 data-[side=left]:data-ending-style:translate-x-0.5 data-[side=left]:data-starting-style:translate-x-0.5 data-[side=left]:data-starting-style:opacity-0 data-[side=right]:data-ending-style:-translate-x-0.5 data-[side=right]:data-starting-style:-translate-x-0.5 data-[side=right]:data-starting-style:opacity-0 data-[side=top]:data-ending-style:translate-y-0.5 data-[side=top]:data-starting-style:translate-y-0.5 data-[side=top]:data-starting-style:opacity-0",
 );
 
 export function TooltipProvider({ children }: { children: React.ReactNode }) {
@@ -25,40 +27,63 @@ export function TooltipProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function Tooltip({
+function TooltipContent({
+  anchor,
   content,
-  children,
-  side = "top",
   shortcut,
-  className,
-  triggerClassName,
-}: TooltipProps) {
+}: Pick<TooltipProps, "content" | "shortcut"> & { anchor?: Element }) {
+  return (
+    <TooltipPrimitive.Portal>
+      <TooltipPrimitive.Positioner
+        anchor={anchor}
+        side="top"
+        sideOffset={4}
+        collisionPadding={8}
+        positionMethod={anchor ? "fixed" : undefined}
+        className="z-99999"
+      >
+        <TooltipPrimitive.Popup
+          className={cn(tooltipContentVariants(), shortcut && "flex items-center gap-2")}
+        >
+          {content}
+          {shortcut ? (
+            <span className="opacity-70">
+              <Keybinding binding={shortcut} />
+            </span>
+          ) : null}
+        </TooltipPrimitive.Popup>
+      </TooltipPrimitive.Positioner>
+    </TooltipPrimitive.Portal>
+  );
+}
+
+export function AnchoredTooltip({ anchor, content, shortcut }: AnchoredTooltipProps) {
+  if (!anchor) return null;
+
+  return (
+    <TooltipPrimitive.Root open disableHoverablePopup>
+      <TooltipContent anchor={anchor} content={content} shortcut={shortcut} />
+    </TooltipPrimitive.Root>
+  );
+}
+
+export default function Tooltip({ content, children, shortcut, width }: TooltipProps) {
   return (
     <TooltipPrimitive.Root disableHoverablePopup>
       <TooltipPrimitive.Trigger
-        render={<span className={cn("inline-flex items-center", triggerClassName)} />}
+        render={
+          <span
+            className={cn(
+              "inline-flex min-w-0 items-center",
+              width === "full" && "w-full",
+              width === "grow" && "flex-1",
+            )}
+          />
+        }
       >
         {children}
       </TooltipPrimitive.Trigger>
-      <TooltipPrimitive.Portal>
-        <TooltipPrimitive.Positioner
-          side={side}
-          sideOffset={6}
-          collisionPadding={8}
-          className="z-[99999]"
-        >
-          <TooltipPrimitive.Popup
-            className={cn(
-              tooltipContentVariants(),
-              shortcut && "flex items-center gap-2",
-              className,
-            )}
-          >
-            {content}
-            {shortcut && <Keybinding binding={shortcut} />}
-          </TooltipPrimitive.Popup>
-        </TooltipPrimitive.Positioner>
-      </TooltipPrimitive.Portal>
+      <TooltipContent content={content} shortcut={shortcut} />
     </TooltipPrimitive.Root>
   );
 }

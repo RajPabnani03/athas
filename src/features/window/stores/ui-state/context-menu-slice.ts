@@ -2,9 +2,7 @@ import type { StateCreator } from "zustand";
 import type { DatabaseObjectKind, DatabaseRow } from "@/features/database/types/common.types";
 import type { DatabaseType } from "@/features/database/types/provider.types";
 
-export interface ContextMenuState {
-  folderHeaderContextMenu: { x: number; y: number } | null;
-  projectNameMenu: { x: number; y: number } | null;
+interface ContextMenuState {
   databaseTableMenu: {
     x: number;
     y: number;
@@ -21,8 +19,7 @@ export interface ContextMenuState {
   } | null;
 }
 
-export interface ContextMenuActions {
-  setProjectNameMenu: (v: { x: number; y: number } | null) => void;
+interface ContextMenuActions {
   setDatabaseTableMenu: (
     v: {
       x: number;
@@ -48,14 +45,9 @@ export type ContextMenuSlice = ContextMenuState & ContextMenuActions;
 export const createContextMenuSlice: StateCreator<ContextMenuSlice, [], [], ContextMenuSlice> = (
   set,
 ) => ({
-  // State
-  folderHeaderContextMenu: null,
-  projectNameMenu: null,
   databaseTableMenu: null,
   databaseRowMenu: null,
 
-  // Actions
-  setProjectNameMenu: (v: { x: number; y: number } | null) => set({ projectNameMenu: v }),
   setDatabaseTableMenu: (
     v: {
       x: number;

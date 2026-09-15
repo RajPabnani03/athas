@@ -16,6 +16,17 @@ pub struct LspDiagnosticContext {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LspCodeActionContext {
+   pub start_line: u32,
+   pub start_column: u32,
+   pub end_line: u32,
+   pub end_column: u32,
+   #[serde(default)]
+   pub diagnostics: Vec<LspDiagnosticContext>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LspCodeActionItem {
    pub id: String,
    pub title: String,
@@ -50,6 +61,20 @@ pub struct FlatSymbol {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FlatWorkspaceSymbol {
+   pub name: String,
+   pub kind: String,
+   pub detail: Option<String>,
+   pub line: u32,
+   pub character: u32,
+   pub end_line: u32,
+   pub end_character: u32,
+   pub container_name: Option<String>,
+   pub file_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FlatInlayHint {
    pub line: u32,
    pub character: u32,
@@ -66,8 +91,15 @@ pub struct FlatSemanticToken {
    pub start_char: u32,
    pub length: u32,
    pub token_type: u32,
-   pub token_type_name: Option<String>,
    pub token_modifiers: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LspSemanticTokensResponse {
+   pub tokens: Vec<FlatSemanticToken>,
+   pub token_types: Vec<String>,
+   pub token_modifiers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -7,7 +7,12 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use app_runtime::AthasRuntime;
 use app_setup::{configure_app, shutdown_background_services};
 use commands::*;
-use terminal::{close_terminal, create_terminal, list_shells, terminal_resize, terminal_write};
+use tauri::Manager;
+use tauri_plugin_window_state::StateFlags;
+use terminal::{
+   begin_frontend_terminal_session, close_terminal, create_terminal, list_shells, terminal_resize,
+   terminal_set_paused, terminal_write, warm_terminal_environment,
+};
 
 mod app_runtime;
 mod app_setup;
@@ -17,43 +22,93 @@ mod file_events;
 mod logger;
 mod menu;
 mod secure_storage;
+mod service_urls;
 mod terminal;
 
 #[cfg_attr(all(target_os = "linux", feature = "linux"), tauri::cef_entry_point)]
 fn main() {
-   #[cfg(target_os = "linux")]
-   if cfg!(not(feature = "linux")) && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
-      // SAFETY: Called at program start before any threads are spawned
-      unsafe {
-         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-      }
+   let mut cli_args = std::env::args().skip(1).collect::<Vec<_>>();
+   let validate_cli = cli_args.first().is_some_and(|arg| arg == "--validate-cli");
+   if validate_cli {
+      cli_args.remove(0);
    }
+   if cli_args
+      .first()
+      .is_some_and(|arg| matches!(arg.as_str(), "help" | "--help" | "-h"))
+   {
+      println!("{}", commands::development::cli::CLI_HELP_TEXT);
+      return;
+   }
+   let cli_requests = commands::development::cli_args::parse_cli_args(
+      &cli_args,
+      &std::env::current_dir().unwrap_or_default(),
+   );
+   if validate_cli {
+      if !cli_args.is_empty() && cli_requests.is_empty() {
+         eprintln!("athas: invalid arguments or inaccessible path. Run athas --help for usage.");
+         std::process::exit(1);
+      }
+      return;
+   }
+   let startup_timing = StartupTiming::new();
+
+   let _ = rustls::crypto::ring::default_provider().install_default();
+
+   #[cfg(target_os = "linux")]
+   bootstrap::linux::configure_graphics_fallback();
 
    #[cfg(target_os = "macos")]
    bootstrap::macos::disable_macos_autofill_heuristics();
 
-   tauri::Builder::<AthasRuntime>::new()
+   let mut context = tauri::generate_context!();
+   if !commands::development::cli_windows::requests_need_workbench(&cli_requests) {
+      for window in &mut context.config_mut().app.windows {
+         window.create = false;
+      }
+   }
+   let builder = tauri::Builder::<AthasRuntime>::new();
+
+   #[cfg(all(target_os = "linux", feature = "linux"))]
+   let builder = builder.command_line_args(bootstrap::linux::cef_command_line_args());
+
+   builder
+      .on_window_event(|window, event| {
+         if matches!(event, tauri::WindowEvent::Destroyed) {
+            terminal::close_window_terminals(window.app_handle(), window.label());
+         }
+      })
+      .manage(startup_timing)
       .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
          app_setup::handle_single_instance_open(app, args, cwd);
       }))
       .plugin(tauri_plugin_store::Builder::default().build())
       .plugin(tauri_plugin_clipboard_manager::init())
       .plugin(logger::init(log::LevelFilter::Info))
-      .plugin(tauri_plugin_window_state::Builder::new().build())
+      .plugin(
+         tauri_plugin_window_state::Builder::new()
+            .with_state_flags(window_state_flags())
+            .build(),
+      )
       .plugin(tauri_plugin_fs::init())
       .plugin(tauri_plugin_dialog::init())
       .plugin(tauri_plugin_shell::init())
       .plugin(tauri_plugin_opener::init())
       .plugin(tauri_plugin_os::init())
       .plugin(tauri_plugin_http::init())
+      .plugin(tauri_plugin_notification::init())
       .plugin(tauri_plugin_process::init())
       .plugin(tauri_plugin_deep_link::init())
+      .plugin(tauri_plugin_drag::init())
       .plugin(tauri_plugin_updater::Builder::new().build())
       .setup(configure_app)
       .invoke_handler(tauri::generate_handler![
          // File system commands
+         read_athas_log,
+         read_local_file,
+         get_local_directory_size,
          open_file_external,
-         open_folder_dialog,
+         toggle_quick_look,
+         show_share_picker,
          move_file,
          rename_file,
          get_symlink_info,
@@ -68,6 +123,7 @@ fn main() {
          clipboard_clear,
          clipboard_paste,
          // Git commands
+         git_clone,
          git_status,
          git_discover_repo,
          git_add,
@@ -80,6 +136,7 @@ fn main() {
          git_diff_file_with_content,
          git_status_diff_stats,
          git_commit_diff,
+         git_file_at_commit,
          git_ref_diff,
          git_branches,
          git_checkout,
@@ -115,16 +172,48 @@ fn main() {
          git_blame_file,
          // GitHub commands
          store_github_token,
+         github_token_status,
+         store_github_personal_access_token,
+         remove_github_personal_access_token,
+         refresh_github_gh_cli_token,
+         github_gh_cli_availability,
          get_github_token,
          remove_github_token,
          github_check_auth,
+         github_list_notifications,
+         github_resolve_notification_workflow_run,
          github_list_prs,
          github_list_issues,
+         github_upload_release_asset,
+         github_delete_release_asset,
+         github_list_releases,
+         github_get_release,
+         github_save_release,
+         github_publish_release,
+         github_delete_release,
+         github_generate_release_notes,
+         github_list_deployments,
+         github_get_deployment,
+         github_deactivate_deployment,
          github_list_workflow_runs,
          github_list_workflows,
          github_list_labels,
+         github_list_milestones,
+         github_list_issue_types,
          github_create_issue,
+         github_update_issue,
+         github_update_issue_state,
+         github_add_issue_comment,
+         github_update_issue_comment,
+         github_delete_issue_comment,
+         github_lock_issue,
+         github_unlock_issue,
          github_create_pull_request,
+         github_update_pull_request,
+         github_add_pr_comment,
+         github_submit_pr_review,
+         github_merge_pull_request,
+         github_close_pull_request,
          github_dispatch_workflow,
          github_get_current_user,
          github_checkout_pr,
@@ -135,6 +224,8 @@ fn main() {
          github_get_issue_details,
          github_get_workflow_run_details,
          github_get_workflow_job_logs,
+         github_rerun_workflow_run,
+         github_cancel_workflow_run,
          // AI Provider token commands
          store_ai_provider_token,
          get_ai_provider_token,
@@ -146,6 +237,7 @@ fn main() {
          // Chat history commands
          init_chat_database,
          save_chat,
+         update_chat_metadata,
          load_all_chats,
          load_chat,
          delete_chat,
@@ -153,19 +245,13 @@ fn main() {
          get_chat_stats,
          // Window commands
          create_app_window,
+         note_recent_document,
+         set_window_document_state,
+         show_native_choice_sheet,
          uses_native_window_chrome,
-         set_macos_window_appearance,
+         set_native_window_appearance,
          set_window_transparency_enabled,
-         create_embedded_webview,
-         close_embedded_webview,
-         close_all_embedded_webviews,
-         clear_embedded_webview_browsing_data,
-         navigate_embedded_webview,
-         resize_embedded_webview,
-         set_webview_visible,
-         open_webview_devtools,
          reopen_current_webview_devtools,
-         set_webview_zoom,
          // File watcher commands
          start_watching,
          stop_watching,
@@ -174,11 +260,14 @@ fn main() {
          get_remote_credential,
          remove_remote_credential,
          // Terminal commands
+         begin_frontend_terminal_session,
          create_terminal,
          terminal_write,
          terminal_resize,
+         terminal_set_paused,
          close_terminal,
          list_shells,
+         warm_terminal_environment,
          // execute_shell,
          // SSH commands
          ssh_connect,
@@ -196,10 +285,26 @@ fn main() {
          create_remote_terminal,
          remote_terminal_write,
          remote_terminal_resize,
+         remote_terminal_set_paused,
          close_remote_terminal,
+         // WSL commands
+         wsl_list_distributions,
+         wsl_get_home_dir,
+         wsl_read_directory,
+         wsl_read_file,
+         wsl_read_file_bytes,
+         wsl_write_file,
+         wsl_create_file,
+         wsl_create_directory,
+         wsl_delete_path,
+         wsl_rename_path,
+         wsl_copy_path,
+         wsl_get_symlink_info,
+         wsl_resolve_windows_path,
          // ACP agent commands (new)
          get_available_agents,
          install_acp_agent,
+         update_acp_agent,
          uninstall_acp_agent,
          start_acp_agent,
          stop_acp_agent,
@@ -209,9 +314,33 @@ fn main() {
          set_acp_session_mode,
          set_acp_session_config_option,
          list_acp_sessions,
+         delete_acp_session,
+         logout_acp_agent,
          cancel_acp_prompt,
+         get_codex_status,
+         start_codex_integration,
+         stop_codex_integration,
+         start_codex_thread,
+         start_codex_turn,
+         interrupt_codex_turn,
+         respond_codex_request,
+         read_codex_account,
+         start_codex_login,
+         logout_codex_account,
+         list_codex_models,
+         read_codex_rate_limits,
+         list_codex_threads,
+         read_codex_thread,
+         archive_codex_thread,
+         delete_codex_thread,
+         list_codex_skills,
+         list_codex_mcp_servers,
+         list_codex_permission_profiles,
+         list_codex_collaboration_modes,
+         start_codex_review,
          // Theme commands
          get_system_theme,
+         get_system_accessibility_preferences,
          load_toml_themes,
          load_single_toml_theme,
          get_cached_themes,
@@ -242,6 +371,7 @@ fn main() {
          lsp_start_for_file,
          lsp_stop_for_file,
          lsp_get_completions,
+         lsp_resolve_completion_item,
          lsp_get_hover,
          lsp_get_definition,
          lsp_get_implementation,
@@ -250,8 +380,20 @@ fn main() {
          lsp_get_code_lens,
          lsp_format_document,
          lsp_format_range,
+         lsp_get_folding_ranges,
+         lsp_get_selection_ranges,
+         lsp_get_document_highlights,
+         lsp_prepare_call_hierarchy,
+         lsp_get_incoming_calls,
+         lsp_get_outgoing_calls,
+         lsp_prepare_type_hierarchy,
+         lsp_get_supertypes,
+         lsp_get_subtypes,
+         lsp_format_on_type,
+         lsp_get_on_type_formatting_trigger_characters,
          lsp_get_inlay_hints,
          lsp_get_document_symbols,
+         lsp_get_workspace_symbols,
          lsp_get_signature_help,
          lsp_get_signature_trigger_characters,
          lsp_get_references,
@@ -259,6 +401,9 @@ fn main() {
          lsp_prepare_rename,
          lsp_get_code_actions,
          lsp_apply_code_action,
+         lsp_execute_command,
+         lsp_respond_workspace_edit,
+         lsp_get_java_class_file_contents,
          lsp_document_open,
          lsp_document_change,
          lsp_document_save,
@@ -271,20 +416,21 @@ fn main() {
          debug_stop_session,
          debug_list_sessions,
          // Extension commands
-         download_extension,
          install_extension,
          uninstall_extension,
-         get_installed_extensions,
+         list_installed_extensions,
          get_bundled_extensions_path,
-         install_extension_from_url,
-         uninstall_extension_new,
-         list_installed_extensions_new,
          get_extension_path,
+         read_extension_entrypoint,
+         get_extension_secret,
+         set_extension_secret,
+         delete_extension_secret,
          // Fuzzy matching commands
          fuzzy_match,
-         filter_completions,
-         fff_set_workspace,
+         fff_ensure_workspaces,
          fff_search_files,
+         fff_scan_status,
+         fff_list_files,
          fff_track_access,
          // Search commands
          search_files_content,
@@ -310,23 +456,87 @@ fn main() {
          get_runtime_version,
          get_js_runtime,
          get_all_runtime_statuses,
+         // Docker commands
+         docker_get_inventory,
+         docker_container_action,
+         docker_get_container_logs,
+         docker_start_container_log_stream,
+         docker_stop_container_log_stream,
+         docker_get_compose_project,
+         docker_compose_action,
+         docker_build_image,
+         docker_run_image,
+         docker_image_action,
+         docker_prune_resources,
+         docker_list_container_files,
+         docker_copy_from_container,
+         docker_copy_to_container,
+         docker_registry_search,
+         docker_registry_login,
+         docker_registry_pull,
+         docker_registry_push,
+         docker_tag_image,
+         docker_get_project_config,
+         docker_save_project_config,
+         docker_read_env_file,
+         docker_open_env_file,
+         docker_write_env_file,
+         docker_delete_env_file,
+         docker_open_dev_container,
          // Tool commands
          install_language_tools,
          install_tool,
          get_language_tool_status,
          get_tool_path,
+         get_java_debug_bundle_path,
          get_available_tools,
          frontend_trace,
+         record_startup_milestone,
          // Menu commands
          menu::toggle_menu_bar,
          menu::rebuild_menu_themes,
+         menu::sync_native_menu_state,
       ])
-      .build(tauri::generate_context!())
+      .build(context)
       .expect("error while building tauri application")
       .run(|app_handle, event| match event {
+         #[cfg(target_os = "linux")]
+         tauri::RunEvent::Ready => {
+            commands::ui::window::ensure_app_windows_reachable(app_handle);
+            app_handle.state::<StartupTiming>().record("native:ready");
+         }
+         #[cfg(not(target_os = "linux"))]
+         tauri::RunEvent::Ready => app_handle.state::<StartupTiming>().record("native:ready"),
+         #[cfg(target_os = "macos")]
+         tauri::RunEvent::Reopen {
+            has_visible_windows,
+            ..
+         } => app_setup::handle_reopen(app_handle, has_visible_windows),
+         #[cfg(target_os = "macos")]
+         tauri::RunEvent::Opened { urls } => app_setup::handle_opened_urls(app_handle, &urls),
          tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
             shutdown_background_services(app_handle);
          }
          _ => {}
       });
+}
+
+fn window_state_flags() -> StateFlags {
+   let mut flags = StateFlags::all();
+   flags.remove(StateFlags::DECORATIONS);
+   flags
+}
+
+#[cfg(test)]
+mod tests {
+   use super::*;
+
+   #[test]
+   fn window_state_does_not_override_platform_decorations() {
+      let flags = window_state_flags();
+
+      assert!(!flags.contains(StateFlags::DECORATIONS));
+      assert!(flags.contains(StateFlags::SIZE));
+      assert!(flags.contains(StateFlags::POSITION));
+   }
 }

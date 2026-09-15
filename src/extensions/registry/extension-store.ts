@@ -3,10 +3,8 @@ import { immer } from "zustand/middleware/immer";
 import { createSelectors } from "@/utils/zustand-selectors";
 import { getDatabaseProviderExtensions } from "../database/database-provider-extensions";
 import { extensionInstaller } from "../installer/extension-installer";
-import { getFullExtensions } from "../languages/full-extensions";
 import { getPackagedLanguageExtensions } from "../languages/language-packager";
 import { loadMarketplaceContributionExtensions } from "../marketplace/marketplace-extensions";
-import { activateExtensionContributions } from "../runtime/extension-contribution-runtime";
 import { extensionRegistry } from "./extension-registry";
 import {
   findExtensionForFile,
@@ -20,11 +18,15 @@ import {
 } from "./extension-store-bootstrap";
 import {
   buildInstalledExtensionMetadata,
+  disableExtensionLifecycle,
+  enableExtensionLifecycle,
   installExtensionLifecycle,
   uninstallExtensionLifecycle,
   updateExtensionLifecycle,
 } from "./extension-store-lifecycle";
-import { resolveInstalledExtensionId } from "./extension-store-runtime";
+import { markExtensionDisabled, markExtensionEnabled } from "./extension-enabled-state";
+import { isRetiredExtensionId } from "./retired-extensions";
+import { resolveInstalledExtensionId } from "./installed-extension-resolution";
 import type { AvailableExtension, ExtensionInstallationMetadata } from "./extension-store-types";
 import type { ExtensionManifest } from "../types/extension-manifest";
 import { getManifestDatabaseContributions } from "../types/extension-contributions";
@@ -52,6 +54,8 @@ interface ExtensionStoreState {
     getExtensionForFile: (filePath: string) => AvailableExtension | undefined;
     installExtension: (extensionId: string) => Promise<void>;
     uninstallExtension: (extensionId: string) => Promise<void>;
+    enableExtension: (extensionId: string) => Promise<void>;
+    disableExtension: (extensionId: string) => Promise<void>;
     updateExtension: (extensionId: string) => Promise<void>;
     checkForUpdates: () => Promise<string[]>;
     updateInstallProgress: (extensionId: string, progress: number, error?: string) => void;
@@ -75,10 +79,8 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
 
         try {
           // Load language extensions from packager (all installable from server)
-          const packagedExtensions = getPackagedLanguageExtensions();
-          const fallbackExtensions = getFullExtensions();
           const languageExtensions: ExtensionManifest[] = mergeMarketplaceLanguageExtensions(
-            packagedExtensions.length > 0 ? packagedExtensions : fallbackExtensions,
+            getPackagedLanguageExtensions(),
           );
           const marketplaceExtensions = await loadMarketplaceContributionExtensions();
           const extensionById = new Map<string, ExtensionManifest>();
@@ -88,6 +90,7 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
             ...getDatabaseProviderExtensions(),
             ...marketplaceExtensions,
           ]) {
+            if (isRetiredExtensionId(manifest.id)) continue;
             extensionById.set(manifest.id, manifest);
           }
 
@@ -103,11 +106,12 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
             }
 
             const isBuiltInDatabase = isBuiltInDatabaseExtension(manifest);
+            const isInstalled = installed.has(manifest.id) || isBuiltInDatabase;
+            const isEnabled = installed.get(manifest.id)?.enabled ?? isInstalled;
             extensionRegistry.registerExtension(manifest, {
               isBundled: isBuiltInDatabase,
-              isEnabled: true,
-              state:
-                installed.has(manifest.id) || isBuiltInDatabase ? "installed" : "not-installed",
+              state: isInstalled ? (isEnabled ? "installed" : "deactivated") : "not-installed",
+              isEnabled,
             });
           }
 
@@ -115,9 +119,11 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
             // Add all language extensions as installable
             for (const manifest of extensions) {
               const isBuiltInDatabase = isBuiltInDatabaseExtension(manifest);
+              const isInstalled = installed.has(manifest.id) || isBuiltInDatabase;
               state.availableExtensions.set(manifest.id, {
                 manifest,
-                isInstalled: installed.has(manifest.id) || isBuiltInDatabase,
+                isInstalled,
+                isEnabled: installed.get(manifest.id)?.enabled ?? isInstalled,
                 isInstalling: false,
                 runtimeIssues: [],
               });
@@ -126,7 +132,7 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
             state.isLoadingRegistry = false;
           });
         } catch (error) {
-          console.error("Failed to load available extensions:", error);
+          console.error("Failed to load available integrations:", error);
           set((state) => {
             state.isLoadingRegistry = false;
           });
@@ -148,14 +154,6 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
             availableExtensions,
           });
 
-          await Promise.all(
-            Array.from(installedExtensions.keys()).map(async (extensionId) => {
-              const extension = availableExtensions.get(extensionId);
-              if (!extension) return;
-              await activateExtensionContributions(extensionId, extension.manifest);
-            }),
-          );
-
           set((state) => {
             state.installedExtensions = installedExtensions;
             state.isLoadingInstalled = false;
@@ -163,6 +161,9 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
             for (const [id, ext] of state.availableExtensions) {
               ext.isInstalled =
                 state.installedExtensions.has(id) || isBuiltInDatabaseExtension(ext.manifest);
+              ext.isEnabled = ext.isInstalled
+                ? (state.installedExtensions.get(id)?.enabled ?? true)
+                : false;
               ext.runtimeIssues = runtimeIssues.get(id) || [];
             }
           });
@@ -176,7 +177,7 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
             ),
           });
         } catch (error) {
-          console.error("Failed to load installed extensions:", error);
+          console.error("Failed to load installed integrations:", error);
           set((state) => {
             state.isLoadingInstalled = false;
           });
@@ -198,17 +199,17 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
       installExtension: async (extensionId: string) => {
         const extension = get().availableExtensions.get(extensionId);
         if (!extension) {
-          throw new Error(`Extension ${extensionId} not found in registry`);
+          throw new Error(`Integration ${extensionId} not found in registry`);
         }
 
         if (!isExtensionAllowedByEnterprisePolicy(extensionId)) {
           throw new Error(
-            `Installation blocked by enterprise policy. "${extensionId}" is not in the extension allowlist.`,
+            `Installation blocked by enterprise policy. "${extensionId}" is not in the integration allowlist.`,
           );
         }
 
         if (!extension.manifest.installation) {
-          throw new Error(`Extension ${extensionId} has no installation metadata`);
+          throw new Error(`Integration ${extensionId} has no installation metadata`);
         }
 
         set((state) => {
@@ -239,6 +240,7 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
                 if (ext) {
                   ext.isInstalling = false;
                   ext.isInstalled = true;
+                  ext.isEnabled = true;
                   ext.installProgress = 100;
                   ext.installError = undefined;
                   ext.manifest = runtimeManifest;
@@ -257,6 +259,7 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
                 if (ext) {
                   ext.isInstalling = false;
                   ext.isInstalled = true;
+                  ext.isEnabled = true;
                   ext.installProgress = 100;
                   ext.installError = undefined;
                   state.installedExtensions.set(
@@ -294,7 +297,7 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
       uninstallExtension: async (extensionId: string) => {
         const extension = get().availableExtensions.get(extensionId);
         if (!extension) {
-          throw new Error(`Extension ${extensionId} not found`);
+          throw new Error(`Integration ${extensionId} not found`);
         }
 
         try {
@@ -306,6 +309,7 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
                 const ext = state.availableExtensions.get(extensionId);
                 if (ext) {
                   ext.isInstalled = false;
+                  ext.isEnabled = false;
                   ext.runtimeIssues = [];
                 }
                 state.installedExtensions.delete(extensionId);
@@ -317,6 +321,7 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
                 const ext = state.availableExtensions.get(extensionId);
                 if (ext) {
                   ext.isInstalled = false;
+                  ext.isEnabled = false;
                   ext.runtimeIssues = [];
                 }
               });
@@ -330,7 +335,7 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
             version: extension.manifest.version,
           });
         } catch (error) {
-          console.error(`Failed to uninstall extension ${extensionId}:`, error);
+          console.error(`Failed to uninstall integration ${extensionId}:`, error);
           throw error;
         }
       },
@@ -345,6 +350,58 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
               ext.isInstalling = false;
             }
           }
+        });
+      },
+
+      enableExtension: async (extensionId: string) => {
+        const extension = get().availableExtensions.get(extensionId);
+        if (!extension) {
+          throw new Error(`Integration ${extensionId} not found`);
+        }
+        if (!extension.isInstalled) {
+          throw new Error(`Integration ${extensionId} is not installed`);
+        }
+
+        await enableExtensionLifecycle({ extensionId, extension });
+        markExtensionEnabled(extensionId);
+
+        set((state) => {
+          const ext = state.availableExtensions.get(extensionId);
+          if (ext) {
+            ext.isEnabled = true;
+          }
+          const installed = state.installedExtensions.get(extensionId);
+          if (installed) {
+            installed.enabled = true;
+          }
+          state.availableExtensions = new Map(state.availableExtensions);
+          state.installedExtensions = new Map(state.installedExtensions);
+        });
+      },
+
+      disableExtension: async (extensionId: string) => {
+        const extension = get().availableExtensions.get(extensionId);
+        if (!extension) {
+          throw new Error(`Integration ${extensionId} not found`);
+        }
+        if (!extension.isInstalled) {
+          throw new Error(`Integration ${extensionId} is not installed`);
+        }
+
+        await disableExtensionLifecycle({ extensionId, extension });
+        markExtensionDisabled(extensionId);
+
+        set((state) => {
+          const ext = state.availableExtensions.get(extensionId);
+          if (ext) {
+            ext.isEnabled = false;
+          }
+          const installed = state.installedExtensions.get(extensionId);
+          if (installed) {
+            installed.enabled = false;
+          }
+          state.availableExtensions = new Map(state.availableExtensions);
+          state.installedExtensions = new Map(state.installedExtensions);
         });
       },
 
@@ -380,7 +437,7 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
 
           return updates;
         } catch (error) {
-          console.error("Failed to check for extension updates:", error);
+          console.error("Failed to check for integration updates:", error);
           set((state) => {
             state.isCheckingUpdates = false;
           });
@@ -391,12 +448,12 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
       updateExtension: async (extensionId: string) => {
         const extension = get().availableExtensions.get(extensionId);
         if (!extension) {
-          throw new Error(`Extension ${extensionId} not found`);
+          throw new Error(`Integration ${extensionId} not found`);
         }
 
         if (!isExtensionAllowedByEnterprisePolicy(extensionId)) {
           throw new Error(
-            `Update blocked by enterprise policy. "${extensionId}" is not in the extension allowlist.`,
+            `Update blocked by enterprise policy. "${extensionId}" is not in the integration allowlist.`,
           );
         }
 
@@ -410,6 +467,7 @@ const useExtensionStoreBase = create<ExtensionStoreState>()(
               const ext = state.availableExtensions.get(extensionId);
               if (ext) {
                 ext.isInstalled = false;
+                ext.isEnabled = false;
               }
             });
           },

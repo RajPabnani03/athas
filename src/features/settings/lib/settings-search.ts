@@ -1,21 +1,20 @@
-import type { SettingsTab } from "@/features/window/stores/ui-state.store";
+import type { SettingsTab } from "@/features/window/stores/ui-state/types/ui-state.types";
 import { compactSearchText, normalizeSearchText } from "@/utils/search-match";
 import type { SettingSearchRecord } from "../types/search.types";
 
 export const SETTINGS_SEARCH_TAB_LABELS: Record<SettingsTab, string> = {
   general: "General",
+  sharing: "Cloud",
+  notifications: "Notifications",
   account: "Account",
   appearance: "Appearance",
-  features: "Features",
   editor: "Editor",
   language: "Language",
   "file-explorer": "Files",
   git: "Git",
   terminal: "Terminal",
   keyboard: "Keybindings",
-  extensions: "Extensions",
-  databases: "Database",
-  ai: "AI",
+  ai: "Agent",
   collaboration: "Collaboration",
   enterprise: "Enterprise",
   advanced: "Advanced",

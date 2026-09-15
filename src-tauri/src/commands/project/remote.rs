@@ -1,7 +1,9 @@
+use crate::terminal::FrontendTerminalSessions;
 use athas_remote::{
    RemoteFileEntry, SshConnection, close_remote_terminal as remote_close_terminal,
    create_remote_terminal as remote_create_terminal,
    remote_terminal_resize as remote_terminal_resize_impl,
+   remote_terminal_set_paused as remote_terminal_set_paused_impl,
    remote_terminal_write as remote_terminal_write_impl, ssh_connect as remote_ssh_connect,
    ssh_copy_path as remote_ssh_copy_path, ssh_create_directory as remote_ssh_create_directory,
    ssh_create_file as remote_ssh_create_file, ssh_delete_path as remote_ssh_delete_path,
@@ -10,10 +12,13 @@ use athas_remote::{
    ssh_read_directory as remote_ssh_read_directory, ssh_read_file as remote_ssh_read_file,
    ssh_rename_path as remote_ssh_rename_path, ssh_write_file as remote_ssh_write_file,
 };
-use tauri::Emitter;
+use athas_terminal::{TerminalInput, TerminalSize};
+use tauri::{
+   Emitter, State,
+   ipc::{Channel, InvokeResponseBody},
+};
 
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
 pub async fn ssh_connect(
    app: crate::app_runtime::AppHandle,
    connection_id: String,
@@ -151,43 +156,63 @@ pub async fn ssh_copy_path(
 }
 
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
 pub async fn create_remote_terminal(
-   app: crate::app_runtime::AppHandle,
+   app_handle: crate::app_runtime::AppHandle,
    host: String,
    port: u16,
    username: String,
    password: Option<String>,
    key_path: Option<String>,
    working_directory: Option<String>,
-   rows: u16,
-   cols: u16,
+   size: TerminalSize,
+   on_event: Channel<InvokeResponseBody>,
+   window_label: String,
+   frontend_session_id: String,
+   frontend_sessions: State<'_, FrontendTerminalSessions>,
 ) -> Result<String, String> {
-   remote_create_terminal(
-      app,
+   let connection_id = remote_create_terminal(
       host,
       port,
       username,
       password,
       key_path,
       working_directory,
-      rows,
-      cols,
+      size,
+      app_handle.package_info().version.to_string(),
+      on_event,
    )
-   .await
+   .await?;
+
+   if let Err(error) =
+      frontend_sessions.register_remote(&window_label, &frontend_session_id, connection_id.clone())
+   {
+      let _ = remote_close_terminal(connection_id).await;
+      return Err(error);
+   }
+
+   Ok(connection_id)
 }
 
 #[tauri::command]
-pub async fn remote_terminal_write(id: String, data: String) -> Result<(), String> {
-   remote_terminal_write_impl(id, data).await
+pub async fn remote_terminal_write(id: String, input: TerminalInput) -> Result<(), String> {
+   remote_terminal_write_impl(id, input).await
 }
 
 #[tauri::command]
-pub async fn remote_terminal_resize(id: String, rows: u16, cols: u16) -> Result<(), String> {
-   remote_terminal_resize_impl(id, rows, cols).await
+pub async fn remote_terminal_resize(id: String, size: TerminalSize) -> Result<(), String> {
+   remote_terminal_resize_impl(id, size).await
 }
 
 #[tauri::command]
-pub async fn close_remote_terminal(id: String) -> Result<(), String> {
+pub async fn remote_terminal_set_paused(id: String, paused: bool) -> Result<(), String> {
+   remote_terminal_set_paused_impl(id, paused).await
+}
+
+#[tauri::command]
+pub async fn close_remote_terminal(
+   id: String,
+   frontend_sessions: State<'_, FrontendTerminalSessions>,
+) -> Result<(), String> {
+   frontend_sessions.unregister(&id);
    remote_close_terminal(id).await
 }

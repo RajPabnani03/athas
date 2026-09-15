@@ -2,6 +2,8 @@ export type SidebarView =
   | "files"
   | "git"
   | "github-prs"
+  | "views"
+  | "docker"
   | "outline"
   | "databases"
   | "collaboration"
@@ -19,24 +21,17 @@ interface SidebarPaneClickResult {
   nextView: SidebarView;
 }
 
-export type SidebarPosition = "left" | "right";
-export type SidebarTriggerSide = SidebarPosition | "current";
 export type SidebarPaneLevel = "primary" | "edge";
-
-interface SidebarPaneTriggerOptions {
-  currentPosition: SidebarPosition;
-  triggerSide?: SidebarTriggerSide;
-}
-
-interface SidebarPaneTriggerResult extends SidebarPaneClickResult {
-  nextPosition: SidebarPosition;
-}
 
 const EDGE_SIDEBAR_VIEWS = new Set<SidebarView>(["outline", "databases", "collaboration"]);
 
 export function getSidebarPaneLevel(view: SidebarView): SidebarPaneLevel {
   if (EDGE_SIDEBAR_VIEWS.has(view)) return "edge";
   return "primary";
+}
+
+export function isSidebarViewAvailable(view: SidebarView, outlineAvailable: boolean): boolean {
+  return view !== "outline" || outlineAvailable;
 }
 
 export function getActiveSidebarView({
@@ -46,6 +41,7 @@ export function getActiveSidebarView({
 }: Omit<SidebarPaneState, "isSidebarVisible">): SidebarView {
   if (isGitViewActive) return "git";
   if (isGitHubPRsViewActive) return "github-prs";
+  if (activeSidebarView === "settings") return "files";
   return activeSidebarView ?? "files";
 }
 
@@ -75,34 +71,6 @@ export function resolveSidebarPaneClick(
   };
 }
 
-export function getSidebarPositionForTrigger(
-  currentPosition: SidebarPosition,
-  triggerSide: SidebarTriggerSide = "current",
-): SidebarPosition {
-  return triggerSide === "current" ? currentPosition : triggerSide;
-}
-
-export function resolveSidebarPaneTrigger(
-  state: SidebarPaneState,
-  clickedView: SidebarView,
-  options: SidebarPaneTriggerOptions,
-): SidebarPaneTriggerResult {
-  const nextPosition = getSidebarPositionForTrigger(options.currentPosition, options.triggerSide);
-  const isMovingVisibleSidebar = state.isSidebarVisible && nextPosition !== options.currentPosition;
-
-  if (isMovingVisibleSidebar) {
-    return {
-      nextIsSidebarVisible: true,
-      nextView: clickedView,
-      nextPosition,
-    };
-  }
-
-  const { nextIsSidebarVisible, nextView } = resolveSidebarPaneClick(state, clickedView);
-
-  return {
-    nextIsSidebarVisible,
-    nextView,
-    nextPosition,
-  };
+export function shouldOpenSidebarSubview(isSidebarVisible: boolean, isParentViewActive: boolean) {
+  return !isSidebarVisible || !isParentViewActive;
 }

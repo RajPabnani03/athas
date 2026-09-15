@@ -1,4 +1,4 @@
-use crate::{IssueDetails, PullRequest, PullRequestComment, PullRequestDetails};
+use crate::{IssueComment, IssueDetails, PullRequest, PullRequestComment, PullRequestDetails};
 use serde_json::json;
 
 #[test]
@@ -76,6 +76,46 @@ fn parses_pull_request_details_with_sparse_fields() {
 }
 
 #[test]
+fn parses_pull_request_status_check_urls() {
+   let payload = json!({
+      "number": 568,
+      "title": "Example",
+      "state": "OPEN",
+      "statusCheckRollup": {
+         "contexts": {
+            "nodes": [
+               {
+                  "name": "test",
+                  "status": "COMPLETED",
+                  "conclusion": "SUCCESS",
+                  "workflowName": "CI",
+                  "detailsUrl": "https://github.com/athasdev/athas/actions/runs/1/job/2"
+               },
+               {
+                  "name": "terraform",
+                  "status": "COMPLETED",
+                  "conclusion": "SUCCESS",
+                  "targetUrl": "https://app.terraform.io/status"
+               }
+            ]
+         }
+      }
+   });
+
+   let details: PullRequestDetails =
+      serde_json::from_value(payload).expect("PR status checks should deserialize");
+
+   assert_eq!(
+      details.status_checks[0].details_url.as_deref(),
+      Some("https://github.com/athasdev/athas/actions/runs/1/job/2")
+   );
+   assert_eq!(
+      details.status_checks[1].details_url.as_deref(),
+      Some("https://app.terraform.io/status")
+   );
+}
+
+#[test]
 fn parses_pull_request_comments_with_missing_author_or_body() {
    let payload = json!({
       "author": null,
@@ -120,4 +160,71 @@ fn parses_issue_details_with_missing_nested_data() {
    assert!(issue.labels.is_empty());
    assert!(issue.assignees.is_empty());
    assert!(issue.comments.is_empty());
+   assert!(issue.state_reason.is_none());
+   assert!(!issue.locked);
+   assert!(issue.milestone.is_none());
+   assert!(issue.issue_type.is_none());
+}
+
+#[test]
+fn parses_issue_comment_identity_and_edit_metadata() {
+   let payload = json!({
+      "id": 123,
+      "author": { "login": "octocat" },
+      "body": "Updated comment",
+      "createdAt": "2026-08-01T10:00:00Z",
+      "updatedAt": "2026-08-02T10:00:00Z",
+      "url": "https://github.com/athasdev/athas/issues/1#issuecomment-123"
+   });
+
+   let comment: IssueComment =
+      serde_json::from_value(payload).expect("Issue comment should deserialize");
+
+   assert_eq!(comment.id, 123);
+   assert_eq!(comment.author.login, "octocat");
+   assert_eq!(comment.updated_at, "2026-08-02T10:00:00Z");
+   assert!(comment.url.ends_with("issuecomment-123"));
+}
+
+#[test]
+fn collapses_reviews_to_latest_verdict_per_reviewer() {
+   use crate::api::{RestReview, RestUser, collapse_reviews, review_decision};
+
+   let review = |login: &str, state: &str| RestReview {
+      user: Some(RestUser {
+         login: login.to_string(),
+         avatar_url: None,
+      }),
+      state: Some(state.to_string()),
+      body: None,
+      submitted_at: None,
+   };
+   let reviews = collapse_reviews(vec![
+      review("ada", "CHANGES_REQUESTED"),
+      review("bob", "COMMENTED"),
+      review("ada", "COMMENTED"),
+      review("ada", "APPROVED"),
+      review("eve", "PENDING"),
+      RestReview {
+         user: None,
+         state: Some("APPROVED".to_string()),
+         body: None,
+         submitted_at: None,
+      },
+   ]);
+
+   assert_eq!(reviews.len(), 2);
+   assert_eq!(reviews[0].login, "ada");
+   assert_eq!(reviews[0].state, "APPROVED");
+   assert_eq!(reviews[1].login, "bob");
+   assert_eq!(reviews[1].state, "COMMENTED");
+   assert_eq!(review_decision(&reviews, &[]).as_deref(), Some("APPROVED"));
+
+   let mut blocked = reviews.clone();
+   blocked[1].state = "CHANGES_REQUESTED".to_string();
+   assert_eq!(
+      review_decision(&blocked, &[]).as_deref(),
+      Some("CHANGES_REQUESTED")
+   );
+   assert_eq!(review_decision(&[], &[]), None);
 }

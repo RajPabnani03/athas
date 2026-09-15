@@ -71,6 +71,8 @@ pub struct GitDiff {
    pub additions: Option<usize>,
    #[serde(skip_serializing_if = "Option::is_none")]
    pub deletions: Option<usize>,
+   #[serde(skip_serializing_if = "Option::is_none")]
+   pub is_truncated: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -92,6 +94,7 @@ pub struct GitBlameLine {
    pub line_number: usize,
    pub total_lines: usize,
    pub commit_hash: String,
+   pub is_uncommitted: bool,
    pub author: String,
    pub email: String,
    pub time: i64,

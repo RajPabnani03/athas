@@ -1,62 +1,70 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  ArchiveIcon as Archive,
-  ClockCounterClockwiseIcon as ClockCounterClockwise,
-  DownloadIcon as Download,
-  DotsThreeIcon as MoreHorizontal,
-  FolderSimpleStarIcon as FolderSimpleStar,
-  GitBranchIcon as GitBranch,
-  ArrowClockwiseIcon as RefreshCw,
-  TrashIcon as Trash2,
-  UploadIcon as Upload,
-} from "@phosphor-icons/react";
-import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+  ArrowClockwiseIcon,
+  ChevronDownIcon,
+  DownloadIcon,
+  FolderStarIcon,
+  GitBranchIcon,
+  HistoryIcon,
+  UploadIcon,
+} from "@/ui/icons";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { getBufferById } from "@/features/editor/utils/buffer-index";
+import type { GitSidebarItemId } from "@/features/layout/config/item-order";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { type GitActivitySection, useSidebarStore } from "@/features/layout/stores/sidebar.store";
 import { Button } from "@/ui/button";
-import { CommandEmpty, CommandList } from "@/ui/command";
-import { LoadingIndicator } from "@/ui/loading";
-import { showAlertDialog } from "@/features/dialogs/services/dialog-service";
+import { ButtonGroup, ButtonGroupSeparator } from "@/ui/button-group";
+import { CommandEmpty, CommandItemBadge, CommandItemRow, CommandList } from "@/ui/command";
 import {
-  SidebarEmptyActionState,
-  SidebarEmptyState,
-  SidebarFooter,
-  SidebarHeader,
-  SidebarHeaderIconButton,
-  SidebarPanel,
-  SidebarSectionPager,
-  SidebarSectionSwitcher,
-} from "@/ui/sidebar";
-import { toast } from "@/ui/toast";
-import { formatRelativeDate } from "@/utils/date";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItems,
+  DropdownMenuTrigger,
+  type MenuItem,
+} from "@/ui/dropdown";
+import { EmptyState } from "@/ui/empty";
+import { Spinner } from "@/ui/spinner";
+import { showAlertDialog } from "@/ui/dialog";
+import { SidebarSearchPopover, SidebarWorkspace } from "@/ui/sidebar";
+import { toast } from "sonner";
 import { matchesSearchQuery } from "@/utils/search-match";
 import { getBranches } from "../api/git-branches-api";
-import { getGitLog } from "../api/git-commits-api";
-import {
-  getCommitDiff,
-  getFileDiff,
-  getRefDiff,
-  getStashDiff,
-  getStatusDiffStats,
-} from "../api/git-diff-api";
+import { getStatusDiffStats } from "../api/git-diff-api";
 import { clearRepositoryDiscoveryCache, resolveRepositoryPath } from "../api/git-repo-api";
-import { applyStash, dropStash, getStashes, popStash } from "../api/git-stash-api";
+import { fetchChanges, pullChanges, pushChanges } from "../api/git-remotes-api";
+import { applyStash, dropStash, popStash } from "../api/git-stash-api";
 import { getGitStatus, initRepository } from "../api/git-status-api";
+import { useGitDataController } from "../hooks/use-git-data-controller";
+import { useGitDiffActions } from "../hooks/use-git-diff-actions";
 import { useRepositoryStore } from "../stores/git-repository.store";
 import { useGitStore } from "../stores/git.store";
-import type { MultiFileDiff } from "../types/git-diff.types";
-import type { GitFile } from "../types/git.types";
-import type { GitActionsMenuAnchorRect } from "../utils/git-actions-menu-position";
-import { countDiffStats } from "../utils/git-diff-helpers";
+import type { GitCommit, GitDiff, GitFile } from "../types/git.types";
+import {
+  type WorkingTreeDiffEntry,
+  type WorkingTreeDiffScope,
+} from "../services/working-tree-diff-loader";
 import { getStashDisplayTitle, getStashPositionLabel } from "../utils/git-stash-format";
+import { openGitWorktreeWorkspace } from "../utils/git-worktree-open";
+import {
+  resolveMultiDiffSelection,
+  selectMultiDiffFileByPath,
+} from "../utils/multi-diff-selection";
 import GitActionsMenu from "./git-actions-menu";
-import GitCommitHistory from "./git-commit-history";
-import GitCommitPanel from "./git-commit-panel";
+import GitBranchManager from "./git-branch-manager";
+import GitCommitHistory, {
+  GitCommitHistoryControls,
+  type HistorySearchScope,
+} from "./git-commit-history";
+import { GitCommitFilesPanel } from "./git-commit-files-panel";
+import GitCommitPanel from "../commit-composer/components/git-commit-panel";
 import GitCommandSurface from "./git-command-surface";
-import GitProjectSelector from "./git-project-selector";
 import GitRemoteManager from "./git-remote-manager";
+import { GitStashManager } from "./git-stash-manager";
 import GitTagManager from "./git-tag-manager";
 import GitStatusPanel from "./status/git-status-panel";
+import { SourceControlNavigation } from "./source-control-navigation";
 
 interface GitViewProps {
   repoPath?: string;
@@ -69,49 +77,245 @@ interface GitFileDiffStats {
   deletions: number;
 }
 
-type GitSidebarTab = "changes" | "history";
+const GIT_VIEW_BRANCH_MANAGER_EVENT = "athas:open-git-view-branch-manager";
+type GitRemoteAction = "push" | "pull" | "fetch";
+
+const REMOTE_ACTION_LABELS: Record<GitRemoteAction, { present: string; past: string }> = {
+  push: { present: "Pushing", past: "Pushed" },
+  pull: { present: "Pulling", past: "Pulled" },
+  fetch: { present: "Fetching", past: "Fetched" },
+};
+
 type GitPaletteAction =
   | { type: "select-repository" }
-  | { type: "show-tab"; tab: GitSidebarTab }
+  | { type: "show-tab"; tab: GitActivitySection }
+  | { type: "manage-branches"; tab?: "branches" | "worktrees" | "repositories" }
+  | { type: "show-branch-diff" }
   | { type: "manage-remotes" }
   | { type: "manage-tags" }
   | { type: "view-stashes" }
+  | { type: "initialize-repository" }
   | { type: "refresh" };
 
 const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
-  const { gitStatus, isLoadingGitData, isRefreshing, actions } = useGitStore();
+  const activeBuffer = useBufferStore((state) =>
+    getBufferById(state.buffers, state.activeBufferId),
+  );
+  const updateBufferContent = useBufferStore.use.actions().updateBufferContent;
+  const gitStatus = useGitStore((state) => state.gitStatus);
+  const isLoadingGitData = useGitStore((state) => state.isLoadingGitData);
+  const actions = useGitStore((state) => state.actions);
+  const commits = useGitStore((state) => state.commits);
+  const branches = useGitStore((state) => state.branches);
   const stashes = useGitStore((state) => state.stashes);
-  const { setIsLoadingGitData, setIsRefreshing } = actions;
-  const activeRepoPath = useRepositoryStore.use.activeRepoPath();
-  const { syncWorkspaceRepositories, setManualRepository, refreshWorkspaceRepositories } =
-    useRepositoryStore.use.actions();
-  const [showGitActionsMenu, setShowGitActionsMenu] = useState(false);
-  const [showStashList, setShowStashList] = useState(false);
+  const { syncWorkspaceRepositories, setManualRepository } = useRepositoryStore.use.actions();
+  const { activeRepoPath, refresh: handleManualRefresh } = useGitDataController({
+    workspacePath: repoPath,
+    isActive,
+  });
   const [isSelectingRepo, setIsSelectingRepo] = useState(false);
   const [isInitializingRepo, setIsInitializingRepo] = useState(false);
   const [repoSelectionError, setRepoSelectionError] = useState<string | null>(null);
-  const [gitActionsMenuAnchor, setGitActionsMenuAnchor] = useState<GitActionsMenuAnchorRect | null>(
-    null,
-  );
+  const syncMenuAnchorRef = useRef<HTMLDivElement>(null);
+  const [remoteAction, setRemoteAction] = useState<GitRemoteAction | null>(null);
 
-  const [showRemoteManager, setShowRemoteManager] = useState(false);
-  const [showTagManager, setShowTagManager] = useState(false);
-  const settings = useSettingsStore((state) => state.settings);
-  const updateSetting = useSettingsStore((state) => state.updateSetting);
-  const [activeTab, setActiveTab] = useState<GitSidebarTab>("changes");
+  const hiddenGitSidebarItems = useSettingsStore((state) => state.settings.hiddenGitSidebarItems);
+  const gitSidebarTabOrder = useSettingsStore((state) => state.settings.gitSidebarTabOrder);
+  const showUntrackedFiles = useSettingsStore((state) => state.settings.showUntrackedFiles);
+  const rememberLastGitPanelMode = useSettingsStore(
+    (state) => state.settings.rememberLastGitPanelMode,
+  );
+  const gitLastPanelMode = useSettingsStore((state) => state.settings.gitLastPanelMode);
+  const openDiffOnClick = useSettingsStore((state) => state.settings.openDiffOnClick);
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
+  const gitSection = useSidebarStore.use.gitSection();
+  const setGitSection = useSidebarStore.use.actions().setGitSection;
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
+  const [historySearchScope, setHistorySearchScope] = useState<HistorySearchScope>("all");
+  const [selectedHistoryCommit, setSelectedHistoryCommit] = useState<GitCommit | null>(null);
+  const [selectedHistoryCommitFiles, setSelectedHistoryCommitFiles] = useState<GitDiff[]>([]);
+  const [selectedHistoryFilePath, setSelectedHistoryFilePath] = useState<string | null>(null);
+  const [isLoadingHistoryCommitFiles, setIsLoadingHistoryCommitFiles] = useState(false);
+  const historyCommitRequestRef = useRef(0);
   const [fileDiffStats, setFileDiffStats] = useState<Record<string, GitFileDiffStats>>({});
 
-  const wasActiveRef = useRef(isActive);
-  const [stashSearchQuery, setStashSearchQuery] = useState("");
+  const [showCommitDiffList, setShowCommitDiffList] = useState(false);
+  const [commitDiffSearchQuery, setCommitDiffSearchQuery] = useState("");
+  const [showBranchDiffList, setShowBranchDiffList] = useState(false);
+  const [branchDiffSearchQuery, setBranchDiffSearchQuery] = useState("");
+  const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
   const [stashActionLoading, setStashActionLoading] = useState<Set<number>>(new Set());
 
-  const visibleGitFiles = useMemo(
-    () =>
-      settings.showUntrackedFiles
-        ? (gitStatus?.files ?? [])
-        : (gitStatus?.files ?? []).filter((file) => file.status !== "untracked"),
-    [gitStatus?.files, settings.showUntrackedFiles],
+  const {
+    gitFileByPath,
+    visibleGitFiles,
+    visibleGitFileKeySet,
+    workingTreeDiffEntriesByScope,
+    stagedFiles,
+  } = useMemo(() => {
+    const nextGitFileByPath = new Map<string, GitFile>();
+    const nextVisibleGitFiles: GitFile[] = [];
+    const nextVisibleGitFileKeySet = new Set<string>();
+    const nextWorkingTreeDiffEntriesByScope: Record<WorkingTreeDiffScope, WorkingTreeDiffEntry[]> =
+      {
+        all: [],
+        unstaged: [],
+        staged: [],
+      };
+    const nextStagedFiles: GitFile[] = [];
+    const seenDiffableFileKeys = new Set<string>();
+
+    for (const file of gitStatus?.files ?? []) {
+      if (!nextGitFileByPath.has(file.path)) {
+        nextGitFileByPath.set(file.path, file);
+      }
+
+      if (!showUntrackedFiles && file.status === "untracked") {
+        continue;
+      }
+
+      const fileKey = `${file.staged ? "staged" : "unstaged"}:${file.path}`;
+      nextVisibleGitFiles.push(file);
+      nextVisibleGitFileKeySet.add(fileKey);
+
+      if (file.staged) {
+        nextStagedFiles.push(file);
+      }
+
+      if (file.status === "untracked" || seenDiffableFileKeys.has(fileKey)) {
+        continue;
+      }
+
+      seenDiffableFileKeys.add(fileKey);
+      const entry: WorkingTreeDiffEntry = [fileKey, file];
+      nextWorkingTreeDiffEntriesByScope.all.push(entry);
+      nextWorkingTreeDiffEntriesByScope[file.staged ? "staged" : "unstaged"].push(entry);
+    }
+
+    return {
+      gitFileByPath: nextGitFileByPath,
+      visibleGitFiles: nextVisibleGitFiles,
+      visibleGitFileKeySet: nextVisibleGitFileKeySet,
+      workingTreeDiffEntriesByScope: nextWorkingTreeDiffEntriesByScope,
+      stagedFiles: nextStagedFiles,
+    };
+  }, [gitStatus?.files, showUntrackedFiles]);
+  const commitByHash = useMemo(() => {
+    return new Map(commits.map((commit) => [commit.hash, commit] as const));
+  }, [commits]);
+  const handleBranchDiffOpened = useCallback(() => {
+    setShowBranchDiffList(false);
+    setBranchDiffSearchQuery("");
+  }, []);
+  const {
+    isLoadingCommitDiff,
+    isLoadingBranchDiff,
+    openOriginalFile: handleOpenOriginalFile,
+    viewFileDiff: handleViewFileDiff,
+    viewWorkingTreeDiff: handleViewWorkingTreeDiff,
+    viewCommitDiff: handleViewCommitDiff,
+    viewStashDiff: handleViewStashDiff,
+    viewTagComparison: handleViewTagComparison,
+    viewBranchDiff: handleViewBranchDiff,
+  } = useGitDiffActions({
+    activeRepoPath,
+    onFileSelect,
+    gitFileByPath,
+    workingTreeDiffEntriesByScope,
+    commitByHash,
+    currentBranch: gitStatus?.branch,
+    onBranchDiffOpened: handleBranchDiffOpened,
+  });
+  const handleBackFromHistoryCommit = useCallback(() => {
+    historyCommitRequestRef.current += 1;
+    setSelectedHistoryCommit(null);
+    setSelectedHistoryCommitFiles([]);
+    setSelectedHistoryFilePath(null);
+    setIsLoadingHistoryCommitFiles(false);
+  }, []);
+  const handleSelectGitSection = useCallback(
+    (section: GitActivitySection) => {
+      handleBackFromHistoryCommit();
+      setGitSection(section);
+      setSidebarSearchQuery("");
+    },
+    [handleBackFromHistoryCommit, setGitSection],
   );
+  const handleShowStashes = useCallback(() => {
+    handleSelectGitSection("stashes");
+  }, [handleSelectGitSection]);
+  const handleGitSidebarItemVisibleChange = useCallback(
+    (itemId: GitSidebarItemId, visible: boolean) => {
+      const nextHiddenItems = visible
+        ? hiddenGitSidebarItems.filter((hiddenItemId) => hiddenItemId !== itemId)
+        : Array.from(new Set([...hiddenGitSidebarItems, itemId]));
+      void updateSetting("hiddenGitSidebarItems", nextHiddenItems);
+    },
+    [hiddenGitSidebarItems, updateSetting],
+  );
+  const handleSelectHistoryCommit = useCallback(
+    async (commit: GitCommit) => {
+      const requestId = historyCommitRequestRef.current + 1;
+      historyCommitRequestRef.current = requestId;
+      setSelectedHistoryCommit(commit);
+      setSelectedHistoryCommitFiles([]);
+      setSelectedHistoryFilePath(null);
+      setIsLoadingHistoryCommitFiles(true);
+
+      const diffs = await handleViewCommitDiff(commit.hash, undefined, {
+        fileNavigation: "external",
+      });
+      if (historyCommitRequestRef.current !== requestId) return;
+
+      const files = diffs ?? [];
+      const firstFile = files[0];
+      setSelectedHistoryCommitFiles(files);
+      setSelectedHistoryFilePath(
+        firstFile ? firstFile.new_path || firstFile.old_path || firstFile.file_path : null,
+      );
+      setIsLoadingHistoryCommitFiles(false);
+    },
+    [handleViewCommitDiff],
+  );
+  const handleSelectHistoryCommitFile = useCallback(
+    (filePath: string) => {
+      if (!selectedHistoryCommit) return;
+      setSelectedHistoryFilePath(filePath);
+
+      if (
+        activeBuffer?.type === "diff" &&
+        activeBuffer.diffData &&
+        "files" in activeBuffer.diffData &&
+        activeBuffer.diffData.commitHash === selectedHistoryCommit.hash
+      ) {
+        const nextMultiDiff = selectMultiDiffFileByPath(activeBuffer.diffData, filePath);
+        if (nextMultiDiff !== activeBuffer.diffData) {
+          updateBufferContent(activeBuffer.id, activeBuffer.content, false, nextMultiDiff);
+        }
+        return;
+      }
+
+      void handleViewCommitDiff(selectedHistoryCommit.hash, filePath, {
+        fileNavigation: "external",
+      });
+    },
+    [activeBuffer, handleViewCommitDiff, selectedHistoryCommit, updateBufferContent],
+  );
+
+  useEffect(() => {
+    if (
+      !selectedHistoryCommit ||
+      activeBuffer?.type !== "diff" ||
+      !activeBuffer.diffData ||
+      !("files" in activeBuffer.diffData) ||
+      activeBuffer.diffData.commitHash !== selectedHistoryCommit.hash
+    ) {
+      return;
+    }
+
+    const selection = resolveMultiDiffSelection(activeBuffer.diffData);
+    setSelectedHistoryFilePath(selection?.path ?? null);
+  }, [activeBuffer, selectedHistoryCommit]);
 
   const handleSelectRepository = useCallback(async () => {
     setIsSelectingRepo(true);
@@ -167,7 +371,6 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
       clearRepositoryDiscoveryCache();
       setManualRepository(targetPath);
       await syncWorkspaceRepositories(targetPath, { force: true });
-      window.dispatchEvent(new CustomEvent("git-status-changed"));
       toast.success("Repository initialized.");
     } catch (error) {
       console.error("Failed to initialize repository:", error);
@@ -179,144 +382,129 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
     }
   }, [repoPath, setManualRepository, syncWorkspaceRepositories]);
 
-  const loadInitialGitData = useCallback(async () => {
-    if (!activeRepoPath) return;
+  const handleRemoteAction = useCallback(
+    async (action: GitRemoteAction) => {
+      if (!activeRepoPath) {
+        toast.error("No repository open");
+        return;
+      }
 
-    setIsLoadingGitData(true);
-    try {
-      const [status, commits, branches, stashes] = await Promise.all([
-        getGitStatus(activeRepoPath),
-        getGitLog(activeRepoPath, 50, 0),
-        getBranches(activeRepoPath),
-        getStashes(activeRepoPath),
-      ]);
-
-      actions.loadFreshGitData({
-        gitStatus: status,
-        commits,
-        branches,
-        stashes,
-        repoPath: activeRepoPath,
+      setRemoteAction(action);
+      const label = REMOTE_ACTION_LABELS[action];
+      const toastId = toast.info(`${label.present} changes...`, {
+        duration: Infinity,
       });
-    } catch (error) {
-      console.error("Failed to load initial git data:", error);
-    } finally {
-      setIsLoadingGitData(false);
-    }
-  }, [activeRepoPath, actions, setIsLoadingGitData]);
 
-  const refreshGitData = useCallback(async () => {
-    if (!activeRepoPath) return;
+      try {
+        const result =
+          action === "push"
+            ? await pushChanges(activeRepoPath)
+            : action === "pull"
+              ? await pullChanges(activeRepoPath)
+              : await fetchChanges(activeRepoPath);
 
-    try {
-      const [status, branches, freshStashes] = await Promise.all([
-        getGitStatus(activeRepoPath),
-        getBranches(activeRepoPath),
-        getStashes(activeRepoPath),
-      ]);
+        toast.dismiss(toastId);
 
-      await actions.refreshGitData({
-        gitStatus: status,
-        branches,
-        repoPath: activeRepoPath,
-      });
-      actions.setStashes(freshStashes);
-    } catch (error) {
-      console.error("Failed to refresh git data:", error);
-    }
-  }, [activeRepoPath, actions]);
+        if (result.success) {
+          toast.success(`${label.past} changes successfully.`);
+          await handleManualRefresh();
+          return;
+        }
 
-  const handleManualRefresh = useCallback(async () => {
-    setIsRefreshing(true);
-    try {
-      await Promise.all([
-        refreshGitData(),
-        refreshWorkspaceRepositories(),
-        new Promise((resolve) => setTimeout(resolve, 500)),
-      ]);
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, [refreshGitData, refreshWorkspaceRepositories, setIsRefreshing]);
+        toast.error(result.error || `Failed to ${action} changes.`);
+      } catch (error) {
+        toast.dismiss(toastId);
+        toast.error(error instanceof Error ? error.message : `Failed to ${action} changes.`);
+      } finally {
+        setRemoteAction(null);
+      }
+    },
+    [activeRepoPath, handleManualRefresh],
+  );
 
-  useEffect(() => {
-    void syncWorkspaceRepositories(repoPath ?? null);
-  }, [repoPath, syncWorkspaceRepositories]);
+  const aheadCount = gitStatus?.ahead ?? 0;
+  const behindCount = gitStatus?.behind ?? 0;
+  const primaryRemoteAction: GitRemoteAction =
+    aheadCount > 0 ? "push" : behindCount > 0 ? "pull" : "fetch";
+  const syncActionLabel =
+    remoteAction !== null
+      ? REMOTE_ACTION_LABELS[remoteAction].present
+      : primaryRemoteAction === "push"
+        ? `Push ${aheadCount}`
+        : primaryRemoteAction === "pull"
+          ? `Pull ${behindCount}`
+          : "Fetch";
+  const isRemoteActionLoading = remoteAction !== null;
 
-  useEffect(() => {
-    loadInitialGitData();
-  }, [loadInitialGitData]);
+  const syncMenuItems = useMemo<MenuItem[]>(
+    () => [
+      {
+        id: "push",
+        label: aheadCount > 0 ? `Push ${aheadCount} commit${aheadCount !== 1 ? "s" : ""}` : "Push",
+        icon: <UploadIcon />,
+        disabled: isRemoteActionLoading,
+        onClick: () => void handleRemoteAction("push"),
+      },
+      {
+        id: "pull",
+        label:
+          behindCount > 0 ? `Pull ${behindCount} commit${behindCount !== 1 ? "s" : ""}` : "Pull",
+        icon: <DownloadIcon optical="md" />,
+        disabled: isRemoteActionLoading,
+        onClick: () => void handleRemoteAction("pull"),
+      },
+      {
+        id: "fetch",
+        label: "Fetch",
+        icon: <ArrowClockwiseIcon />,
+        disabled: isRemoteActionLoading,
+        onClick: () => void handleRemoteAction("fetch"),
+      },
+    ],
+    [aheadCount, behindCount, handleRemoteAction, isRemoteActionLoading],
+  );
 
   useEffect(() => {
     setRepoSelectionError(null);
-  }, [repoPath]);
+    handleBackFromHistoryCommit();
+  }, [activeRepoPath, handleBackFromHistoryCommit, repoPath]);
 
   useEffect(() => {
-    if (settings.autoRefreshGitStatus && isActive && !wasActiveRef.current && gitStatus) {
-      refreshGitData();
+    if (!rememberLastGitPanelMode) return;
+    setGitSection(gitLastPanelMode);
+  }, [rememberLastGitPanelMode, gitLastPanelMode, setGitSection]);
+
+  useEffect(() => {
+    if (!rememberLastGitPanelMode) return;
+    if (gitLastPanelMode !== gitSection) {
+      void updateSetting("gitLastPanelMode", gitSection);
     }
-    wasActiveRef.current = isActive;
-  }, [settings.autoRefreshGitStatus, isActive, gitStatus, refreshGitData]);
+  }, [gitSection, rememberLastGitPanelMode, gitLastPanelMode, updateSetting]);
 
-  useEffect(() => {
-    if (!settings.autoRefreshGitStatus) return;
+  const handleOpenBranchManager = useCallback(
+    (tab: "branches" | "worktrees" | "repositories" = "branches") => {
+      window.dispatchEvent(new CustomEvent(GIT_VIEW_BRANCH_MANAGER_EVENT, { detail: { tab } }));
+    },
+    [],
+  );
 
-    const handleGitStatusChanged = () => {
-      refreshGitData();
-    };
+  const handleShowBranchDiffList = useCallback(async () => {
+    setShowBranchDiffList(true);
+    setBranchDiffSearchQuery("");
 
-    window.addEventListener("git-status-changed", handleGitStatusChanged);
-    return () => {
-      window.removeEventListener("git-status-changed", handleGitStatusChanged);
-    };
-  }, [settings.autoRefreshGitStatus, refreshGitData]);
+    if (!activeRepoPath) return;
 
-  useEffect(() => {
-    if (!settings.autoRefreshGitStatus) return;
-
-    let refreshTimeout: NodeJS.Timeout | null = null;
-    type FileExternalChangeDetail = {
-      event_type: string;
-      path: string;
-    };
-
-    const handleFileChange = (event: Event) => {
-      if (!(event instanceof CustomEvent)) return;
-
-      const { path } = event.detail as FileExternalChangeDetail;
-
-      if (activeRepoPath && path.startsWith(activeRepoPath)) {
-        if (refreshTimeout) {
-          clearTimeout(refreshTimeout);
-        }
-
-        refreshTimeout = setTimeout(() => {
-          refreshGitData();
-        }, 300);
-      }
-    };
-
-    window.addEventListener("file-external-change", handleFileChange);
-
-    return () => {
-      window.removeEventListener("file-external-change", handleFileChange);
-      if (refreshTimeout) {
-        clearTimeout(refreshTimeout);
-      }
-    };
-  }, [settings.autoRefreshGitStatus, activeRepoPath, refreshGitData]);
-
-  useEffect(() => {
-    if (!settings.rememberLastGitPanelMode) return;
-    setActiveTab(settings.gitLastPanelMode);
-  }, [settings.rememberLastGitPanelMode, settings.gitLastPanelMode]);
-
-  useEffect(() => {
-    if (!settings.rememberLastGitPanelMode) return;
-    if (settings.gitLastPanelMode !== activeTab) {
-      void updateSetting("gitLastPanelMode", activeTab);
+    try {
+      actions.setBranches(await getBranches(activeRepoPath));
+    } catch (error) {
+      console.error("Failed to load branches for diff:", error);
     }
-  }, [activeTab, settings.rememberLastGitPanelMode, settings.gitLastPanelMode, updateSetting]);
+  }, [activeRepoPath, actions]);
+
+  const handleShowCommitDiffList = useCallback(() => {
+    setShowCommitDiffList(true);
+    setCommitDiffSearchQuery("");
+  }, []);
 
   useEffect(() => {
     const handlePaletteAction = (event: Event) => {
@@ -331,23 +519,37 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
       }
 
       if (detail.type === "show-tab") {
-        setActiveTab(detail.tab);
+        handleSelectGitSection(detail.tab);
+        return;
+      }
+
+      if (detail.type === "manage-branches") {
+        handleOpenBranchManager(detail.tab);
+        return;
+      }
+
+      if (detail.type === "show-branch-diff") {
+        void handleShowBranchDiffList();
         return;
       }
 
       if (detail.type === "manage-remotes") {
-        setShowRemoteManager(true);
+        handleSelectGitSection("remotes");
         return;
       }
 
       if (detail.type === "manage-tags") {
-        setShowTagManager(true);
+        handleSelectGitSection("tags");
         return;
       }
 
       if (detail.type === "view-stashes") {
-        setShowStashList(true);
-        setStashSearchQuery("");
+        handleSelectGitSection("stashes");
+        return;
+      }
+
+      if (detail.type === "initialize-repository") {
+        void handleInitializeRepository();
         return;
       }
 
@@ -358,7 +560,14 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
 
     window.addEventListener("athas:git-palette-action", handlePaletteAction);
     return () => window.removeEventListener("athas:git-palette-action", handlePaletteAction);
-  }, [handleManualRefresh, handleSelectRepository]);
+  }, [
+    handleInitializeRepository,
+    handleSelectGitSection,
+    handleManualRefresh,
+    handleOpenBranchManager,
+    handleSelectRepository,
+    handleShowBranchDiffList,
+  ]);
 
   useEffect(() => {
     if (!activeRepoPath || !visibleGitFiles.length) {
@@ -369,21 +578,16 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
     let isCancelled = false;
 
     const loadFileDiffStats = async () => {
-      const visibleFileKeys = new Set(
-        visibleGitFiles.map((file) => `${file.staged ? "staged" : "unstaged"}:${file.path}`),
-      );
-      const statsEntries = (await getStatusDiffStats(activeRepoPath))
-        .map(
-          (stat) =>
-            [
-              `${stat.staged ? "staged" : "unstaged"}:${stat.file_path}`,
-              { additions: stat.additions, deletions: stat.deletions },
-            ] as const,
-        )
-        .filter(([key]) => visibleFileKeys.has(key));
+      const nextFileDiffStats: Record<string, GitFileDiffStats> = {};
+      for (const stat of await getStatusDiffStats(activeRepoPath)) {
+        const key = `${stat.staged ? "staged" : "unstaged"}:${stat.file_path}`;
+        if (visibleGitFileKeySet.has(key)) {
+          nextFileDiffStats[key] = { additions: stat.additions, deletions: stat.deletions };
+        }
+      }
 
       if (!isCancelled) {
-        setFileDiffStats(Object.fromEntries(statsEntries));
+        setFileDiffStats(nextFileDiffStats);
       }
     };
 
@@ -392,302 +596,19 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
     return () => {
       isCancelled = true;
     };
-  }, [activeRepoPath, visibleGitFiles]);
+  }, [activeRepoPath, visibleGitFiles.length, visibleGitFileKeySet]);
 
-  const handleOpenOriginalFile = async (filePath: string) => {
-    if (!activeRepoPath || !onFileSelect) return;
+  const handleGitViewWorktreeChange = useCallback(
+    async (worktreePath: string) => {
+      const opened = await openGitWorktreeWorkspace(worktreePath);
+      if (!opened) return;
 
-    try {
-      let actualFilePath = filePath;
-
-      if (filePath.includes(" -> ")) {
-        const parts = filePath.split(" -> ");
-        actualFilePath = parts[1].trim();
-      }
-
-      if (actualFilePath.startsWith('"') && actualFilePath.endsWith('"')) {
-        actualFilePath = actualFilePath.slice(1, -1);
-      }
-
-      const fullPath = `${activeRepoPath}/${actualFilePath}`;
-
-      onFileSelect(fullPath, false);
-    } catch (error) {
-      console.error("Error opening file:", error);
-      await showAlertDialog(`Failed to open file ${filePath}:\n${error}`, "Open File");
-    }
-  };
-
-  const handleViewFileDiff = async (filePath: string, staged: boolean = false) => {
-    if (!activeRepoPath || !onFileSelect) return;
-
-    try {
-      let actualFilePath = filePath;
-
-      if (filePath.includes(" -> ")) {
-        const parts = filePath.split(" -> ");
-        if (staged) {
-          actualFilePath = parts[1].trim();
-        } else {
-          actualFilePath = parts[0].trim();
-        }
-      }
-
-      if (actualFilePath.startsWith('"') && actualFilePath.endsWith('"')) {
-        actualFilePath = actualFilePath.slice(1, -1);
-      }
-
-      const file = gitStatus?.files.find((f: GitFile) => f.path === actualFilePath);
-
-      if (file && file.status === "untracked" && !staged) {
-        handleOpenOriginalFile(actualFilePath);
-        return;
-      }
-
-      const diff = await getFileDiff(activeRepoPath, actualFilePath, staged);
-
-      if (diff && (diff.lines.length > 0 || diff.is_image)) {
-        const selectedFileKey = `${staged ? "staged" : "unstaged"}:${actualFilePath}`;
-        const { additions, deletions } = countDiffStats([diff]);
-
-        // Open buffer immediately with the clicked file's diff
-        const initialMultiDiff: MultiFileDiff = {
-          title: "Uncommitted Changes",
-          repoPath: activeRepoPath,
-          commitHash: "working-tree",
-          files: [diff],
-          totalFiles: 1,
-          totalAdditions: additions,
-          totalDeletions: deletions,
-          fileKeys: [selectedFileKey],
-          initiallyExpandedFileKey: selectedFileKey,
-          isLoading: true,
-        };
-
-        const virtualPath = "diff://working-tree/all-files";
-        const bufferId = useBufferStore
-          .getState()
-          .actions.openBuffer(
-            virtualPath,
-            "Uncommitted Changes",
-            "",
-            false,
-            undefined,
-            true,
-            true,
-            initialMultiDiff,
-          );
-
-        // Load remaining diffs in the background
-        const repoPath = activeRepoPath;
-        const diffableFiles = (visibleGitFiles ?? []).filter(
-          (entry) => entry.status !== "untracked",
-        );
-        const diffEntries = Array.from(
-          new Map(
-            diffableFiles.map((entry) => [
-              `${entry.staged ? "staged" : "unstaged"}:${entry.path}`,
-              entry,
-            ]),
-          ).entries(),
-        ).filter(([fileKey]) => fileKey !== selectedFileKey);
-
-        if (diffEntries.length > 0) {
-          void (async () => {
-            const remainingDiffs = await Promise.all(
-              diffEntries.map(async ([fileKey, entry]) => {
-                const nextDiff = await getFileDiff(repoPath, entry.path, entry.staged);
-                if (!nextDiff || (nextDiff.lines.length === 0 && nextDiff.is_image !== true)) {
-                  return null;
-                }
-
-                return {
-                  fileKey,
-                  diff: nextDiff,
-                };
-              }),
-            );
-
-            const accumulatedDiffs = [
-              { fileKey: selectedFileKey, diff },
-              ...remainingDiffs.filter(
-                (entry): entry is NonNullable<typeof entry> => entry !== null,
-              ),
-            ];
-
-            const allStats = countDiffStats(accumulatedDiffs.map((item) => item.diff));
-            useBufferStore.getState().actions.updateBufferContent(bufferId, "", false, {
-              title: "Uncommitted Changes",
-              repoPath,
-              commitHash: "working-tree",
-              files: accumulatedDiffs.map((item) => item.diff),
-              totalFiles: accumulatedDiffs.length,
-              totalAdditions: allStats.additions,
-              totalDeletions: allStats.deletions,
-              fileKeys: accumulatedDiffs.map((item) => item.fileKey),
-              initiallyExpandedFileKey: selectedFileKey,
-              isLoading: false,
-            } satisfies MultiFileDiff);
-          })();
-        } else {
-          // No other files to load, mark as done
-          useBufferStore.getState().actions.updateBufferContent(bufferId, "", false, {
-            ...initialMultiDiff,
-            isLoading: false,
-          });
-        }
-      } else {
-        handleOpenOriginalFile(actualFilePath);
-      }
-    } catch (error) {
-      console.error("Error getting file diff:", error);
-      await showAlertDialog(`Failed to get diff for ${filePath}:\n${error}`, "Git Diff");
-    }
-  };
-
-  const handleViewCommitDiff = async (commitHash: string, filePath?: string) => {
-    if (!activeRepoPath || !onFileSelect) return;
-
-    try {
-      const diffs = await getCommitDiff(activeRepoPath, commitHash);
-      const commit = useGitStore.getState().commits.find((entry) => entry.hash === commitHash);
-
-      if (diffs && diffs.length > 0) {
-        if (filePath) {
-          const diff = diffs.find((d) => d.file_path === filePath) || diffs[0];
-          const diffFileName = `${diff.file_path.split("/").pop()}.diff`;
-          const virtualPath = `diff://commit/${commitHash}/${diffFileName}`;
-
-          useBufferStore
-            .getState()
-            .actions.openBuffer(virtualPath, diffFileName, "", false, undefined, true, true, diff);
-        } else {
-          const { additions, deletions } = countDiffStats(diffs);
-
-          const multiDiff: MultiFileDiff = {
-            title: `Commit ${commitHash.substring(0, 7)}`,
-            repoPath: activeRepoPath,
-            commitHash,
-            commitMessage: commit?.message,
-            commitDescription: commit?.description,
-            commitAuthor: commit?.author,
-            commitDate: commit?.date,
-            files: diffs,
-            totalFiles: diffs.length,
-            totalAdditions: additions,
-            totalDeletions: deletions,
-          };
-
-          const virtualPath = `diff://commit/${commitHash}/all-files`;
-          const displayName = `Commit ${commitHash.substring(0, 7)} (${diffs.length} files)`;
-
-          useBufferStore
-            .getState()
-            .actions.openBuffer(
-              virtualPath,
-              displayName,
-              "",
-              false,
-              undefined,
-              true,
-              true,
-              multiDiff,
-            );
-        }
-      } else {
-        await showAlertDialog(
-          `No changes in this commit${filePath ? ` for file ${filePath}` : ""}.`,
-          "Git Diff",
-        );
-      }
-    } catch (error) {
-      console.error("Error getting commit diff:", error);
-      await showAlertDialog(`Failed to get diff for commit ${commitHash}:\n${error}`, "Git Diff");
-    }
-  };
-
-  const handleViewStashDiff = async (stashIndex: number) => {
-    if (!activeRepoPath || !onFileSelect) return;
-
-    try {
-      const diffs = await getStashDiff(activeRepoPath, stashIndex);
-
-      if (diffs && diffs.length > 0) {
-        const { additions, deletions } = countDiffStats(diffs);
-
-        const multiDiff: MultiFileDiff = {
-          repoPath: activeRepoPath,
-          commitHash: `stash@{${stashIndex}}`,
-          files: diffs,
-          totalFiles: diffs.length,
-          totalAdditions: additions,
-          totalDeletions: deletions,
-        };
-
-        const virtualPath = `diff://stash/${stashIndex}/all-files`;
-        const displayName = `Stash @{${stashIndex}} (${diffs.length} files)`;
-
-        useBufferStore
-          .getState()
-          .actions.openBuffer(
-            virtualPath,
-            displayName,
-            "",
-            false,
-            undefined,
-            true,
-            true,
-            multiDiff,
-          );
-      } else {
-        await showAlertDialog("No changes in this stash.", "Git Diff");
-      }
-    } catch (error) {
-      console.error("Error getting stash diff:", error);
-      await showAlertDialog(`Failed to get diff for stash@{${stashIndex}}:\n${error}`, "Git Diff");
-    }
-  };
-
-  const handleViewTagComparison = async (baseRef: string, targetRef: string, title: string) => {
-    if (!activeRepoPath || !onFileSelect) return;
-
-    try {
-      const diffs = await getRefDiff(activeRepoPath, baseRef, targetRef);
-
-      if (diffs && diffs.length > 0) {
-        const { additions, deletions } = countDiffStats(diffs);
-
-        const multiDiff: MultiFileDiff = {
-          title,
-          repoPath: activeRepoPath,
-          commitHash: `${baseRef}..${targetRef}`,
-          files: diffs,
-          totalFiles: diffs.length,
-          totalAdditions: additions,
-          totalDeletions: deletions,
-        };
-
-        const encodedTitle = encodeURIComponent(title);
-        useBufferStore
-          .getState()
-          .actions.openBuffer(
-            `diff://tag/${encodedTitle}/all-files`,
-            `${title} (${diffs.length} files)`,
-            "",
-            false,
-            undefined,
-            true,
-            true,
-            multiDiff,
-          );
-      } else {
-        await showAlertDialog(`No changes between ${baseRef} and ${targetRef}.`, "Git Diff");
-      }
-    } catch (error) {
-      console.error("Error getting tag comparison:", error);
-      await showAlertDialog(`Failed to compare ${baseRef} and ${targetRef}:\n${error}`, "Git Diff");
-    }
-  };
+      const status = await getGitStatus(worktreePath);
+      actions.setWorkspaceGitStatus(status, worktreePath);
+      actions.setGitStatus(status);
+    },
+    [actions],
+  );
 
   const handleStashListAction = async (
     action: () => Promise<boolean>,
@@ -700,11 +621,7 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
     try {
       const success = await action();
       if (success) {
-        if (settings.autoRefreshGitStatus) {
-          await handleManualRefresh();
-        } else {
-          actions.setStashes(await getStashes(activeRepoPath));
-        }
+        await handleManualRefresh();
       } else {
         console.error(`${actionName} failed`);
       }
@@ -719,67 +636,18 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
     }
   };
 
-  const renderActionsButton = () => (
-    <SidebarHeaderIconButton
-      onClick={(e) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        setGitActionsMenuAnchor({
-          left: rect.left,
-          right: rect.right,
-          top: rect.top,
-          bottom: rect.bottom,
-          width: rect.width,
-          height: rect.height,
-        });
-        setShowGitActionsMenu(!showGitActionsMenu);
-        setShowStashList(false);
-      }}
-      tooltip="Git Actions"
-    >
-      <MoreHorizontal />
-    </SidebarHeaderIconButton>
+  const renderSourceControlNavigation = () => (
+    <SourceControlNavigation
+      activeSection={gitSection}
+      sectionOrder={gitSidebarTabOrder}
+      hiddenItemIds={hiddenGitSidebarItems}
+      changeCount={visibleGitFiles.length}
+      commitCount={commits.length}
+      onSectionChange={handleSelectGitSection}
+    />
   );
 
-  const renderInitializeRepositoryButton = () => {
-    const canInitializeRepository = Boolean(repoPath);
-
-    return (
-      <Button
-        onClick={() => void handleInitializeRepository()}
-        disabled={!canInitializeRepository || isInitializingRepo}
-        variant="ghost"
-        compact
-        className="h-6 border border-border/70 bg-secondary-bg/60 px-2 text-text-lighter ui-text-xs hover:bg-hover hover:text-text"
-        tooltip={
-          canInitializeRepository
-            ? "Initialize Git repository"
-            : "Open a folder before initializing Git"
-        }
-      >
-        <GitBranch weight="duotone" />
-        {isInitializingRepo ? "Initializing..." : "Initialize"}
-      </Button>
-    );
-  };
-
-  const renderRepositoryEmptyActions = () => (
-    <div className="mt-1.5 flex items-center justify-center gap-1.5">
-      <Button
-        type="button"
-        variant="ghost"
-        compact
-        className="h-6 border border-border/70 bg-secondary-bg/60 px-2 text-text-lighter ui-text-xs hover:bg-hover hover:text-text"
-        disabled={isSelectingRepo}
-        onClick={() => void handleSelectRepository()}
-      >
-        <FolderSimpleStar weight="duotone" />
-        {isSelectingRepo ? "Selecting..." : "Browse"}
-      </Button>
-      {renderInitializeRepositoryButton()}
-    </div>
-  );
-
-  const renderGitActionsMenu = ({
+  const renderActionsMenu = ({
     hasGitRepo,
     onRefresh,
   }: {
@@ -787,21 +655,16 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
     onRefresh?: () => void;
   }) => (
     <GitActionsMenu
-      isOpen={showGitActionsMenu}
-      anchorRect={gitActionsMenuAnchor}
-      onClose={() => {
-        setShowGitActionsMenu(false);
-        setGitActionsMenuAnchor(null);
-      }}
       hasGitRepo={hasGitRepo}
+      hiddenItemIds={hiddenGitSidebarItems}
+      onItemVisibleChange={handleGitSidebarItemVisibleChange}
       repoPath={activeRepoPath ?? repoPath}
       onRefresh={onRefresh}
-      onOpenRemoteManager={() => setShowRemoteManager(true)}
-      onOpenTagManager={() => setShowTagManager(true)}
-      onViewStashes={() => {
-        setShowStashList(true);
-        setStashSearchQuery("");
-      }}
+      onOpenBranchManager={handleOpenBranchManager}
+      onShowBranchDiff={() => void handleShowBranchDiffList()}
+      onOpenRemoteManager={() => handleSelectGitSection("remotes")}
+      onOpenTagManager={() => handleSelectGitSection("tags")}
+      onViewStashes={() => handleSelectGitSection("stashes")}
       onSelectRepository={handleSelectRepository}
       isSelectingRepository={isSelectingRepo}
       onInitializeRepository={handleInitializeRepository}
@@ -810,7 +673,7 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
   );
 
   const filteredStashes = useMemo(() => {
-    const query = stashSearchQuery.trim().toLowerCase();
+    const query = sidebarSearchQuery.trim().toLowerCase();
     if (!query) {
       return stashes;
     }
@@ -823,49 +686,67 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
         `stash@{${stash.index}}`,
       ]),
     );
-  }, [stashSearchQuery, stashes]);
+  }, [sidebarSearchQuery, stashes]);
+  const filteredDiffCommits = useMemo(() => {
+    const query = commitDiffSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return commits;
+    }
 
-  const gitTabOrder: GitSidebarTab[] = ["changes", "history"];
-  const gitTabs: Array<{
-    id: GitSidebarTab;
-    label: string;
-    icon: ReactNode;
-  }> = [...settings.gitSidebarTabOrder]
-    .filter((id): id is GitSidebarTab => id === "changes" || id === "history")
-    .sort((a, b) => gitTabOrder.indexOf(a) - gitTabOrder.indexOf(b))
-    .map((id) => {
-      const tabMap: Record<GitSidebarTab, { id: GitSidebarTab; label: string; icon: ReactNode }> = {
-        changes: {
-          id: "changes",
-          label: "Changes",
-          icon: <FolderSimpleStar size={16} weight="duotone" />,
-        },
-        history: {
-          id: "history",
-          label: "History",
-          icon: <ClockCounterClockwise size={16} weight="duotone" />,
-        },
-      };
+    return commits.filter((commit) =>
+      matchesSearchQuery(query, [
+        commit.message,
+        commit.description ?? "",
+        commit.author,
+        commit.email ?? "",
+        commit.hash,
+        commit.hash.substring(0, 7),
+      ]),
+    );
+  }, [commitDiffSearchQuery, commits]);
+  const branchDiffBranches = useMemo(
+    () => branches.filter((branch) => branch !== gitStatus?.branch),
+    [branches, gitStatus?.branch],
+  );
+  const filteredBranchDiffBranches = useMemo(() => {
+    const query = branchDiffSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return branchDiffBranches;
+    }
 
-      return tabMap[id];
-    })
-    .filter(Boolean);
+    return branchDiffBranches.filter((branch) => matchesSearchQuery(query, [branch]));
+  }, [branchDiffBranches, branchDiffSearchQuery]);
 
   if (!activeRepoPath) {
     return (
       <>
-        <SidebarPanel className="gap-2 p-2">
-          <SidebarHeader className="justify-between bg-transparent p-0 backdrop-blur-none">
-            <div className="flex items-center gap-2">{renderActionsButton()}</div>
-          </SidebarHeader>
-          <SidebarEmptyActionState className="h-full" message="No repository selected">
-            {renderRepositoryEmptyActions()}
-            {repoSelectionError ? (
-              <span className="ui-text-sm mt-1.5 text-error">{repoSelectionError}</span>
-            ) : null}
-          </SidebarEmptyActionState>
-        </SidebarPanel>
-        {renderGitActionsMenu({ hasGitRepo: false, onRefresh: handleManualRefresh })}
+        <SidebarWorkspace
+          title="Source Control"
+          actions={renderActionsMenu({ hasGitRepo: false, onRefresh: handleManualRefresh })}
+        >
+          {renderSourceControlNavigation()}
+          <EmptyState
+            layout="sidebar"
+            title="No repository selected"
+            message={repoSelectionError}
+            action={{
+              label: isSelectingRepo ? "Selecting..." : "Browse",
+              icon: <FolderStarIcon />,
+              disabled: isSelectingRepo,
+              onClick: () => void handleSelectRepository(),
+            }}
+            secondaryAction={{
+              label: isInitializingRepo ? "Initializing..." : "Initialize",
+              icon: <GitBranchIcon />,
+              variant: "ghost",
+              disabled: !repoPath || isInitializingRepo,
+              tooltip: repoPath
+                ? "Initialize Git repository"
+                : "Open a folder before initializing Git",
+              onClick: () => void handleInitializeRepository(),
+            }}
+          />
+        </SidebarWorkspace>
       </>
     );
   }
@@ -873,13 +754,16 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
   if (isLoadingGitData && !gitStatus) {
     return (
       <>
-        <SidebarPanel className="gap-2 p-2">
-          <SidebarHeader className="justify-between bg-transparent p-0 backdrop-blur-none">
-            <div className="flex items-center gap-2">{renderActionsButton()}</div>
-          </SidebarHeader>
-          <SidebarEmptyState className="h-full">Loading Git status...</SidebarEmptyState>
-        </SidebarPanel>
-        {renderGitActionsMenu({ hasGitRepo: false, onRefresh: handleManualRefresh })}
+        <SidebarWorkspace
+          title="Source Control"
+          actions={renderActionsMenu({ hasGitRepo: false, onRefresh: handleManualRefresh })}
+        >
+          {renderSourceControlNavigation()}
+          <EmptyState
+            layout="sidebar"
+            message={<Spinner label="Loading Git status" showLabel compact />}
+          />
+        </SidebarWorkspace>
       </>
     );
   }
@@ -887,240 +771,278 @@ const GitView = ({ repoPath, onFileSelect, isActive }: GitViewProps) => {
   if (!gitStatus) {
     return (
       <>
-        <SidebarPanel className="gap-2 p-2">
-          <SidebarHeader className="justify-between bg-transparent p-0 backdrop-blur-none">
-            <div className="flex items-center gap-2">{renderActionsButton()}</div>
-          </SidebarHeader>
-          <SidebarEmptyActionState className="h-full" message="Not a Git repository">
-            {renderRepositoryEmptyActions()}
-            {repoSelectionError ? (
-              <span className="ui-text-sm mt-1.5 text-error">{repoSelectionError}</span>
-            ) : null}
-          </SidebarEmptyActionState>
-        </SidebarPanel>
-        {renderGitActionsMenu({ hasGitRepo: false, onRefresh: handleManualRefresh })}
+        <SidebarWorkspace
+          title="Source Control"
+          actions={renderActionsMenu({ hasGitRepo: false, onRefresh: handleManualRefresh })}
+        >
+          {renderSourceControlNavigation()}
+          <EmptyState
+            layout="sidebar"
+            title="Not a Git repository"
+            message={repoSelectionError}
+            action={{
+              label: isSelectingRepo ? "Selecting..." : "Browse",
+              icon: <FolderStarIcon />,
+              disabled: isSelectingRepo,
+              onClick: () => void handleSelectRepository(),
+            }}
+            secondaryAction={{
+              label: isInitializingRepo ? "Initializing..." : "Initialize",
+              icon: <GitBranchIcon />,
+              variant: "ghost",
+              disabled: !repoPath || isInitializingRepo,
+              tooltip: repoPath
+                ? "Initialize Git repository"
+                : "Open a folder before initializing Git",
+              onClick: () => void handleInitializeRepository(),
+            }}
+          />
+        </SidebarWorkspace>
       </>
     );
   }
 
-  const stagedFiles = visibleGitFiles.filter((f) => f.staged);
-  const refreshAfterAction = settings.autoRefreshGitStatus ? handleManualRefresh : undefined;
-  const handleGitFileClick = settings.openDiffOnClick ? handleViewFileDiff : handleOpenOriginalFile;
+  const refreshAfterAction = handleManualRefresh;
+  const handleGitFileClick = openDiffOnClick ? handleViewFileDiff : handleOpenOriginalFile;
+
+  if (selectedHistoryCommit) {
+    return (
+      <GitCommitFilesPanel
+        commit={selectedHistoryCommit}
+        files={selectedHistoryCommitFiles}
+        selectedFilePath={selectedHistoryFilePath}
+        isLoading={isLoadingHistoryCommitFiles}
+        onBack={handleBackFromHistoryCommit}
+        onSelectFile={handleSelectHistoryCommitFile}
+      />
+    );
+  }
 
   return (
     <>
-      <SidebarPanel className="ui-font ui-text-sm select-none gap-2 p-2">
-        <div className="@container flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-          <SidebarSectionSwitcher
-            items={gitTabs}
-            value={activeTab}
-            onChange={(tab) => setActiveTab(tab as GitSidebarTab)}
-          />
-
-          <SidebarHeader className="min-w-0 justify-between bg-transparent p-0 backdrop-blur-none">
-            <GitProjectSelector
-              className="min-w-0 max-w-[calc(100%-4.5rem)] shrink"
-              onRepositoryChange={() => setRepoSelectionError(null)}
-            />
-
-            <div className="ml-auto flex shrink-0 items-center gap-1">
-              <SidebarHeaderIconButton
-                onClick={handleManualRefresh}
-                disabled={isLoadingGitData || isRefreshing}
-                className="disabled:opacity-50"
-                tooltip="Refresh"
-                aria-label="Refresh git status"
-              >
-                {isLoadingGitData || isRefreshing ? (
-                  <LoadingIndicator label="Refreshing git status" compact />
-                ) : (
-                  <RefreshCw />
-                )}
-              </SidebarHeaderIconButton>
-              {renderActionsButton()}
-            </div>
-          </SidebarHeader>
-
-          <SidebarSectionPager
-            className="flex-1"
-            items={[
-              {
-                id: "changes",
-                content: (
-                  <GitStatusPanel
-                    files={visibleGitFiles}
-                    fileDiffStats={fileDiffStats}
-                    onFileSelect={handleGitFileClick}
-                    onOpenFile={handleOpenOriginalFile}
-                    onRefresh={refreshAfterAction}
-                    repoPath={activeRepoPath}
-                  />
-                ),
-              },
-              {
-                id: "history",
-                content: (
-                  <GitCommitHistory
-                    isCollapsed={false}
-                    onToggle={() => {}}
-                    onViewCommitDiff={handleViewCommitDiff}
-                    repoPath={activeRepoPath}
-                    showHeader={false}
-                  />
-                ),
-              },
-            ].filter((item) => gitTabs.some((tab) => tab.id === item.id))}
-            value={activeTab}
-            onChange={(tab) => setActiveTab(tab as GitSidebarTab)}
-          />
-        </div>
-
-        <SidebarFooter surface>
-          <GitCommitPanel
-            stagedFilesCount={stagedFiles.length}
-            stagedFiles={stagedFiles}
+      <SidebarWorkspace
+        actionsLayout="content"
+        title={
+          <GitBranchManager
             currentBranch={gitStatus.branch}
             repoPath={activeRepoPath}
-            ahead={gitStatus.ahead}
-            behind={gitStatus.behind}
-            onCommitSuccess={refreshAfterAction}
+            paletteTarget
+            openEventName={GIT_VIEW_BRANCH_MANAGER_EVENT}
+            onBranchChange={() => void handleManualRefresh()}
+            onWorktreeChange={(worktreePath) => void handleGitViewWorktreeChange(worktreePath)}
+            onRepositoryChange={() => setRepoSelectionError(null)}
           />
-        </SidebarFooter>
-      </SidebarPanel>
+        }
+        actions={
+          <>
+            <ButtonGroup ref={syncMenuAnchorRef} className="min-w-0 max-w-full">
+              <Button
+                type="button"
+                variant="default"
+                width="grow"
+                onClick={() => void handleRemoteAction(primaryRemoteAction)}
+                disabled={!activeRepoPath || isRemoteActionLoading}
+                aria-label={`${syncActionLabel} remote changes`}
+              >
+                <span className="min-w-0 truncate whitespace-nowrap">{syncActionLabel}</span>
+              </Button>
+              <ButtonGroupSeparator />
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="default"
+                      iconOnly
+                      disabled={!activeRepoPath || isRemoteActionLoading}
+                      aria-label="Choose remote action"
+                    />
+                  }
+                >
+                  <ChevronDownIcon className="size-3" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent anchor={syncMenuAnchorRef} align="end" size="compact">
+                  <DropdownMenuItems items={syncMenuItems} />
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </ButtonGroup>
+            {renderActionsMenu({ hasGitRepo: true, onRefresh: refreshAfterAction })}
+            {gitSection === "remotes" || gitSection === "tags" || gitSection === "stashes" ? (
+              <SidebarSearchPopover
+                value={sidebarSearchQuery}
+                onChange={setSidebarSearchQuery}
+                placeholder={`Search ${gitSection}`}
+              />
+            ) : null}
+            {gitSection === "history" ? (
+              <GitCommitHistoryControls
+                searchQuery={historySearchQuery}
+                searchScope={historySearchScope}
+                onSearchQueryChange={setHistorySearchQuery}
+                onSearchScopeChange={setHistorySearchScope}
+              />
+            ) : null}
+          </>
+        }
+      >
+        {renderSourceControlNavigation()}
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col">
+            {gitSection === "changes" ? (
+              <GitStatusPanel
+                files={visibleGitFiles}
+                fileDiffStats={fileDiffStats}
+                onFileSelect={handleGitFileClick}
+                onOpenFile={handleOpenOriginalFile}
+                onViewDiff={handleViewWorkingTreeDiff}
+                onShowCommitDiffPicker={handleShowCommitDiffList}
+                onShowBranchDiffPicker={handleShowBranchDiffList}
+                onShowStashDiffPicker={handleShowStashes}
+                onRefresh={refreshAfterAction}
+                repoPath={activeRepoPath}
+              />
+            ) : gitSection === "history" ? (
+              <GitCommitHistory
+                onSelectCommit={(commit) => void handleSelectHistoryCommit(commit)}
+                repoPath={activeRepoPath}
+                ahead={gitStatus.ahead}
+                behind={gitStatus.behind}
+                searchQuery={historySearchQuery}
+                searchScope={historySearchScope}
+              />
+            ) : gitSection === "remotes" ? (
+              <GitRemoteManager
+                query={sidebarSearchQuery}
+                repoPath={activeRepoPath}
+                onRefresh={refreshAfterAction}
+              />
+            ) : gitSection === "tags" ? (
+              <GitTagManager
+                query={sidebarSearchQuery}
+                repoPath={activeRepoPath}
+                onRefresh={refreshAfterAction}
+                onViewTagComparison={handleViewTagComparison}
+              />
+            ) : (
+              <GitStashManager
+                stashes={filteredStashes}
+                query={sidebarSearchQuery}
+                isActionLoading={(stashIndex) => stashActionLoading.has(stashIndex)}
+                onView={(stashIndex) => void handleViewStashDiff(stashIndex)}
+                onApply={(stashIndex) =>
+                  void handleStashListAction(
+                    () => applyStash(activeRepoPath, stashIndex),
+                    stashIndex,
+                    "Apply stash",
+                  )
+                }
+                onPop={(stashIndex) =>
+                  void handleStashListAction(
+                    () => popStash(activeRepoPath, stashIndex),
+                    stashIndex,
+                    "Pop stash",
+                  )
+                }
+                onDrop={(stashIndex) =>
+                  void handleStashListAction(
+                    () => dropStash(activeRepoPath, stashIndex),
+                    stashIndex,
+                    "Drop stash",
+                  )
+                }
+              />
+            )}
+          </div>
+          {gitSection === "changes" || gitSection === "history" ? (
+            <div className="mx-2 mb-2 min-w-0 shrink-0 pt-1">
+              <GitCommitPanel
+                stagedFilesCount={stagedFiles.length}
+                stagedFiles={stagedFiles}
+                currentBranch={gitStatus.branch}
+                repoPath={activeRepoPath}
+                ahead={gitStatus.ahead}
+                behind={gitStatus.behind}
+                onCommitSuccess={refreshAfterAction}
+              />
+            </div>
+          ) : null}
+        </div>
+      </SidebarWorkspace>
 
-      {renderGitActionsMenu({ hasGitRepo: !!gitStatus, onRefresh: refreshAfterAction })}
       <GitCommandSurface
-        isOpen={showStashList}
+        isOpen={showCommitDiffList}
         onClose={() => {
-          setShowStashList(false);
-          setStashSearchQuery("");
+          setShowCommitDiffList(false);
+          setCommitDiffSearchQuery("");
         }}
-        query={stashSearchQuery}
-        onQueryChange={setStashSearchQuery}
-        placeholder="Search stashes..."
-        meta={`${stashes.length} stash${stashes.length === 1 ? "" : "es"}`}
+        query={commitDiffSearchQuery}
+        onQueryChange={setCommitDiffSearchQuery}
+        placeholder="Search commits..."
+        meta={`${commits.length} commit${commits.length === 1 ? "" : "s"}`}
       >
         <CommandList>
-          {filteredStashes.length === 0 ? (
+          {filteredDiffCommits.length === 0 ? (
             <CommandEmpty>
-              {stashSearchQuery.trim() ? "No matching stashes" : "No stashes"}
+              {commitDiffSearchQuery.trim() ? "No matching commits" : "No commits"}
             </CommandEmpty>
           ) : (
-            filteredStashes.map((stash) => {
-              const displayTitle = getStashDisplayTitle(stash.message);
-              const isActionLoading = stashActionLoading.has(stash.index);
+            <div>
+              {filteredDiffCommits.map((commit) => {
+                const shortHash = commit.hash.substring(0, 7);
 
-              return (
-                <div
-                  key={stash.index}
-                  role="button"
-                  tabIndex={0}
-                  className="group/stash ui-font relative mb-1 flex min-h-12 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-hover focus:bg-hover focus:outline-none"
-                  onClick={() => {
-                    void handleViewStashDiff(stash.index);
-                    setShowStashList(false);
-                    setStashSearchQuery("");
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.target !== event.currentTarget) return;
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    void handleViewStashDiff(stash.index);
-                    setShowStashList(false);
-                    setStashSearchQuery("");
-                  }}
-                >
-                  <div className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/50 bg-secondary-bg/70 text-text-lighter">
-                    <Archive className="size-4" />
-                  </div>
-                  <div className="min-w-0 flex-1 pr-24">
-                    <div className="ui-text-sm truncate text-text" title={displayTitle}>
-                      {displayTitle}
-                    </div>
-                    <div className="ui-text-xs mt-1 flex min-w-0 items-center gap-2 text-text-lighter/80">
-                      <span className="truncate">{formatRelativeDate(stash.date)}</span>
-                      <span className="rounded border border-border/50 px-1 ui-text-xs leading-4">
-                        {getStashPositionLabel(stash.index)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="pointer-events-none absolute right-2 top-1/2 flex -translate-y-1/2 translate-x-1 items-center gap-0.5 rounded-md border border-border/60 bg-secondary-bg p-0.5 opacity-0 transition-[opacity,transform] duration-[var(--app-duration-fast)] ease-[var(--app-ease-smooth)] group-hover/stash:pointer-events-auto group-hover/stash:translate-x-0 group-hover/stash:opacity-100 group-focus-within/stash:pointer-events-auto group-focus-within/stash:translate-x-0 group-focus-within/stash:opacity-100">
-                    <Button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleStashListAction(
-                          () => applyStash(activeRepoPath!, stash.index),
-                          stash.index,
-                          "Apply stash",
-                        );
-                      }}
-                      disabled={isActionLoading}
-                      variant="ghost"
-                      compact
-                      className="text-text-lighter disabled:opacity-50"
-                      tooltip="Apply stash"
-                    >
-                      <Download />
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleStashListAction(
-                          () => popStash(activeRepoPath!, stash.index),
-                          stash.index,
-                          "Pop stash",
-                        );
-                      }}
-                      disabled={isActionLoading}
-                      variant="ghost"
-                      compact
-                      className="text-text-lighter disabled:opacity-50"
-                      tooltip="Pop stash"
-                    >
-                      <Upload />
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleStashListAction(
-                          () => dropStash(activeRepoPath!, stash.index),
-                          stash.index,
-                          "Drop stash",
-                        );
-                      }}
-                      disabled={isActionLoading}
-                      variant="ghost"
-                      compact
-                      className="text-error hover:bg-error/10 hover:text-error disabled:opacity-50"
-                      tooltip="Drop stash"
-                    >
-                      <Trash2 />
-                    </Button>
-                  </div>
-                </div>
-              );
-            })
+                return (
+                  <CommandItemRow
+                    key={commit.hash}
+                    type="button"
+                    icon={<HistoryIcon />}
+                    title={commit.message}
+                    accessory={<CommandItemBadge>{shortHash}</CommandItemBadge>}
+                    onClick={() => {
+                      void handleViewCommitDiff(commit.hash);
+                      setShowCommitDiffList(false);
+                      setCommitDiffSearchQuery("");
+                    }}
+                    disabled={isLoadingCommitDiff}
+                  />
+                );
+              })}
+            </div>
           )}
         </CommandList>
       </GitCommandSurface>
-
-      <GitRemoteManager
-        isOpen={showRemoteManager}
-        onClose={() => setShowRemoteManager(false)}
-        repoPath={activeRepoPath}
-        onRefresh={refreshAfterAction}
-      />
-
-      <GitTagManager
-        isOpen={showTagManager}
-        onClose={() => setShowTagManager(false)}
-        repoPath={activeRepoPath}
-        onRefresh={refreshAfterAction}
-        onViewTagComparison={handleViewTagComparison}
-      />
+      <GitCommandSurface
+        isOpen={showBranchDiffList}
+        onClose={() => {
+          setShowBranchDiffList(false);
+          setBranchDiffSearchQuery("");
+        }}
+        query={branchDiffSearchQuery}
+        onQueryChange={setBranchDiffSearchQuery}
+        placeholder="Compare current branch with..."
+        meta={`${branchDiffBranches.length} branch${branchDiffBranches.length === 1 ? "" : "es"}`}
+      >
+        <CommandList>
+          {filteredBranchDiffBranches.length === 0 ? (
+            <CommandEmpty>
+              {branchDiffSearchQuery.trim() ? "No matching branches" : "No other branches"}
+            </CommandEmpty>
+          ) : (
+            <div>
+              {filteredBranchDiffBranches.map((branch) => (
+                <CommandItemRow
+                  key={branch}
+                  type="button"
+                  icon={<GitBranchIcon />}
+                  title={branch}
+                  description={`compare with ${gitStatus.branch}`}
+                  onClick={() => void handleViewBranchDiff(branch)}
+                  disabled={isLoadingBranchDiff}
+                />
+              ))}
+            </div>
+          )}
+        </CommandList>
+      </GitCommandSurface>
     </>
   );
 };

@@ -2,7 +2,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { getSettingsStore } from "@/features/settings/lib/settings-persistence";
 
 const ONBOARDING_STATE_KEY = "product_onboarding_state_v1";
-export type OnboardingMode = "first-run" | "updated" | "preview";
+export type OnboardingMode = "first-run" | "preview" | "release-notes";
 
 export interface OnboardingContext {
   mode: OnboardingMode;
@@ -38,20 +38,14 @@ export function resolveOnboardingContextFromState(
     };
   }
 
-  if (persistedState.lastSeenVersion !== currentVersion) {
-    return {
-      mode: "updated",
-      currentVersion,
-      previousVersion: persistedState.lastSeenVersion,
-    };
-  }
-
   return null;
 }
 
 export async function resolveOnboardingContext(): Promise<OnboardingContext | null> {
-  const currentVersion = await getVersion();
-  const persistedState = await readPersistedOnboardingState();
+  const [currentVersion, persistedState] = await Promise.all([
+    getVersion(),
+    readPersistedOnboardingState(),
+  ]);
   return resolveOnboardingContextFromState(currentVersion, persistedState);
 }
 

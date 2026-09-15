@@ -1,29 +1,54 @@
 import {
-  BugIcon as Bug,
-  FolderOpenIcon as FolderOpen,
-  ListBulletsIcon as ListBullets,
-  PauseIcon as Pause,
-  PlayIcon as Play,
-  SquareIcon as Square,
-  TrashIcon as Trash,
-} from "@phosphor-icons/react";
+  ArrowCornerDownLeftIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ArrowsClockwiseIcon,
+  ArrowsInIcon,
+  ArrowsOutIcon,
+  BugIcon,
+  CircleDottedIcon,
+  FolderOpenIcon,
+  PauseIcon,
+  PlayIcon,
+  SquareIcon,
+  TrashIcon,
+  XIcon,
+} from "@/ui/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { useEditorStateStore } from "@/features/editor/stores/state.store";
 import { readFileContent } from "@/features/file-system/controllers/file-operations";
 import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
 import { useProjectStore } from "@/features/window/stores/project.store";
+import { Alert, AlertDescription } from "@/ui/alert";
 import Badge from "@/ui/badge";
 import { Button } from "@/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/ui/context-menu";
+import { EmptyState } from "@/ui/empty";
 import Input from "@/ui/input";
+import { ScrollArea } from "@/ui/scroll-area";
 import Select from "@/ui/select";
+import { TabBarSurface } from "@/ui/tab-bar";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/tabs";
 import { cn } from "@/utils/cn";
 import { joinPath } from "@/utils/path-helpers";
 import {
+  applyJavaHotCodeReplace,
+  disconnectDebugAdapterSession,
+  getExceptionBreakpointFilters,
+  restartDebugAdapterSession,
   sendDebugAdapterRequest,
   startDebugLaunchSession,
-  stopDebugAdapterSession,
+  startJavaDebugLaunchSession,
   syncDebugBreakpoints,
+  syncExceptionBreakpoints,
 } from "../services/debug-adapter-service";
 import { useDebuggerStore } from "../stores/debugger.store";
 import {
@@ -34,19 +59,24 @@ import {
 } from "../utils/debugger-command";
 import {
   DebugBreakpointsList,
-  DebugEmptyState,
-  DebugSection,
+  DebugExceptionBreakpointsList,
   DebugSessionStatusIcon,
   DebugStackFrames,
 } from "./debugger-panels";
 import { DebugWatchPanel } from "./debugger-watch-panel";
 import { DebugVariablesPanel } from "./debugger-variables-panel";
 
-const getActiveDebuggableFile = () => {
-  const bufferStore = useBufferStore.getState();
-  const activeBuffer = bufferStore.buffers.find(
-    (buffer) => buffer.id === bufferStore.activeBufferId,
-  );
+type DebuggerPanel = "stack" | "variables" | "watch" | "console" | "breakpoints";
+
+interface DebuggerViewProps {
+  isFullScreen: boolean;
+  onClose: () => void;
+  onFullScreen: () => void;
+}
+const getActiveDebuggableFile = (state: ReturnType<typeof useBufferStore.getState>) => {
+  const activeBuffer = state.activeBufferId
+    ? state.buffers.find((buffer) => buffer.id === state.activeBufferId)
+    : null;
   if (!activeBuffer || activeBuffer.type !== "editor" || activeBuffer.isVirtual) return null;
 
   return {
@@ -60,18 +90,16 @@ function DebugStatusBadge({ status }: { status: "idle" | "running" | "paused" })
   const variant = status === "paused" ? "default" : status === "running" ? "accent" : "muted";
 
   return (
-    <Badge variant={variant} size="compact" className="gap-1.5 capitalize">
+    <Badge variant={variant}>
       <DebugSessionStatusIcon status={status} />
       {status}
     </Badge>
   );
 }
 
-export default function DebuggerView() {
+export default function DebuggerView({ isFullScreen, onClose, onFullScreen }: DebuggerViewProps) {
   const rootFolderPath = useProjectStore((state) => state.rootFolderPath);
-  const activeBufferId = useBufferStore.use.activeBufferId();
-  const buffers = useBufferStore.use.buffers();
-  const cursorPosition = useEditorStateStore.use.cursorPosition();
+  const activeFile = useBufferStore(getActiveDebuggableFile);
   const handleFileOpen = useFileSystemStore.use.handleFileOpen?.();
   const breakpoints = useDebuggerStore.use.breakpoints();
   const watchExpressions = useDebuggerStore.use.watchExpressions();
@@ -86,14 +114,16 @@ export default function DebuggerView() {
   const scopes = useDebuggerStore.use.scopes();
   const variablesByReference = useDebuggerStore.use.variablesByReference();
   const adapterOutput = useDebuggerStore.use.adapterOutput();
+  const adapterCapabilities = useDebuggerStore.use.adapterCapabilities();
   const pendingRequests = useDebuggerStore.use.pendingRequests();
   const debuggerActions = useDebuggerStore.use.actions();
   const [customCommand, setCustomCommand] = useState("");
   const [launchLoadError, setLaunchLoadError] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
+  const [enabledExceptionFilters, setEnabledExceptionFilters] = useState<Set<string>>(new Set());
+  const [activePanel, setActivePanel] = useState<DebuggerPanel>("stack");
   const syncedBreakpointFilesRef = useRef<Set<string>>(new Set());
 
-  const activeFile = useMemo(() => getActiveDebuggableFile(), [activeBufferId, buffers]);
   const generatedConfig = useMemo(
     () => createGeneratedDebugConfig(activeFile, rootFolderPath),
     [activeFile, rootFolderPath],
@@ -132,11 +162,17 @@ export default function DebuggerView() {
   ]
     .filter(Boolean)
     .join(" ");
-  const canStartDebugging = resolvedSelectedConfig.adapterCommand
-    ? Boolean(resolvedSelectedConfig.adapterCommand.trim())
-    : Boolean(selectedCommand.trim());
+  const canStartDebugging =
+    resolvedSelectedConfig.runtime === "java"
+      ? Boolean(activeFile?.path)
+      : resolvedSelectedConfig.adapterCommand
+        ? Boolean(resolvedSelectedConfig.adapterCommand.trim())
+        : Boolean(selectedCommand.trim());
   const isActiveSession = activeSession?.status === "running" || activeSession?.status === "paused";
-  const isAdapterSession = Boolean(isActiveSession && resolvedActiveConfig.adapterCommand);
+  const isAdapterSession = Boolean(
+    isActiveSession &&
+    (resolvedActiveConfig.adapterCommand || resolvedActiveConfig.runtime === "java"),
+  );
   const activeThreadId = stoppedState?.threadId ?? threads[0]?.id;
   const canSendAdapterThreadRequest = Boolean(isAdapterSession && activeThreadId);
   const isPaused = activeSession?.status === "paused";
@@ -144,7 +180,10 @@ export default function DebuggerView() {
   const breakpointSyncSignature = useMemo(
     () =>
       breakpoints
-        .map((breakpoint) => `${breakpoint.filePath}:${breakpoint.line}:${breakpoint.enabled}`)
+        .map(
+          (breakpoint) =>
+            `${breakpoint.filePath}:${breakpoint.line}:${breakpoint.enabled}:${breakpoint.condition ?? ""}:${breakpoint.hitCondition ?? ""}:${breakpoint.logMessage ?? ""}`,
+        )
         .sort()
         .join("|"),
     [breakpoints],
@@ -162,6 +201,10 @@ export default function DebuggerView() {
         a.filePath === b.filePath ? a.line - b.line : a.filePath.localeCompare(b.filePath),
       ),
     [breakpoints],
+  );
+  const exceptionBreakpointFilters = useMemo(
+    () => getExceptionBreakpointFilters(adapterCapabilities),
+    [adapterCapabilities],
   );
 
   useEffect(() => {
@@ -198,23 +241,59 @@ export default function DebuggerView() {
       setLaunchLoadError(null);
       return;
     }
+    let cancelled = false;
 
     const loadLaunchConfig = async () => {
       setLaunchLoadError(null);
       try {
         const content = await readFileContent(joinPath(rootFolderPath, ".vscode", "launch.json"));
+        if (cancelled) return;
         debuggerActions.setWorkspaceConfigs(parseDebugLaunchJson(content));
       } catch {
+        if (cancelled) return;
         debuggerActions.setWorkspaceConfigs([]);
         setLaunchLoadError("No launch.json found");
       }
     };
 
     void loadLaunchConfig();
+    return () => {
+      cancelled = true;
+    };
   }, [debuggerActions, rootFolderPath]);
 
   const startDebugging = async () => {
     setStartError(null);
+    if (resolvedSelectedConfig.runtime === "java" && activeFile?.path) {
+      try {
+        const adapterSession = await startJavaDebugLaunchSession(
+          resolvedSelectedConfig,
+          breakpoints,
+          activeFile.path,
+        );
+        debuggerActions.startSession({
+          id: adapterSession.id,
+          name: resolvedSelectedConfig.name,
+          configId: resolvedSelectedConfig.id,
+          command: adapterSession.command,
+          cwd: adapterSession.cwd,
+          startedAt: Date.now(),
+          status: "running",
+        });
+        debuggerActions.setAdapterCapabilities(adapterSession.capabilities ?? {});
+        setEnabledExceptionFilters(
+          new Set(
+            getExceptionBreakpointFilters(adapterSession.capabilities ?? {})
+              .filter((filter) => filter.default)
+              .map((filter) => filter.filter),
+          ),
+        );
+      } catch (error) {
+        setStartError(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+
     if (resolvedSelectedConfig.adapterCommand) {
       try {
         const adapterSession = await startDebugLaunchSession(resolvedSelectedConfig, breakpoints);
@@ -227,6 +306,14 @@ export default function DebuggerView() {
           startedAt: Date.now(),
           status: "running",
         });
+        debuggerActions.setAdapterCapabilities(adapterSession.capabilities ?? {});
+        setEnabledExceptionFilters(
+          new Set(
+            getExceptionBreakpointFilters(adapterSession.capabilities ?? {})
+              .filter((filter) => filter.default)
+              .map((filter) => filter.filter),
+          ),
+        );
       } catch (error) {
         setStartError(error instanceof Error ? error.message : String(error));
       }
@@ -258,13 +345,37 @@ export default function DebuggerView() {
     });
   };
 
-  const stopDebugging = () => {
-    if (activeSession && resolvedActiveConfig.adapterCommand) {
-      void stopDebugAdapterSession(activeSession.id).catch(() => {});
+  const stopDebugging = async () => {
+    if (
+      activeSession &&
+      (resolvedActiveConfig.adapterCommand || resolvedActiveConfig.runtime === "java")
+    ) {
+      await disconnectDebugAdapterSession(activeSession.id).catch(() => {});
     } else {
       window.dispatchEvent(new CustomEvent("close-active-terminal"));
     }
     debuggerActions.stopSession();
+  };
+
+  const restartDebugging = async () => {
+    if (!activeSession || !isActiveSession) {
+      await startDebugging();
+      return;
+    }
+
+    setStartError(null);
+    try {
+      if (isAdapterSession && adapterCapabilities.supportsRestartRequest === true) {
+        await restartDebugAdapterSession(activeSession.id);
+        debuggerActions.setSessionStatus("running");
+        return;
+      }
+
+      await stopDebugging();
+      await startDebugging();
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const sendAdapterThreadRequest = async (
@@ -282,9 +393,43 @@ export default function DebuggerView() {
   };
 
   const toggleCurrentLineBreakpoint = () => {
-    const file = getActiveDebuggableFile();
-    if (!file) return;
-    debuggerActions.toggleBreakpoint(file.path, cursorPosition.line);
+    if (!activeFile) return;
+    const cursorLine = useEditorStateStore.getState().cursorPosition.line;
+    debuggerActions.toggleBreakpoint(activeFile.path, cursorLine);
+  };
+
+  const toggleExceptionBreakpoint = async (filter: string, enabled: boolean) => {
+    if (!activeSession?.id || !isAdapterSession) return;
+
+    const nextFilters = new Set(enabledExceptionFilters);
+    if (enabled) nextFilters.add(filter);
+    else nextFilters.delete(filter);
+    setEnabledExceptionFilters(nextFilters);
+
+    try {
+      await syncExceptionBreakpoints(activeSession.id, Array.from(nextFilters));
+    } catch (error) {
+      setEnabledExceptionFilters(enabledExceptionFilters);
+      setStartError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const hotCodeReplace = async () => {
+    if (!activeSession?.id || resolvedActiveConfig.runtime !== "java") return;
+
+    setStartError(null);
+    try {
+      const result = await applyJavaHotCodeReplace(activeSession.id);
+      if (result.changedClasses.length === 0) {
+        toast.info("No changed Java classes were available to reload.");
+      } else {
+        toast.success(
+          `Reloaded ${result.changedClasses.length} Java class${result.changedClasses.length === 1 ? "" : "es"}.`,
+        );
+      }
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const selectStackFrame = async (frameId: number, sourcePath?: string, line?: number) => {
@@ -309,35 +454,159 @@ export default function DebuggerView() {
     }
   };
 
+  useEffect(() => {
+    const start = () => void startDebugging();
+    const stop = () => void stopDebugging();
+    const restart = () => void restartDebugging();
+    window.addEventListener("debugger-start", start);
+    window.addEventListener("debugger-stop", stop);
+    window.addEventListener("debugger-restart", restart);
+    return () => {
+      window.removeEventListener("debugger-start", start);
+      window.removeEventListener("debugger-stop", stop);
+      window.removeEventListener("debugger-restart", restart);
+    };
+  });
+
   return (
-    <div className="flex h-full min-h-0 flex-col bg-primary-bg text-text">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-border/70 border-b px-3">
-        <Bug size={16} className="text-text-lighter" weight="duotone" />
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-medium ui-text-sm">Run and Debug</div>
-        </div>
-        {activeSession ? <DebugStatusBadge status={activeSession.status} /> : null}
-        <Button
-          variant="ghost"
-          tooltip="Toggle breakpoint on current line"
-          onClick={toggleCurrentLineBreakpoint}
-          disabled={!activeFile}
-          compact
+    <Tabs
+      value={activePanel}
+      onValueChange={(value) => setActivePanel(value as DebuggerPanel)}
+      className="h-full min-h-0 gap-0 bg-background text-foreground"
+    >
+      <ContextMenu>
+        <ContextMenuTrigger
+          render={<TabBarSurface className="scrollbar-none justify-between overscroll-x-none" />}
         >
-          <ListBullets />
-        </Button>
-      </div>
+          <BugIcon className="text-subtle-foreground" />
+          <div className="scrollbar-none min-w-0 flex-1 overflow-x-auto">
+            <TabsList variant="bare" aria-label="Debugger panels">
+              <TabsTrigger value="stack" className="w-fit flex-none">
+                Call Stack
+                <Badge variant="muted">{stackFrames.length}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="variables" className="w-fit flex-none">
+                Variables
+                <Badge variant="muted">{scopes.length}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="watch" className="w-fit flex-none">
+                Watch
+                <Badge variant="muted">{watchExpressions.length}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="console" className="w-fit flex-none">
+                Console
+                <Badge variant="muted">{activeAdapterOutput.length}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="breakpoints" className="w-fit flex-none">
+                Breakpoints
+                <Badge variant="muted">
+                  {sortedBreakpoints.length + enabledExceptionFilters.size}
+                </Badge>
+              </TabsTrigger>
+            </TabsList>
+          </div>
+          {activeSession ? <DebugStatusBadge status={activeSession.status} /> : null}
+          {activePanel === "console" && activeAdapterOutput.length > 0 ? (
+            <Button
+              variant="ghost"
+              tooltip="Clear console"
+              onClick={debuggerActions.clearAdapterTranscript}
+              iconOnly
+            >
+              <TrashIcon />
+            </Button>
+          ) : null}
+          {activePanel === "breakpoints" && sortedBreakpoints.length > 0 ? (
+            <Button
+              variant="ghost"
+              tooltip="Clear breakpoints"
+              onClick={debuggerActions.clearBreakpoints}
+              iconOnly
+            >
+              <TrashIcon />
+            </Button>
+          ) : null}
+          <Button
+            variant="ghost"
+            tooltip="Toggle breakpoint at cursor"
+            commandId="debug.toggleBreakpoint"
+            onClick={toggleCurrentLineBreakpoint}
+            disabled={!activeFile}
+            iconOnly
+          >
+            <CircleDottedIcon />
+          </Button>
+          <Button
+            variant="ghost"
+            tooltip={isFullScreen ? "Exit full screen Run and Debug" : "Full screen Run and Debug"}
+            commandId="workbench.toggleActivePaneFullscreen"
+            onClick={onFullScreen}
+            aria-label={
+              isFullScreen ? "Exit full screen Run and Debug" : "Full screen Run and Debug"
+            }
+            iconOnly
+          >
+            {isFullScreen ? <ArrowsInIcon /> : <ArrowsOutIcon />}
+          </Button>
+          <Button
+            variant="ghost"
+            tooltip="Close Run and Debug"
+            onClick={onClose}
+            aria-label="Close Run and Debug"
+            iconOnly
+          >
+            <XIcon />
+          </Button>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem
+            disabled={!canStartDebugging || isActiveSession}
+            onClick={() => void startDebugging()}
+          >
+            <PlayIcon />
+            Start Debugging
+          </ContextMenuItem>
+          <ContextMenuItem
+            disabled={!canSendAdapterThreadRequest}
+            onClick={() => void sendAdapterThreadRequest(isPaused ? "continue" : "pause")}
+          >
+            {isPaused ? <PlayIcon /> : <PauseIcon />}
+            {isPaused ? "Continue Debugging" : "Pause Debugging"}
+          </ContextMenuItem>
+          <ContextMenuItem disabled={!isActiveSession} onClick={() => void stopDebugging()}>
+            <SquareIcon />
+            Stop Debugging
+          </ContextMenuItem>
+          <ContextMenuItem disabled={!canStartDebugging} onClick={() => void restartDebugging()}>
+            <ArrowsClockwiseIcon />
+            Restart Debugging
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem disabled={!activeFile} onClick={toggleCurrentLineBreakpoint}>
+            <CircleDottedIcon />
+            Toggle Breakpoint at Cursor
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={onFullScreen}>
+            {isFullScreen ? <ArrowsInIcon /> : <ArrowsOutIcon />}
+            {isFullScreen ? "Exit Full Screen" : "Full Screen"}
+          </ContextMenuItem>
+          <ContextMenuItem onClick={onClose}>
+            <XIcon />
+            Close Run and Debug
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(260px,320px)_minmax(0,1fr)]">
         <aside className="flex min-h-0 flex-col border-border/70 border-r">
           <div className="space-y-3 p-3">
             <div className="space-y-1.5">
-              <div className="ui-font text-text-lighter ui-text-xs">Configuration</div>
+              <div className="font-sans text-subtle-foreground ui-text-sm">Configuration</div>
               <Select
                 value={selectedConfig.id}
                 onChange={(value) => debuggerActions.setActiveConfigId(value)}
                 options={allConfigs.map((config) => ({ value: config.id, label: config.name }))}
-                size="sm"
                 variant="default"
                 searchable
                 aria-label="Debug configuration"
@@ -345,108 +614,123 @@ export default function DebuggerView() {
             </div>
 
             <div className="space-y-1.5">
-              <div className="ui-font text-text-lighter ui-text-xs">Command</div>
+              <div className="font-sans text-subtle-foreground ui-text-sm">Command</div>
               {resolvedSelectedConfig.runtime === "custom" ? (
                 <Input
                   value={customCommand}
                   onChange={(event) => setCustomCommand(event.target.value)}
                   placeholder="Command to run"
-                  size="sm"
                 />
               ) : (
-                <div className="ui-font min-h-8 truncate rounded-md border border-border/60 bg-secondary-bg/70 px-2 py-1.5 font-mono ui-text-xs text-text-lighter">
+                <div className="font-sans min-h-8 truncate rounded-lg border border-border/60 bg-surface/70 px-2 py-1.5 font-mono ui-text-sm text-subtle-foreground">
                   {adapterCommandPreview || selectedCommand || "No command available"}
                 </div>
               )}
             </div>
 
-            <div className="grid grid-cols-[1fr_auto_auto] gap-1.5">
+            <div className="flex items-center gap-1.5">
               <Button
                 variant="accent"
+                tooltip="Start debugging"
                 onClick={startDebugging}
                 disabled={!canStartDebugging || isActiveSession}
                 commandId="debug.start"
+                iconOnly
               >
-                <Play />
-                Start
+                <PlayIcon />
               </Button>
               <Button
                 variant="default"
-                tooltip={isPaused ? "Continue" : "Pause"}
+                tooltip={isPaused ? "Continue debugging" : "Pause debugging"}
                 disabled={!canSendAdapterThreadRequest}
                 onClick={() => void sendAdapterThreadRequest(isPaused ? "continue" : "pause")}
                 aria-label={isPaused ? "Continue debugging" : "Pause debugging"}
+                iconOnly
               >
-                {isPaused ? <Play /> : <Pause />}
+                {isPaused ? <PlayIcon /> : <PauseIcon />}
               </Button>
               <Button
                 variant="danger"
-                tooltip="Stop"
+                tooltip="Stop debugging"
                 disabled={!isActiveSession}
-                onClick={stopDebugging}
+                onClick={() => void stopDebugging()}
                 commandId="debug.stop"
+                iconOnly
               >
-                <Square />
+                <SquareIcon />
               </Button>
-            </div>
-
-            <div className="grid grid-cols-3 gap-1.5">
               <Button
                 variant="default"
                 tooltip="Step over"
                 disabled={!canStep}
                 onClick={() => void sendAdapterThreadRequest("next")}
-                compact
+                iconOnly
               >
-                Over
+                <ArrowCornerDownLeftIcon />
               </Button>
               <Button
                 variant="default"
                 tooltip="Step into"
                 disabled={!canStep}
                 onClick={() => void sendAdapterThreadRequest("stepIn")}
-                compact
+                iconOnly
               >
-                Into
+                <ArrowDownIcon />
               </Button>
               <Button
                 variant="default"
                 tooltip="Step out"
                 disabled={!canStep}
                 onClick={() => void sendAdapterThreadRequest("stepOut")}
-                compact
+                iconOnly
               >
-                Out
+                <ArrowUpIcon />
               </Button>
+              <Button
+                variant="default"
+                tooltip="Restart debugging"
+                disabled={!canStartDebugging}
+                onClick={() => void restartDebugging()}
+                commandId="debug.restart"
+                iconOnly
+              >
+                <ArrowsClockwiseIcon />
+              </Button>
+              {isAdapterSession && resolvedActiveConfig.runtime === "java" ? (
+                <Button
+                  variant="default"
+                  tooltip="Apply Java changes"
+                  onClick={() => void hotCodeReplace()}
+                  iconOnly
+                >
+                  <ArrowsClockwiseIcon />
+                </Button>
+              ) : null}
             </div>
 
             {startError ? (
-              <div className="ui-font rounded-md border border-error/30 bg-error/5 px-2 py-1.5 text-error ui-text-xs">
-                {startError}
-              </div>
+              <Alert tone="error">
+                <AlertDescription>{startError}</AlertDescription>
+              </Alert>
             ) : null}
           </div>
 
           {activeSession && activeSession.status !== "idle" ? (
-            <div className="border-border/70 border-t px-3 py-2 ui-text-xs">
+            <div className="border-border/70 border-t px-3 py-2 ui-text-sm">
               <div className="flex items-center gap-2">
                 <DebugSessionStatusIcon status={activeSession.status} />
                 <span className="truncate font-medium">{activeSession.name}</span>
-                {stoppedState ? (
-                  <Badge variant="default" size="compact" className="text-warning">
-                    Paused
-                  </Badge>
-                ) : null}
+                {stoppedState ? <Badge variant="warning">Paused</Badge> : null}
               </div>
-              <div className="mt-1 line-clamp-2 ui-text-xs text-text-lighter">
+              <div className="mt-1 line-clamp-2 ui-text-sm text-subtle-foreground">
                 {stoppedState?.description || stoppedState?.reason || activeSession.command}
               </div>
             </div>
           ) : null}
 
-          <div className="mt-auto border-border/70 border-t px-3 py-2 ui-text-xs text-text-lighter">
+          <div className="mt-auto border-border/70 border-t px-3 py-2 ui-text-sm text-subtle-foreground">
             <div className="flex items-center gap-1.5">
-              <FolderOpen size={12} />
+              <FolderOpenIcon size={12} />
               <span className="truncate">
                 {rootFolderPath || launchLoadError || "Open a project to load launch.json"}
               </span>
@@ -454,105 +738,95 @@ export default function DebuggerView() {
           </div>
         </aside>
 
-        <div className="grid min-h-0 grid-cols-2 gap-2 p-2">
-          <DebugSection title="Stack" count={stackFrames.length}>
-            <DebugStackFrames
-              frames={stackFrames}
-              selectedFrameId={selectedFrameId}
-              onSelect={selectStackFrame}
-            />
-          </DebugSection>
+        <div className="flex min-h-0 min-w-0 flex-col">
+          <TabsContent value="stack">
+            <ScrollArea fill="block" orientation="both">
+              <DebugStackFrames
+                frames={stackFrames}
+                selectedFrameId={selectedFrameId}
+                onSelect={selectStackFrame}
+              />
+            </ScrollArea>
+          </TabsContent>
 
-          <DebugSection title="Variables" count={scopes.length}>
-            <DebugVariablesPanel
-              activeSessionId={activeSession?.id}
-              selectedFrameId={selectedFrameId}
-              scopes={scopes}
-              variablesByReference={variablesByReference}
-              pendingRequests={pendingRequests}
-            />
-          </DebugSection>
+          <TabsContent value="variables">
+            <ScrollArea fill="block" orientation="both">
+              <DebugVariablesPanel
+                activeSessionId={activeSession?.id}
+                selectedFrameId={selectedFrameId}
+                scopes={scopes}
+                variablesByReference={variablesByReference}
+                pendingRequests={pendingRequests}
+                canSetVariables={adapterCapabilities.supportsSetVariable === true}
+              />
+            </ScrollArea>
+          </TabsContent>
 
-          <DebugSection title="Watch" count={watchExpressions.length}>
-            <DebugWatchPanel
-              activeSessionId={activeSession?.id}
-              selectedFrameId={selectedFrameId}
-              isPaused={isPaused}
-              pendingRequests={pendingRequests}
-            />
-          </DebugSection>
+          <TabsContent value="watch">
+            <ScrollArea fill="block" orientation="both">
+              <DebugWatchPanel
+                activeSessionId={activeSession?.id}
+                selectedFrameId={selectedFrameId}
+                isPaused={isPaused}
+                pendingRequests={pendingRequests}
+              />
+            </ScrollArea>
+          </TabsContent>
 
-          <DebugSection
-            title="Console"
-            count={activeAdapterOutput.length}
-            defaultOpen
-            action={
-              activeAdapterOutput.length > 0 ? (
-                <Button
-                  variant="ghost"
-                  tooltip="Clear console"
-                  onClick={debuggerActions.clearAdapterTranscript}
-                  compact
-                >
-                  <Trash />
-                </Button>
-              ) : null
-            }
-          >
-            {activeAdapterOutput.length === 0 ? (
-              <DebugEmptyState>Adapter output appears here.</DebugEmptyState>
-            ) : (
-              <div className="py-1">
-                {activeAdapterOutput.map((output, index) => (
-                  <div
-                    key={`${output.sessionId}-${index}`}
-                    className={cn(
-                      "whitespace-pre-wrap break-words px-3 py-1 font-mono ui-text-xs",
-                      output.stream === "stderr" ? "text-error" : "text-text-lighter",
-                    )}
-                  >
-                    {output.data.trimEnd()}
-                  </div>
-                ))}
-              </div>
-            )}
-          </DebugSection>
+          <TabsContent value="console">
+            <ScrollArea fill="block" orientation="both">
+              {activeAdapterOutput.length === 0 ? (
+                <EmptyState layout="sidebar" message="Adapter output appears here." />
+              ) : (
+                <div className="py-1">
+                  {activeAdapterOutput.map((output, index) => (
+                    <div
+                      key={`${output.sessionId}-${index}`}
+                      className={cn(
+                        "whitespace-pre-wrap wrap-break-word px-3 py-1 font-mono ui-text-sm",
+                        output.stream === "stderr" ? "text-destructive" : "text-subtle-foreground",
+                      )}
+                    >
+                      {output.data.trimEnd()}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </TabsContent>
 
-          <DebugSection
-            title="Breakpoints"
-            count={sortedBreakpoints.length}
-            className="col-span-2"
-            action={
-              sortedBreakpoints.length > 0 ? (
-                <Button
-                  variant="ghost"
-                  tooltip="Clear breakpoints"
-                  onClick={debuggerActions.clearBreakpoints}
-                  compact
-                >
-                  <Trash />
-                </Button>
-              ) : null
-            }
-          >
-            <DebugBreakpointsList
-              breakpoints={sortedBreakpoints}
-              onOpen={async (breakpoint) => {
-                await handleFileOpen?.(breakpoint.filePath, false);
-                window.dispatchEvent(
-                  new CustomEvent("menu-go-to-line", {
-                    detail: { path: breakpoint.filePath, line: breakpoint.line + 1 },
-                  }),
-                );
-              }}
-              onToggle={(breakpoint) =>
-                debuggerActions.setBreakpointEnabled(breakpoint.id, !breakpoint.enabled)
-              }
-              onRemove={(breakpoint) => debuggerActions.removeBreakpoint(breakpoint.id)}
-            />
-          </DebugSection>
+          <TabsContent value="breakpoints">
+            <ScrollArea fill="block" orientation="both">
+              <DebugExceptionBreakpointsList
+                filters={exceptionBreakpointFilters}
+                enabledFilters={enabledExceptionFilters}
+                onToggle={(filter, enabled) =>
+                  void toggleExceptionBreakpoint(filter.filter, enabled)
+                }
+              />
+              <DebugBreakpointsList
+                breakpoints={sortedBreakpoints}
+                onOpen={async (breakpoint) => {
+                  await handleFileOpen?.(breakpoint.filePath, false);
+                  window.dispatchEvent(
+                    new CustomEvent("menu-go-to-line", {
+                      detail: { path: breakpoint.filePath, line: breakpoint.line + 1 },
+                    }),
+                  );
+                }}
+                onToggle={(breakpoint) =>
+                  debuggerActions.setBreakpointEnabled(breakpoint.id, !breakpoint.enabled)
+                }
+                onUpdateOptions={(breakpoint, options) =>
+                  debuggerActions.updateBreakpointOptions(breakpoint.id, options)
+                }
+                onRemove={(breakpoint) => debuggerActions.removeBreakpoint(breakpoint.id)}
+                showEmptyState={exceptionBreakpointFilters.length === 0}
+              />
+            </ScrollArea>
+          </TabsContent>
         </div>
       </div>
-    </div>
+    </Tabs>
   );
 }

@@ -1,19 +1,21 @@
 import { homeDir } from "@tauri-apps/api/path";
 import { readDir } from "@tauri-apps/plugin-fs";
-import {
-  ArrowUpIcon as ArrowUp,
-  FolderIcon as Folder,
-  HouseIcon as House,
-  WarningIcon as Warning,
-} from "@phosphor-icons/react";
+import { ArrowUpIcon, FolderIcon, HouseIcon, WarningIcon } from "@/ui/icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLinuxFolderPickerStore } from "@/features/file-system/stores/linux-folder-picker.store";
 import { Button } from "@/ui/button";
 import Dialog from "@/ui/dialog";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyState,
+  EmptyTitle,
+} from "@/ui/empty";
 import Input from "@/ui/input";
-import { LoadingIndicator } from "@/ui/loading";
-import { toast } from "@/ui/toast";
-import { cn } from "@/utils/cn";
+import { Spinner } from "@/ui/spinner";
+import { toast } from "sonner";
 import { IS_LINUX } from "@/utils/platform";
 
 interface FolderEntry {
@@ -138,21 +140,17 @@ export default function LinuxFolderPickerDialog() {
       title="Open Folder"
       onClose={() => resolve(null)}
       size="lg"
-      headerBorder={false}
       footer={
         <>
           <Button type="button" variant="ghost" onClick={() => resolve(null)}>
             Cancel
           </Button>
-          <Button type="button" variant="accent" onClick={handleOpen} compact>
-            Open Folder
+          <Button type="button" variant="accent" onClick={handleOpen}>
+            Open FolderIcon
           </Button>
         </>
       }
-      classNames={{
-        modal: "max-w-[640px] rounded-xl",
-        content: "p-0",
-      }}
+      contentLayout="flush"
     >
       <div className="border-border border-b px-3 py-2">
         <div className="flex items-center gap-1.5">
@@ -162,8 +160,9 @@ export default function LinuxFolderPickerDialog() {
             onClick={() => navigateToPath(homePath)}
             tooltip="Home"
             aria-label="Home"
+            iconOnly
           >
-            <House />
+            <HouseIcon />
           </Button>
           <Button
             type="button"
@@ -172,8 +171,9 @@ export default function LinuxFolderPickerDialog() {
             disabled={!canGoUp}
             tooltip="Parent folder"
             aria-label="Parent folder"
+            iconOnly
           >
-            <ArrowUp />
+            <ArrowUpIcon />
           </Button>
           <form
             className="flex min-w-0 flex-1 items-center gap-1.5"
@@ -187,52 +187,54 @@ export default function LinuxFolderPickerDialog() {
               onChange={(event) => setPathInput(event.target.value)}
               aria-label="Folder path"
               spellCheck={false}
-              className="font-mono"
+              font="mono"
             />
-            <Button type="submit" variant="default" compact>
+            <Button type="submit" variant="default">
               Go
             </Button>
           </form>
         </div>
       </div>
 
-      <div className="flex min-h-[300px] flex-col">
+      <div className="flex min-h-75 flex-col">
         <div className="flex min-h-8 items-center border-border border-b px-3">
-          <span className="ui-text-sm truncate font-medium text-text">{title}</span>
-          <span className="ui-text-sm ml-auto truncate font-mono text-text-lighter">
+          <span className="ui-text-sm truncate font-medium text-foreground">{title}</span>
+          <span className="ui-text-sm ml-auto truncate font-mono text-subtle-foreground">
             {currentPath}
           </span>
         </div>
 
         {error ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-            <Warning className="text-warning" size={24} />
-            <div className="ui-text-sm text-text">{error}</div>
-            <div className="ui-text-sm text-text-lighter">{currentPath}</div>
-          </div>
+          <Empty className="px-6" tone="warning" role="alert">
+            <EmptyHeader>
+              <EmptyMedia>
+                <WarningIcon size={24} />
+              </EmptyMedia>
+              <EmptyTitle>{error}</EmptyTitle>
+              <EmptyDescription className="font-mono">{currentPath}</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : isLoading ? (
-          <div className="ui-text-sm flex flex-1 items-center justify-center text-text-lighter">
-            <LoadingIndicator label="Loading folders" showLabel compact />
-          </div>
+          <Empty>
+            <EmptyDescription>
+              <Spinner label="Loading folders" showLabel compact />
+            </EmptyDescription>
+          </Empty>
         ) : entries.length === 0 ? (
-          <div className="ui-text-sm flex flex-1 items-center justify-center text-text-lighter">
-            No folders
-          </div>
+          <EmptyState message="No folders" />
         ) : (
-          <div className="max-h-[320px] overflow-y-auto py-1">
+          <div className="max-h-80 overflow-y-auto py-1">
             {entries.map((entry) => (
               <Button
                 key={entry.path}
                 type="button"
-                variant="ghost"
+                variant="list"
                 onClick={() => navigateToPath(entry.path)}
-                className={cn(
-                  "h-8 w-full justify-start gap-2 rounded-none px-3",
-                  "hover:bg-hover focus-visible:bg-hover",
-                )}
+                width="full"
+                align="start"
               >
-                <Folder className="shrink-0 text-text-lighter" />
-                <span className="truncate text-text">{entry.name}</span>
+                <FolderIcon className="shrink-0 text-subtle-foreground" />
+                <span className="truncate text-foreground">{entry.name}</span>
               </Button>
             ))}
           </div>

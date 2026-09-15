@@ -2,5 +2,6 @@
 
 set -euo pipefail
 
-bun typecheck
-bunx vp check
+bun check:services
+bun check:design
+vp check

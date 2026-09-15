@@ -1,3 +1,4 @@
+import { BUNDLED_FONTS } from "@/features/settings/config/bundled-fonts";
 import { useEffect } from "react";
 import {
   DEFAULT_MONO_FONT_FAMILY,
@@ -26,30 +27,32 @@ export function useFontLoading() {
         settings.fontFamily,
         DEFAULT_MONO_FONT_FAMILY,
         availableFonts,
-        [DEFAULT_MONO_FONT_FAMILY],
+        BUNDLED_FONTS.map((font) => font.family),
       );
       if (nextEditorFontFamily !== settings.fontFamily) {
-        updates.push(settingsStore.updateSetting("fontFamily", nextEditorFontFamily));
+        updates.push(settingsStore.actions.updateSetting("fontFamily", nextEditorFontFamily));
       }
 
       const nextTerminalFontFamily = resolveAvailableFontFamily(
         settings.terminalFontFamily,
         DEFAULT_MONO_FONT_FAMILY,
         availableFonts,
-        [DEFAULT_MONO_FONT_FAMILY],
+        BUNDLED_FONTS.map((font) => font.family),
       );
       if (nextTerminalFontFamily !== settings.terminalFontFamily) {
-        updates.push(settingsStore.updateSetting("terminalFontFamily", nextTerminalFontFamily));
+        updates.push(
+          settingsStore.actions.updateSetting("terminalFontFamily", nextTerminalFontFamily),
+        );
       }
 
       const nextUiFontFamily = resolveAvailableFontFamily(
         settings.uiFontFamily,
         DEFAULT_UI_FONT_FAMILY,
         availableFonts,
-        [DEFAULT_UI_FONT_FAMILY],
+        BUNDLED_FONTS.map((font) => font.family),
       );
       if (nextUiFontFamily !== settings.uiFontFamily) {
-        updates.push(settingsStore.updateSetting("uiFontFamily", nextUiFontFamily));
+        updates.push(settingsStore.actions.updateSetting("uiFontFamily", nextUiFontFamily));
       }
 
       await Promise.all(updates);

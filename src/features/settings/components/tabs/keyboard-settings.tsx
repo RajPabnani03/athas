@@ -1,13 +1,14 @@
-import { AnimatePresence, motion } from "framer-motion";
-import { MagnifyingGlassIcon as Search } from "@phosphor-icons/react";
+import { AnimatePresence, motion } from "motion/react";
 import {
-  ArrowLeftIcon as ArrowLeft,
-  CirclesThreeIcon as CirclesThree,
-  CubeIcon as Cube,
-  DownloadSimpleIcon as DownloadSimple,
-  SlidersIcon as Sliders,
-  UserIcon as User,
-} from "@phosphor-icons/react";
+  ArrowLeftIcon,
+  CirclesIcon,
+  CubeIcon,
+  DownloadIcon,
+  SearchIcon,
+  SlidersIcon,
+  UserIcon,
+  WarningCircleIcon,
+} from "@/ui/icons";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { useMemo, useState } from "react";
@@ -29,19 +30,22 @@ import {
   getExportableUserKeybindings,
   parseKeybindingsImportJson,
 } from "@/features/keymaps/utils/keybinding-import-export";
-import { getDefaultSetting, useSettingsStore } from "@/features/settings/stores/settings.store";
+import { getDefaultSetting } from "@/features/settings/config/default-settings";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { keymapRegistry } from "@/features/keymaps/utils/registry";
 import { useToast } from "@/features/layout/contexts/toast-context";
 import { Button } from "@/ui/button";
+import { Alert, AlertDescription } from "@/ui/alert";
+import { Empty, EmptyDescription } from "@/ui/empty";
 import Input from "@/ui/input";
-import { SegmentedControl } from "@/ui/segmented-control";
 import Select from "@/ui/select";
 import Switch from "@/ui/switch";
-import { TableHeadCell, TableHeader } from "@/ui/table";
-import { motionDuration, motionEase } from "@/ui/motion";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
+import { ToggleGroup } from "@/ui/toggle-group";
+import { quickTransition } from "@/utils/motion";
 import { matchesSearchQuery } from "@/utils/search-match";
 import { TypedConfirmAction } from "../typed-confirm-action";
-import { SettingRow } from "../settings-section";
+import Section, { SettingBlock, SettingsView, SettingRow } from "../settings-section";
 
 type FilterType = "all" | "user" | "default" | "preset" | "preset-changes" | "extension";
 
@@ -49,22 +53,48 @@ const editorStepTransition = {
   initial: { opacity: 0, x: 14 },
   animate: { opacity: 1, x: 0 },
   exit: { opacity: 0, x: -14 },
-  transition: { duration: motionDuration.fast, ease: motionEase.smooth },
+  transition: quickTransition,
 };
 
 const summaryStepTransition = {
   initial: { opacity: 0, x: -14 },
   animate: { opacity: 1, x: 0 },
   exit: { opacity: 0, x: 14 },
-  transition: { duration: motionDuration.fast, ease: motionEase.smooth },
+  transition: quickTransition,
 };
+
+const importIssueLabels = {
+  "invalid-entry": "invalid entries",
+  "empty-command": "empty commands",
+  "unknown-command": "unknown command entries",
+  "unsupported-key": "unsupported key entries",
+  "unsupported-when": "unsupported condition entries",
+  "unsupported-arguments": "unsupported argument entries",
+} as const;
+
+function getImportIssueDescription(
+  issues: Array<{ reason: keyof typeof importIssueLabels }>,
+): string | undefined {
+  if (issues.length === 0) return undefined;
+
+  const counts = new Map<keyof typeof importIssueLabels, number>();
+  for (const issue of issues) {
+    counts.set(issue.reason, (counts.get(issue.reason) ?? 0) + 1);
+  }
+
+  return `Skipped ${[...counts]
+    .map(([reason, count]) => `${count} ${importIssueLabels[reason]}`)
+    .join(", ")}.`;
+}
 
 export const KeyboardSettings = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<FilterType>("all");
   const [isEditingKeybindings, setIsEditingKeybindings] = useState(false);
   const { showToast } = useToast();
-  const { settings, updateSetting } = useSettingsStore();
+  const keybindingPreset = useSettingsStore((state) => state.settings.keybindingPreset);
+  const vimMode = useSettingsStore((state) => state.settings.vimMode);
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
 
   const userKeybindings = useKeymapStore.use.keybindings();
   const { resetToDefaults } = useKeymapStore.use.actions();
@@ -75,18 +105,18 @@ export const KeyboardSettings = () => {
   const getKeybindingForCommand = (commandId: string): Keybinding | undefined =>
     getEffectiveKeybindingForCommand({
       commandId,
-      preset: settings.keybindingPreset,
+      preset: keybindingPreset,
       registryKeybindings,
       userKeybindings,
     });
 
   const selectedPresetCoverage = useMemo(
-    () => getKeybindingPresetCoverageReport(settings.keybindingPreset),
-    [settings.keybindingPreset],
+    () => getKeybindingPresetCoverageReport(keybindingPreset),
+    [keybindingPreset],
   );
   const selectedPresetDiff = useMemo(
-    () => getKeybindingPresetDiffReport(settings.keybindingPreset),
-    [settings.keybindingPreset],
+    () => getKeybindingPresetDiffReport(keybindingPreset),
+    [keybindingPreset],
   );
 
   const filteredCommands = useMemo(() => {
@@ -123,7 +153,7 @@ export const KeyboardSettings = () => {
     searchQuery,
     filterType,
     selectedPresetDiff.changedCommandIds,
-    settings.keybindingPreset,
+    keybindingPreset,
     userKeybindings,
     registryKeybindings,
   ]);
@@ -155,7 +185,7 @@ export const KeyboardSettings = () => {
       }
 
       const payload = createKeybindingsExportPayload({
-        keybindingPreset: settings.keybindingPreset,
+        keybindingPreset,
         keybindings: userBindings,
       });
 
@@ -180,63 +210,70 @@ export const KeyboardSettings = () => {
   const handleImport = () => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "application/json";
+    input.accept = ".json,.jsonc,application/json";
     input.onchange = async (e: Event) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
 
       try {
         const text = await file.text();
-        const imported = parseKeybindingsImportJson(text);
+        const imported = parseKeybindingsImportJson(text, {
+          commandIds: keymapRegistry.getAllCommands().map((command) => command.id),
+        });
 
         if (!imported) {
           showToast({ message: "Invalid keybindings file format", type: "error" });
           return;
         }
 
-        if (imported.keybindingPreset) {
-          await updateSetting("keybindingPreset", imported.keybindingPreset);
+        const importedPreset =
+          imported.keybindingPreset ?? (imported.format === "vscode" ? "vscode" : undefined);
+
+        if (importedPreset) {
+          await updateSetting("keybindingPreset", importedPreset);
         }
 
-        const { addKeybinding } = useKeymapStore.getState().actions;
-        for (const binding of imported.keybindings) {
-          addKeybinding(binding);
-        }
+        useKeymapStore.getState().actions.importKeybindings(imported.keybindings);
+
+        const issueDescription = getImportIssueDescription(imported.issues);
+        const importedLabel = imported.format === "vscode" ? "VS Code " : "";
+        const presetLabel = importedPreset ? " and preset" : "";
+        const keybindingLabel = imported.keybindings.length === 1 ? "keybinding" : "keybindings";
+        const message =
+          imported.format === "vscode" && imported.keybindings.length === 0
+            ? "Applied VS Code keybinding preset"
+            : `Imported ${imported.keybindings.length} ${importedLabel}${keybindingLabel}${presetLabel}`;
 
         showToast({
-          message: `Imported ${imported.keybindings.length} keybindings${
-            imported.keybindingPreset ? " and preset" : ""
-          }`,
-          type: "success",
+          message,
+          description: issueDescription,
+          type: imported.issues.length > 0 ? "warning" : "success",
         });
       } catch (error) {
-        showToast({ message: `Failed to import keybindings: ${error}`, type: "error" });
+        const message = error instanceof Error ? error.message : String(error);
+        showToast({ message: `Failed to import keybindings: ${message}`, type: "error" });
       }
     };
     input.click();
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <SettingsView>
       <AnimatePresence mode="wait" initial={false}>
         {isEditingKeybindings ? (
           <motion.div
             key="keyboard-editor"
-            className="flex h-full flex-col"
+            className="flex min-w-0 flex-col"
             {...editorStepTransition}
           >
             <div className="mb-3 flex items-center justify-between gap-3">
-              <Button
-                variant="default"
-                onClick={() => setIsEditingKeybindings(false)}
-                className="gap-1.5"
-              >
-                <ArrowLeft size={14} weight="duotone" />
+              <Button variant="default" onClick={() => setIsEditingKeybindings(false)}>
+                <ArrowLeftIcon />
                 Back
               </Button>
               <div className="flex items-center gap-2">
                 <TypedConfirmAction actionLabel="Reset to Defaults" onConfirm={handleResetAll} />
-                <Button variant="default" onClick={handleImport} compact>
+                <Button variant="default" onClick={handleImport}>
                   Import
                 </Button>
                 <Button variant="default" onClick={() => void handleExport()}>
@@ -250,70 +287,57 @@ export const KeyboardSettings = () => {
                 placeholder="Search keybindings..."
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                leftIcon={Search}
-                size="sm"
-                containerClassName="w-full"
+                leftIcon={SearchIcon}
               />
             </div>
 
             <div className="mb-3 overflow-x-auto">
-              <SegmentedControl
+              <ToggleGroup
                 value={filterType}
-                onChange={(value) => setFilterType(value as FilterType)}
-                className="inline-flex h-auto min-w-max max-w-full flex-wrap items-stretch gap-1 overflow-visible self-start rounded-xl border border-border/60 bg-secondary-bg/40 p-1"
+                onValueChange={setFilterType}
+                ariaLabel="Keybinding filter"
                 options={[
-                  {
-                    value: "all",
-                    label: "All",
-                    icon: <CirclesThree size={14} weight="duotone" />,
-                  },
-                  {
-                    value: "user",
-                    label: "User",
-                    icon: <User size={14} weight="duotone" />,
-                  },
-                  {
-                    value: "default",
-                    label: "Default",
-                    icon: <Sliders size={14} weight="duotone" />,
-                  },
-                  {
-                    value: "preset",
-                    label: "Preset",
-                    icon: <DownloadSimple size={14} weight="duotone" />,
-                  },
+                  { value: "all", label: "All", icon: <CirclesIcon /> },
+                  { value: "user", label: "User", icon: <UserIcon /> },
+                  { value: "default", label: "Default", icon: <SlidersIcon /> },
+                  { value: "preset", label: "Preset", icon: <DownloadIcon optical="md" /> },
                   {
                     value: "preset-changes",
                     label: "Preset Changes",
-                    icon: <DownloadSimple size={14} weight="fill" />,
+                    icon: <DownloadIcon optical="md" />,
                   },
-                  {
-                    value: "extension",
-                    label: "Extension",
-                    icon: <Cube size={14} weight="duotone" />,
-                  },
+                  { value: "extension", label: "Integration", icon: <CubeIcon /> },
                 ]}
               />
             </div>
 
-            <div className="flex-1 overflow-hidden">
-              <div className="h-full overflow-x-auto overflow-y-auto">
-                <div className={keybindingTableMinWidth()}>
-                  <TableHeader
-                    gridCols="minmax(220px,2fr) minmax(156px,1fr) minmax(128px,1.25fr) 72px 92px"
-                    className="gap-3 px-1.5 py-1"
-                  >
-                    <TableHeadCell>Command</TableHeadCell>
-                    <TableHeadCell>Keybinding</TableHeadCell>
-                    <TableHeadCell>When</TableHeadCell>
-                    <TableHeadCell>Source</TableHeadCell>
-                    <TableHeadCell>Actions</TableHeadCell>
-                  </TableHeader>
-
+            <div className="min-w-0 overflow-x-auto">
+              <Table className={keybindingTableMinWidth()}>
+                <colgroup>
+                  <col className="w-[32%]" />
+                  <col className="w-[23%]" />
+                  <col className="w-[20%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[14%]" />
+                </colgroup>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Command</TableHead>
+                    <TableHead>Keybinding</TableHead>
+                    <TableHead>When</TableHead>
+                    <TableHead>Source</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {filteredCommands.length === 0 ? (
-                    <div className="ui-font ui-text-base flex items-center justify-center py-12 text-text-lighter">
-                      No keybindings found
-                    </div>
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell colSpan={5} className="p-0">
+                        <Empty className="min-h-36 py-8">
+                          <EmptyDescription>No keybindings found</EmptyDescription>
+                        </Empty>
+                      </TableCell>
+                    </TableRow>
                   ) : (
                     filteredCommands.map((command) => {
                       const binding = getKeybindingForCommand(command.id);
@@ -322,68 +346,74 @@ export const KeyboardSettings = () => {
                       );
                     })
                   )}
-                </div>
-              </div>
+                </TableBody>
+              </Table>
             </div>
           </motion.div>
         ) : (
-          <motion.div key="keyboard-summary" className="space-y-2" {...summaryStepTransition}>
-            <SettingRow
-              label="Vim Mode"
-              description="Enable vim keybindings and commands"
-              onReset={() => updateSetting("vimMode", getDefaultSetting("vimMode"))}
-              canReset={settings.vimMode !== getDefaultSetting("vimMode")}
-            >
-              <Switch
-                checked={settings.vimMode}
-                onChange={(checked) => updateSetting("vimMode", checked)}
-                size="sm"
-              />
-            </SettingRow>
+          <motion.div key="keyboard-summary" className="space-y-6" {...summaryStepTransition}>
+            <Section title="Keyboard">
+              <SettingRow
+                label="Vim Mode"
+                description="Enable vim keybindings and commands"
+                onReset={() => updateSetting("vimMode", getDefaultSetting("vimMode"))}
+                canReset={vimMode !== getDefaultSetting("vimMode")}
+              >
+                <Switch
+                  checked={vimMode}
+                  onChange={(checked) => updateSetting("vimMode", checked)}
+                />
+              </SettingRow>
 
-            <SettingRow
-              label="Keybinding Preset"
-              description="Apply a base shortcut style before your custom overrides."
-              onReset={() =>
-                updateSetting("keybindingPreset", getDefaultSetting("keybindingPreset"))
-              }
-              canReset={settings.keybindingPreset !== getDefaultSetting("keybindingPreset")}
-            >
-              <Select
-                value={settings.keybindingPreset}
-                onChange={(value) => updateSetting("keybindingPreset", value as KeybindingPreset)}
-                options={keybindingPresetOptions}
-                size="sm"
-                variant="default"
-                searchable
-                searchableTrigger="input"
-                aria-label="Keybinding preset"
-              />
-            </SettingRow>
+              <SettingRow
+                label="Keybinding Preset"
+                description="Apply a base shortcut style before your custom overrides"
+                onReset={() =>
+                  updateSetting("keybindingPreset", getDefaultSetting("keybindingPreset"))
+                }
+                canReset={keybindingPreset !== getDefaultSetting("keybindingPreset")}
+              >
+                <Select
+                  value={keybindingPreset}
+                  onChange={(value) => updateSetting("keybindingPreset", value as KeybindingPreset)}
+                  options={keybindingPresetOptions}
+                  variant="default"
+                  aria-label="Keybinding preset"
+                />
+              </SettingRow>
 
-            {settings.keybindingPreset !== "none" && !selectedPresetCoverage.isComplete ? (
-              <div className="ui-font ui-text-sm rounded-lg border border-warning/30 bg-warning/8 px-3 py-2 text-warning">
-                This preset is incomplete. {selectedPresetCoverage.missingCommandIds.length}{" "}
-                built-in command
-                {selectedPresetCoverage.missingCommandIds.length === 1 ? " is" : "s are"} still
-                missing preset coverage.
-              </div>
-            ) : null}
+              {keybindingPreset !== "none" && !selectedPresetCoverage.isComplete ? (
+                <SettingBlock>
+                  <Alert tone="warning">
+                    <WarningCircleIcon />
+                    <AlertDescription>
+                      This preset is incomplete. {selectedPresetCoverage.missingCommandIds.length}{" "}
+                      built-in command
+                      {selectedPresetCoverage.missingCommandIds.length === 1 ? " is" : "s are"}{" "}
+                      still missing preset coverage.
+                    </AlertDescription>
+                  </Alert>
+                </SettingBlock>
+              ) : null}
+            </Section>
 
-            <SettingRow label="Edit Keybindings" description="Customize shortcuts individually.">
-              <Button variant="default" onClick={() => setIsEditingKeybindings(true)}>
-                Open Editor
-              </Button>
-            </SettingRow>
-            {userOverrideCount > 0 ? (
-              <div className="ui-font ui-text-sm px-1 text-text-lighter">
-                {userOverrideCount} user override{userOverrideCount === 1 ? "" : "s"} currently
-                saved.
-              </div>
-            ) : null}
+            <Section title="Shortcuts">
+              <SettingRow
+                label="Edit Keybindings"
+                description={
+                  userOverrideCount > 0
+                    ? `Customize shortcuts individually. ${userOverrideCount} user override${userOverrideCount === 1 ? "" : "s"} saved.`
+                    : "Customize shortcuts individually"
+                }
+              >
+                <Button variant="default" onClick={() => setIsEditingKeybindings(true)}>
+                  Open Editor
+                </Button>
+              </SettingRow>
+            </Section>
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </SettingsView>
   );
 };

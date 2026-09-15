@@ -16,6 +16,22 @@ export interface Range {
   end: Position;
 }
 
+export interface EditorTextChange {
+  rangeOffset: number;
+  rangeLength: number;
+  text: string;
+  startLine?: number;
+  startColumn?: number;
+  endLine?: number;
+  endColumn?: number;
+}
+
+export interface EditorContentChangeOptions {
+  contentAlreadyApplied?: boolean;
+  skipUndoGrouping?: boolean;
+  contentChange?: EditorTextChange;
+}
+
 export interface Cursor {
   position: Position;
   selection?: Range;
@@ -25,12 +41,6 @@ export interface Cursor {
 export interface MultiCursorState {
   cursors: Cursor[];
   primaryCursorId: string; // ID of the primary cursor (synced with textarea)
-}
-
-export interface LineToken {
-  startColumn: number;
-  endColumn: number;
-  className: string;
 }
 
 export interface Decoration {

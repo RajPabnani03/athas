@@ -1,11 +1,7 @@
-import { motion, useReducedMotion } from "framer-motion";
-import { type RefObject, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { useOnClickOutside } from "usehooks-ts";
+import { useState } from "react";
 import { Button } from "@/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/ui/dialog";
 import Input from "@/ui/input";
-import { instantTransition, overlayEntrance, overlayTransition } from "@/ui/motion";
-import { cn } from "@/utils/cn";
 
 interface StashMessageModalProps {
   isOpen: boolean;
@@ -25,12 +21,19 @@ export const StashMessageModal = ({
   if (!isOpen) return null;
 
   return (
-    <StashMessageModalContent
-      onClose={onClose}
-      onConfirm={onConfirm}
-      title={title}
-      placeholder={placeholder}
-    />
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <StashMessageModalContent
+        onClose={onClose}
+        onConfirm={onConfirm}
+        title={title}
+        placeholder={placeholder}
+      />
+    </Dialog>
   );
 };
 
@@ -42,16 +45,6 @@ const StashMessageModalContent = ({
 }: Omit<StashMessageModalProps, "isOpen">) => {
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const modalRef = useRef<HTMLDivElement>(null);
-  const prefersReducedMotion = useReducedMotion();
-
-  useOnClickOutside(modalRef as RefObject<HTMLElement>, onClose);
-
-  useEffect(() => {
-    const focusTimer = setTimeout(() => inputRef.current?.focus(), 50);
-    return () => clearTimeout(focusTimer);
-  }, []);
 
   const handleConfirm = async () => {
     setIsLoading(true);
@@ -65,54 +58,31 @@ const StashMessageModalContent = ({
     }
   };
 
-  return createPortal(
-    <motion.div
-      initial={prefersReducedMotion ? false : { opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={prefersReducedMotion ? instantTransition : overlayTransition}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-    >
-      <motion.div
-        ref={modalRef}
-        initial={prefersReducedMotion ? false : overlayEntrance.initial}
-        animate={overlayEntrance.animate}
-        transition={prefersReducedMotion ? instantTransition : overlayEntrance.transition}
-        className="w-80 rounded-lg border border-border bg-secondary-bg p-4 shadow-[var(--shadow-dialog)]"
-      >
-        <h3 className="mb-3 font-medium ui-text-sm text-text">{title}</h3>
+  return (
+    <DialogContent aria-describedby={undefined} showCloseButton={false} size="sm" className="p-0">
+      <DialogHeader className="px-4 pt-4">
+        <DialogTitle>{title}</DialogTitle>
+      </DialogHeader>
+      <div className="px-4 py-3">
         <Input
-          ref={inputRef}
+          autoFocus
           type="text"
           value={message}
-          onChange={(e) => setMessage(e.target.value)}
+          onChange={(event) => setMessage(event.target.value)}
           placeholder={placeholder}
-          className={cn("mb-4 w-full bg-primary-bg ui-text-sm")}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleConfirm();
-            if (e.key === "Escape") onClose();
+          onKeyDown={(event) => {
+            if (event.key === "Enter") void handleConfirm();
           }}
         />
-        <div className="flex justify-end gap-2">
-          <Button
-            onClick={onClose}
-            variant="ghost"
-            className="text-text-lighter ui-text-xs hover:text-text"
-            compact
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleConfirm}
-            disabled={isLoading}
-            variant="accent"
-            className="ui-text-xs disabled:opacity-50"
-            compact
-          >
-            {isLoading ? "Stashing..." : "Stash"}
-          </Button>
-        </div>
-      </motion.div>
-    </motion.div>,
-    document.body,
+      </div>
+      <DialogFooter>
+        <Button onClick={onClose} variant="ghost">
+          Cancel
+        </Button>
+        <Button onClick={() => void handleConfirm()} disabled={isLoading} variant="accent">
+          {isLoading ? "Stashing..." : "Stash"}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
   );
 };

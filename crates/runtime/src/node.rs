@@ -1,14 +1,14 @@
-use crate::{RuntimeError, RuntimeStatus, downloader, process::configure_background_command};
-use std::{
-   path::{Path, PathBuf},
-   process::Command,
+use crate::{
+   RuntimeError, RuntimeStatus, downloader,
+   runtime_version::{check_runtime_version, managed_runtime_dir},
 };
+use std::path::{Path, PathBuf};
 
 /// Node.js version to download if system version is not available
-pub const NODE_VERSION: &str = "22.5.1";
+pub const NODE_VERSION: &str = "24.19.0";
 
 /// Minimum required Node.js version for LSP servers
-pub const MIN_NODE_VERSION: (u32, u32, u32) = (22, 0, 0);
+pub const MIN_NODE_VERSION: (u32, u32, u32) = (24, 0, 0);
 
 /// Manages Node.js runtime for running JS-based language servers
 pub struct NodeRuntime {
@@ -19,7 +19,7 @@ impl NodeRuntime {
    /// Get Node.js runtime, downloading if necessary
    ///
    /// Priority:
-   /// 1. Check system PATH for Node.js >= 22.0.0
+   /// 1. Check system PATH for Node.js >= 24.0.0
    /// 2. Check if Athas-managed Node.js exists
    /// 3. Download Node.js from nodejs.org
    pub async fn get_or_install(managed_root: Option<&Path>) -> Result<Self, RuntimeError> {
@@ -63,6 +63,24 @@ impl NodeRuntime {
 
       log::info!("No suitable Node.js found, downloading v{}", NODE_VERSION);
       Self::download_and_install(managed_root).await
+   }
+
+   pub async fn get_or_install_with_npm(managed_root: Option<&Path>) -> Result<Self, RuntimeError> {
+      let runtime = Self::get_or_install(managed_root).await?;
+      if runtime.npm_cli_path().is_some() {
+         return Ok(runtime);
+      }
+      let managed_dir = Self::get_managed_dir(managed_root)?;
+      if let Ok(managed) = Self::from_managed_path(&managed_dir)
+         && managed.npm_cli_path().is_some()
+      {
+         return Ok(managed);
+      }
+      Self::download_and_install(managed_root).await
+   }
+
+   pub fn npm_cli_path(&self) -> Option<PathBuf> {
+      npm_cli_for_node(&self.binary_path)
    }
 
    /// Get runtime status without installing
@@ -144,56 +162,12 @@ impl NodeRuntime {
 
    /// Get the directory where managed Node.js is stored
    fn get_managed_dir(managed_root: Option<&Path>) -> Result<PathBuf, RuntimeError> {
-      let root = managed_root.ok_or_else(|| {
-         RuntimeError::PathError("managed runtime root not configured".to_string())
-      })?;
-      Ok(root.join("node"))
+      managed_runtime_dir(managed_root, "node")
    }
 
    /// Check Node.js version by running `node --version`
    async fn check_version(&self) -> Result<(u32, u32, u32), RuntimeError> {
-      let mut command = Command::new(&self.binary_path);
-      let output = configure_background_command(&mut command)
-         .arg("--version")
-         .output()
-         .map_err(|e| RuntimeError::VersionCheckFailed(e.to_string()))?;
-
-      if !output.status.success() {
-         return Err(RuntimeError::VersionCheckFailed(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-         ));
-      }
-
-      let version_str = String::from_utf8_lossy(&output.stdout);
-      Self::parse_version(&version_str)
-   }
-
-   /// Parse version string like "v22.5.1" into (22, 5, 1)
-   fn parse_version(version_str: &str) -> Result<(u32, u32, u32), RuntimeError> {
-      let trimmed = version_str.trim().trim_start_matches('v');
-
-      let parts: Vec<&str> = trimmed.split('.').collect();
-      if parts.len() < 3 {
-         return Err(RuntimeError::VersionCheckFailed(format!(
-            "Invalid version format: {}",
-            version_str
-         )));
-      }
-
-      let major = parts[0]
-         .parse()
-         .map_err(|_| RuntimeError::VersionCheckFailed(format!("Invalid major: {}", parts[0])))?;
-      let minor = parts[1]
-         .parse()
-         .map_err(|_| RuntimeError::VersionCheckFailed(format!("Invalid minor: {}", parts[1])))?;
-      let patch = parts[2]
-         .split(|c: char| !c.is_ascii_digit())
-         .next()
-         .unwrap_or("0")
-         .parse()
-         .map_err(|_| RuntimeError::VersionCheckFailed(format!("Invalid patch: {}", parts[2])))?;
-
-      Ok((major, minor, patch))
+      check_runtime_version(&self.binary_path, true)
    }
 
    /// Get the path to the Node.js binary
@@ -202,17 +176,40 @@ impl NodeRuntime {
    }
 }
 
+fn npm_cli_for_node(node: &Path) -> Option<PathBuf> {
+   let resolved = std::fs::canonicalize(node).unwrap_or_else(|_| node.to_path_buf());
+   let bin = resolved.parent()?;
+   [
+      bin.join("node_modules/npm/bin/npm-cli.js"),
+      bin.join("../lib/node_modules/npm/bin/npm-cli.js"),
+      bin.join("../share/nodejs/npm/bin/npm-cli.js"),
+   ]
+   .into_iter()
+   .find(|path| path.is_file())
+}
+
 #[cfg(test)]
 mod tests {
    use super::*;
 
    #[test]
-   fn test_parse_version() {
-      assert_eq!(NodeRuntime::parse_version("v22.5.1").unwrap(), (22, 5, 1));
-      assert_eq!(NodeRuntime::parse_version("22.5.1").unwrap(), (22, 5, 1));
-      assert_eq!(
-         NodeRuntime::parse_version("v22.5.1-rc.1").unwrap(),
-         (22, 5, 1)
-      );
+   fn finds_npm_in_unix_and_windows_node_distributions() {
+      for (node, npm) in [
+         ("bin/node", "lib/node_modules/npm/bin/npm-cli.js"),
+         ("node.exe", "node_modules/npm/bin/npm-cli.js"),
+      ] {
+         let root = tempfile::tempdir().unwrap();
+         let node = root.path().join(node);
+         let npm = root.path().join(npm);
+         std::fs::create_dir_all(node.parent().unwrap()).unwrap();
+         std::fs::create_dir_all(npm.parent().unwrap()).unwrap();
+         std::fs::write(&node, "").unwrap();
+         assert!(npm_cli_for_node(&node).is_none());
+         std::fs::write(&npm, "").unwrap();
+         assert_eq!(
+            std::fs::canonicalize(npm_cli_for_node(&node).unwrap()).unwrap(),
+            std::fs::canonicalize(npm).unwrap()
+         );
+      }
    }
 }

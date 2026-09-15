@@ -1,16 +1,18 @@
+#[cfg(not(target_os = "linux"))]
+use crate::menu;
 use crate::{
    app_runtime::AthasRuntime,
    commands::{self, FffSearchState, FileClipboard, ThemeCache},
    file_events::TauriFileChangeEmitter,
-   menu,
-   terminal::ManagedTerminalManager as TerminalManager,
+   terminal::{FrontendTerminalSessions, ManagedTerminalManager as TerminalManager},
 };
-use athas_ai::AcpAgentBridge;
+use athas_ai::{AcpAgentBridge, CodexAppServer};
 use athas_debugger::DebugManager;
 use athas_lsp::LspManager;
 use athas_project::FileWatcher;
 use log::{debug, info};
-use std::{path::PathBuf, sync::Arc};
+use serde::Serialize;
+use std::{path::PathBuf, sync::Arc, time::Instant};
 use tauri::{Emitter, Manager};
 #[cfg(target_os = "macos")]
 use tauri_plugin_os::platform;
@@ -18,7 +20,40 @@ use tauri_plugin_store::StoreExt;
 use tokio::sync::Mutex;
 
 pub fn configure_app(app: &mut tauri::App<AthasRuntime>) -> Result<(), Box<dyn std::error::Error>> {
+   app.state::<commands::ui::StartupTiming>()
+      .record("native:setup:start");
+   #[cfg(all(target_os = "linux", feature = "linux"))]
+   if commands::development::cli_windows::requests_need_workbench(
+      &commands::development::cli_args::parse_cli_argv(
+         &std::env::args().collect::<Vec<_>>(),
+         &std::env::current_dir().unwrap_or_default(),
+      ),
+   ) {
+      create_initial_linux_window(app)?;
+   }
    configure_menu(app)?;
+   #[cfg(target_os = "macos")]
+   if let Err(error) = crate::bootstrap::macos::install_dock_menu(app.handle()) {
+      log::warn!("Failed to install macOS Dock menu: {error}");
+   } else {
+      log::info!("macOS Dock menu installed");
+   }
+   #[cfg(target_os = "macos")]
+   if let Err(error) = crate::bootstrap::macos::install_accessibility_observer(app.handle()) {
+      log::warn!("Failed to observe macOS accessibility display options: {error}");
+   }
+   #[cfg(target_os = "macos")]
+   if let Err(error) = crate::bootstrap::macos::install_native_choice_sheet_handler() {
+      log::warn!("Failed to install macOS native sheet handler: {error}");
+   }
+   #[cfg(target_os = "macos")]
+   if let Err(error) = crate::bootstrap::macos::install_spotlight_activity_handler(app.handle()) {
+      log::warn!("Failed to install macOS Spotlight activity handler: {error}");
+   }
+   #[cfg(target_os = "macos")]
+   if let Err(error) = crate::bootstrap::macos::install_services_provider(app.handle()) {
+      log::warn!("Failed to install macOS Services provider: {error}");
+   }
    register_managed_state(app);
    emit_cli_open_requests(app);
    configure_initial_window(app);
@@ -27,35 +62,54 @@ pub fn configure_app(app: &mut tauri::App<AthasRuntime>) -> Result<(), Box<dyn s
    commands::development::cli::auto_fix_cli_on_startup();
 
    app.on_menu_event(handle_menu_event);
+   app.state::<commands::ui::StartupTiming>()
+      .record("native:setup:complete");
 
    Ok(())
 }
 
+#[cfg(all(target_os = "linux", feature = "linux"))]
+fn create_initial_linux_window(
+   app: &tauri::App<AthasRuntime>,
+) -> Result<(), Box<dyn std::error::Error>> {
+   let config = app
+      .config()
+      .app
+      .windows
+      .iter()
+      .find(|window| window.label == "main")
+      .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "main window config"))?;
+
+   tauri::WebviewWindowBuilder::from_config(app.handle(), config)?
+      .browser_runtime_style(tauri_runtime_cef::RuntimeStyle::Alloy)
+      .build()?;
+
+   Ok(())
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn configure_menu(app: &mut tauri::App<AthasRuntime>) -> Result<(), Box<dyn std::error::Error>> {
    let store = app.store("settings.json")?;
+   store.set("nativeMenuBar", false);
+   let _ = store.save();
+   Ok(())
+}
 
-   #[cfg(any(target_os = "windows", target_os = "linux"))]
-   {
-      store.set("nativeMenuBar", false);
-      let _ = store.save();
-      return Ok(());
-   }
+#[cfg(target_os = "macos")]
+fn configure_menu(app: &mut tauri::App<AthasRuntime>) -> Result<(), Box<dyn std::error::Error>> {
+   let store = app.store("settings.json")?;
+   let native_menu_bar = store
+      .get("nativeMenuBar")
+      .and_then(|v| v.as_bool())
+      .unwrap_or_else(|| {
+         let default = platform() == "macos";
+         store.set("nativeMenuBar", default);
+         default
+      });
 
-   #[cfg(target_os = "macos")]
-   {
-      let native_menu_bar = store
-         .get("nativeMenuBar")
-         .and_then(|v| v.as_bool())
-         .unwrap_or_else(|| {
-            let default = platform() == "macos";
-            store.set("nativeMenuBar", default);
-            default
-         });
-
-      if native_menu_bar {
-         let menu = menu::create_menu(app.handle())?;
-         app.set_menu(menu)?;
-      }
+   if native_menu_bar {
+      let menu = menu::create_menu(app.handle())?;
+      app.set_menu(menu)?;
    }
 
    Ok(())
@@ -70,18 +124,21 @@ fn register_managed_state(app: &mut tauri::App<AthasRuntime>) {
 
    let terminal_manager = Arc::new(TerminalManager::new());
    app.manage(terminal_manager.clone());
+   app.manage(FrontendTerminalSessions::default());
 
    let acp_bridge = Arc::new(Mutex::new(AcpAgentBridge::new(
       app.handle().clone(),
       terminal_manager,
    )));
    app.manage(acp_bridge);
+   app.manage(CodexAppServer::new(app.handle().clone()));
 
    app.manage(LspManager::new(app.handle().clone()));
    app.manage(DebugManager::new(app.handle().clone()));
    app.manage(ThemeCache::new(std::collections::HashMap::new()));
    app.manage(FileClipboard::new(None));
    app.manage(FffSearchState::new());
+   app.manage(commands::development::docker::DockerLogStreams::default());
    app.manage(commands::development::cli_args::PendingCliOpenRequests::default());
 }
 
@@ -90,16 +147,7 @@ fn emit_cli_open_requests(app: &tauri::App<AthasRuntime>) {
    let args: Vec<String> = std::env::args().collect();
    let open_requests = commands::development::cli_args::parse_cli_argv(&args, &cwd);
 
-   if open_requests.is_empty() {
-      return;
-   }
-
-   log::info!(
-      "Queued {} CLI open request(s) for frontend",
-      open_requests.len()
-   );
-   app.state::<commands::development::cli_args::PendingCliOpenRequests>()
-      .push_all(open_requests);
+   queue_cli_requests(app.handle(), open_requests);
 }
 
 pub fn handle_single_instance_open(
@@ -107,29 +155,78 @@ pub fn handle_single_instance_open(
    args: Vec<String>,
    cwd: String,
 ) {
-   let cwd = PathBuf::from(cwd);
-   let open_requests = commands::development::cli_args::parse_cli_argv(&args, &cwd);
-   let app_handle = app_handle.clone();
-
-   tauri::async_runtime::spawn(async move {
-      focus_active_window(&app_handle);
-
+   let open_requests = commands::development::cli_args::parse_cli_argv(&args, &PathBuf::from(cwd));
+   let app = app_handle.clone();
+   if let Err(error) = app_handle.run_on_main_thread(move || {
       if open_requests.is_empty() {
-         return;
+         if get_active_webview_window(&app).is_none() {
+            if let Err(error) = commands::ui::window::create_app_window_internal(&app, None) {
+               log::error!("Failed to open window: {error}");
+            }
+         } else {
+            focus_active_window(&app);
+         }
+      } else {
+         queue_cli_requests(&app, open_requests);
       }
-
-      emit_cli_requests_to_frontend(&app_handle, open_requests);
-   });
+   }) {
+      log::error!("Failed to route CLI request: {error}");
+   }
 }
 
-fn emit_cli_requests_to_frontend(
-   app_handle: &tauri::AppHandle<AthasRuntime>,
-   open_requests: Vec<commands::development::cli_args::CliRequest>,
+fn get_workbench_window(
+   app: &tauri::AppHandle<AthasRuntime>,
+) -> Option<tauri::WebviewWindow<AthasRuntime>> {
+   let is_workbench = |window: &tauri::WebviewWindow<AthasRuntime>| {
+      window.url().is_ok_and(|url| {
+         !url
+            .query_pairs()
+            .any(|(key, value)| key == "view" && value == "detached")
+      })
+   };
+   get_active_webview_window(app)
+      .filter(is_workbench)
+      .or_else(|| app.webview_windows().into_values().find(is_workbench))
+}
+
+fn queue_cli_requests(
+   app: &tauri::AppHandle<AthasRuntime>,
+   requests: Vec<commands::development::cli_args::CliRequest>,
 ) {
-   for req in open_requests {
-      if let Err(e) = app_handle.emit("cli_open_request", &req) {
-         log::error!("Failed to emit cli_open_request: {}", e);
+   use commands::development::{cli_args::CliRequest, cli_windows::window_request};
+   let mut pending = Vec::new();
+   for request in requests {
+      match request {
+         CliRequest::NewWindow { request } if !matches!(*request, CliRequest::Web { .. }) => {
+            if let Err(error) =
+               commands::ui::window::create_app_window_internal(app, Some(window_request(*request)))
+            {
+               log::error!("Failed to open CLI window: {error}");
+            }
+         }
+         CliRequest::NewWindow { request } => pending.push(*request),
+         request => pending.push(request),
       }
+   }
+   if pending.is_empty() {
+      return;
+   }
+   let window = get_workbench_window(app).or_else(|| {
+      commands::ui::window::create_app_window_internal(app, None)
+         .ok()
+         .and_then(|label| app.get_webview_window(&label))
+   });
+   let Some(window) = window else {
+      log::error!("Failed to create a workbench for CLI requests");
+      return;
+   };
+   app.state::<commands::development::cli_args::PendingCliOpenRequests>()
+      .push_all(window.label(), pending);
+   let _ = window.unminimize();
+   let _ = window.show();
+   let _ = window.set_focus();
+   if let Err(error) = app.emit_to(window.label(), "cli_open_requests_pending", ()) {
+      log::error!("Failed to signal pending open requests: {error}");
    }
 }
 
@@ -154,6 +251,70 @@ fn focus_active_window(app: &tauri::AppHandle<AthasRuntime>) {
       let _ = window.show();
       let _ = window.set_focus();
    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn handle_reopen(app: &tauri::AppHandle<AthasRuntime>, has_visible_windows: bool) {
+   if get_active_webview_window(app).is_some() {
+      log::info!("[macos:reopen] focusing existing window visible={has_visible_windows}");
+      focus_active_window(app);
+      return;
+   }
+
+   log::info!("[macos:reopen] creating window visible={has_visible_windows}");
+   if let Err(error) = commands::ui::window::create_app_window_internal(app, None) {
+      log::error!("Failed to create window after macOS reopen event: {error}");
+   }
+}
+
+#[cfg(target_os = "macos")]
+pub fn handle_opened_urls(app: &tauri::AppHandle<AthasRuntime>, urls: &[tauri::Url]) {
+   let open_requests = commands::development::cli_args::parse_opened_urls(urls);
+   if open_requests.is_empty() {
+      return;
+   }
+
+   for request in &open_requests {
+      if let commands::development::cli_args::CliRequest::Path { path, .. } = request
+         && let Err(error) =
+            crate::bootstrap::macos::note_recent_document(PathBuf::from(path).as_path())
+      {
+         log::warn!("Failed to register macOS recent document: {error}");
+      }
+   }
+
+   if get_active_webview_window(app).is_none()
+      && let Err(error) = commands::ui::window::create_app_window_internal(app, None)
+   {
+      log::error!("Failed to create window for macOS open event: {error}");
+      return;
+   }
+
+   focus_active_window(app);
+   queue_cli_requests(app, open_requests);
+
+   if let Err(error) = menu::refresh_open_recent_submenu(app) {
+      log::warn!("Failed to refresh macOS Open Recent menu: {error}");
+   }
+}
+
+#[cfg(target_os = "macos")]
+fn open_recent_document(app: &tauri::AppHandle<AthasRuntime>, index: usize) {
+   let Ok(paths) = crate::bootstrap::macos::recent_documents() else {
+      return;
+   };
+   let Some(path) = paths.get(index) else {
+      return;
+   };
+   let Some(request) = commands::development::cli_args::parse_open_arg(
+      path.to_string_lossy().as_ref(),
+      PathBuf::from("/").as_path(),
+   ) else {
+      return;
+   };
+
+   focus_active_window(app);
+   queue_cli_requests(app, vec![request.into()]);
 }
 
 fn command_id_for_menu_event(event_id: &str) -> Option<&'static str> {
@@ -183,7 +344,6 @@ fn command_id_for_menu_event(event_id: &str) -> Option<&'static str> {
       "command_source_control" => Some("workbench.showSourceControl"),
       "command_github" => Some("workbench.showGitHub"),
       "command_debugger" => Some("workbench.showDebugger"),
-      "command_toggle_sidebar_position" => Some("workbench.toggleSidebarPosition"),
       "command_toggle_minimap" => Some("workbench.toggleMinimap"),
       "command_toggle_word_wrap" => Some("editor.toggleWordWrap"),
       "command_toggle_line_numbers" => Some("editor.toggleLineNumbers"),
@@ -202,6 +362,7 @@ fn command_id_for_menu_event(event_id: &str) -> Option<&'static str> {
       "command_rename_symbol" => Some("editor.renameSymbol"),
       "command_new_terminal" => Some("terminal.new"),
       "command_split_terminal" => Some("terminal.split"),
+      "command_split_terminal_down" => Some("terminal.splitDown"),
       "command_close_terminal" => Some("terminal.close"),
       "command_start_debugging" => Some("debug.start"),
       "command_stop_debugging" => Some("debug.stop"),
@@ -213,79 +374,137 @@ fn command_id_for_menu_event(event_id: &str) -> Option<&'static str> {
    }
 }
 
+fn emit_menu_event<P>(window: &tauri::WebviewWindow<AthasRuntime>, event: &str, payload: P)
+where
+   P: Serialize + Clone,
+{
+   let _ = window.emit_to(window.label(), event, payload);
+}
+
+fn perform_macos_window_tab_action(window: &tauri::WebviewWindow<AthasRuntime>, action: &str) {
+   #[cfg(target_os = "macos")]
+   match window.ns_window() {
+      Ok(ns_window) => {
+         if let Err(error) = crate::bootstrap::macos::perform_window_tab_action(ns_window, action) {
+            log::error!("Failed to perform macOS window tab action: {error}");
+         }
+      }
+      Err(error) => log::error!("Failed to access macOS window: {error}"),
+   }
+
+   #[cfg(not(target_os = "macos"))]
+   let _ = (window, action);
+}
+
 fn handle_menu_event(app_handle: &tauri::AppHandle<AthasRuntime>, event: tauri::menu::MenuEvent) {
-   match event.id().0.as_str() {
+   let event_id = event.id().0.as_str();
+
+   #[cfg(target_os = "macos")]
+   if event_id == "clear_recent_documents" {
+      if let Err(error) = crate::bootstrap::macos::clear_recent_documents() {
+         log::error!("Failed to clear macOS recent documents: {error}");
+      } else if let Err(error) = menu::refresh_open_recent_submenu(app_handle) {
+         log::error!("Failed to refresh macOS Open Recent menu: {error}");
+      }
+      return;
+   }
+
+   #[cfg(target_os = "macos")]
+   if let Some(index) = event_id
+      .strip_prefix("open_recent:")
+      .and_then(|index| index.parse::<usize>().ok())
+   {
+      open_recent_document(app_handle, index);
+      return;
+   }
+
+   match event_id {
       "new_window" => {
-         let app_handle = app_handle.clone();
-         std::thread::spawn(move || {
-            if let Err(error) = commands::ui::window::create_app_window_internal(&app_handle, None)
-            {
-               log::error!("Failed to create app window from menu: {}", error);
+         let received_at = Instant::now();
+         log::info!("[window-open:menu] new_window:received");
+         match commands::ui::window::create_app_window_internal(app_handle, None) {
+            Ok(label) => log::info!(
+               "[window-open:{label}] menu:create:end totalMs={}",
+               received_at.elapsed().as_millis()
+            ),
+            Err(error) => {
+               log::error!(
+                  "[window-open:menu] new_window:error totalMs={} error={}",
+                  received_at.elapsed().as_millis(),
+                  error
+               );
             }
-         });
+         }
       }
       event_id => {
          if let Some(window) = get_active_webview_window(app_handle) {
             match event_id {
                "quit" => {
                   info!("Quit menu item clicked");
-                  let _ = window.emit("menu_quit_app", ());
+                  emit_menu_event(&window, "menu_quit_app", ());
                }
                "quit_app" => {
                   info!("Quit app menu item triggered");
-                  let _ = window.emit("menu_quit_app", ());
+                  emit_menu_event(&window, "menu_quit_app", ());
                }
                "new_file" => {
-                  let _ = window.emit("menu_new_file", ());
+                  emit_menu_event(&window, "menu_new_file", ());
                }
                "open_folder" => {
-                  let _ = window.emit("menu_open_folder", ());
+                  emit_menu_event(&window, "menu_open_folder", ());
                }
                "close_folder" => {
-                  let _ = window.emit("menu_close_folder", ());
+                  emit_menu_event(&window, "menu_close_folder", ());
                }
                "save" => {
-                  let _ = window.emit("menu_save", ());
+                  emit_menu_event(&window, "menu_save", ());
                }
                "save_as" => {
-                  let _ = window.emit("menu_save_as", ());
+                  emit_menu_event(&window, "menu_save_as", ());
                }
                "close_tab" => {
                   debug!("Close tab menu item triggered");
-                  let _ = window.emit("menu_close_tab", ());
+                  emit_menu_event(&window, "menu_close_tab", ());
+               }
+               "close_window" => {
+                  debug!("Close window menu item triggered");
+                  emit_menu_event(&window, "menu_close_window", ());
                }
                "undo" => {
-                  let _ = window.emit("menu_undo", ());
+                  emit_menu_event(&window, "menu_undo", ());
                }
                "redo" => {
-                  let _ = window.emit("menu_redo", ());
+                  emit_menu_event(&window, "menu_redo", ());
                }
                "select_all" => {
-                  let _ = window.emit("menu_select_all", ());
+                  emit_menu_event(&window, "menu_select_all", ());
                }
                "find" => {
-                  let _ = window.emit("menu_find", ());
+                  emit_menu_event(&window, "menu_find", ());
                }
                "find_replace" => {
-                  let _ = window.emit("menu_find_replace", ());
+                  emit_menu_event(&window, "menu_find_replace", ());
                }
                "toggle_comment" => {
-                  let _ = window.emit("menu_toggle_comment", ());
+                  emit_menu_event(&window, "menu_toggle_comment", ());
                }
                "command_palette" => {
-                  let _ = window.emit("menu_command_palette", ());
+                  emit_menu_event(&window, "menu_command_palette", ());
+               }
+               "toggle_activity_sidebar" => {
+                  emit_menu_event(&window, "menu_toggle_activity_sidebar", ());
                }
                "toggle_sidebar" => {
-                  let _ = window.emit("menu_toggle_sidebar", ());
+                  emit_menu_event(&window, "menu_toggle_sidebar", ());
                }
                "toggle_terminal" => {
-                  let _ = window.emit("menu_toggle_terminal", ());
+                  emit_menu_event(&window, "menu_toggle_terminal", ());
                }
-               "toggle_ai_chat" => {
-                  let _ = window.emit("menu_toggle_ai_chat", ());
+               "open_github_notifications" => {
+                  emit_menu_event(&window, "menu_open_github_notifications", ());
                }
                "split_editor" => {
-                  let _ = window.emit("menu_split_editor", ());
+                  emit_menu_event(&window, "menu_split_editor", ());
                }
                "toggle_menu_bar" => {
                   #[cfg(target_os = "linux")]
@@ -331,23 +550,32 @@ fn handle_menu_event(app_handle: &tauri::AppHandle<AthasRuntime>, event: tauri::
                   }
                }
                "toggle_vim" => {
-                  let _ = window.emit("menu_toggle_vim", ());
+                  emit_menu_event(&window, "menu_toggle_vim", ());
                }
                "quick_open" => {
-                  let _ = window.emit("menu_quick_open", ());
-               }
-               "go_to_line" => {
-                  let _ = window.emit("menu_go_to_line", ());
+                  emit_menu_event(&window, "menu_quick_open", ());
                }
                "next_tab" => {
-                  let _ = window.emit("menu_next_tab", ());
+                  emit_menu_event(&window, "menu_next_tab", ());
+               }
+               "show_previous_window_tab" => {
+                  perform_macos_window_tab_action(&window, "previous");
+               }
+               "show_next_window_tab" => {
+                  perform_macos_window_tab_action(&window, "next");
+               }
+               "move_window_tab" => {
+                  perform_macos_window_tab_action(&window, "move");
+               }
+               "merge_all_windows" => {
+                  perform_macos_window_tab_action(&window, "merge");
                }
                "prev_tab" => {
-                  let _ = window.emit("menu_prev_tab", ());
+                  emit_menu_event(&window, "menu_prev_tab", ());
                }
                command_event_id if command_id_for_menu_event(command_event_id).is_some() => {
                   let command_id = command_id_for_menu_event(command_event_id).unwrap();
-                  let _ = window.emit("menu_execute_command", command_id);
+                  emit_menu_event(&window, "menu_execute_command", command_id);
                }
                "open_web_inspector" => {
                   #[cfg(any(debug_assertions, feature = "devtools"))]
@@ -359,28 +587,28 @@ fn handle_menu_event(app_handle: &tauri::AppHandle<AthasRuntime>, event: tauri::
                   }
                }
                "documentation" => {
-                  let _ = window.emit("menu_documentation", ());
+                  emit_menu_event(&window, "menu_documentation", ());
                }
                "changelog" => {
-                  let _ = window.emit("menu_changelog", ());
+                  emit_menu_event(&window, "menu_changelog", ());
                }
                "whats_new" => {
-                  let _ = window.emit("menu_whats_new", ());
+                  emit_menu_event(&window, "menu_whats_new", ());
                }
                "report_bug" => {
-                  let _ = window.emit("menu_report_bug", ());
+                  emit_menu_event(&window, "menu_report_bug", ());
                }
                "request_feature" => {
-                  let _ = window.emit("menu_request_feature", ());
+                  emit_menu_event(&window, "menu_request_feature", ());
                }
                "check_updates" => {
-                  let _ = window.emit("menu_check_updates", ());
+                  emit_menu_event(&window, "menu_check_updates", ());
                }
                "open_settings" => {
-                  let _ = window.emit("menu_open_settings", ());
+                  emit_menu_event(&window, "menu_open_settings", ());
                }
                "open_extensions" => {
-                  let _ = window.emit("menu_open_extensions", ());
+                  emit_menu_event(&window, "menu_open_extensions", ());
                }
                "minimize_window" => {
                   if let Err(e) = window.minimize() {
@@ -399,7 +627,7 @@ fn handle_menu_event(app_handle: &tauri::AppHandle<AthasRuntime>, event: tauri::
                   }
                }
                theme_id if theme_id.contains('-') => {
-                  let _ = window.emit("menu_theme_change", theme_id);
+                  emit_menu_event(&window, "menu_theme_change", theme_id);
                }
                _ => {}
             }
@@ -409,6 +637,13 @@ fn handle_menu_event(app_handle: &tauri::AppHandle<AthasRuntime>, event: tauri::
 }
 
 pub(crate) fn shutdown_background_services(app_handle: &tauri::AppHandle<AthasRuntime>) {
+   if let Some(codex) = app_handle.try_state::<CodexAppServer>() {
+      let codex = codex.inner().clone();
+      tauri::async_runtime::block_on(async move {
+         codex.stop().await;
+      });
+   }
+
    if let Some(acp_bridge) = app_handle.try_state::<Arc<Mutex<AcpAgentBridge>>>() {
       let acp_bridge = acp_bridge.inner().clone();
       tauri::async_runtime::block_on(async move {

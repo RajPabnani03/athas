@@ -1,11 +1,7 @@
 import { create } from "zustand";
 import { combine } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
-import {
-  defaultSettings,
-  getDefaultSetting,
-  getDefaultSettingsSnapshot,
-} from "@/features/settings/config/default-settings";
+import { getDefaultSettingsSnapshot } from "@/features/settings/config/default-settings";
 import {
   applySettingSideEffect,
   applySettingsSideEffects,
@@ -23,10 +19,8 @@ import { scoreSettingSearchRecord } from "@/features/settings/lib/settings-searc
 import { settingsSearchIndex } from "../config/search-index";
 import type { SearchResult, SearchState } from "../types/search.types";
 import type { Settings } from "../types/settings.types";
-
-export type { Settings } from "../types/settings.types";
-
-const AI_CHAT_TOGGLE_COOLDOWN_MS = 120;
+import { useWorkspaceTabsStore } from "@/features/window/stores/workspace-tabs.store";
+import { createSelectors } from "@/utils/zustand-selectors";
 
 let settingsStoreInitPromise: Promise<Settings> | null = null;
 
@@ -36,18 +30,17 @@ export function initializeSettingsStore(): Promise<Settings> {
   }
 
   settingsStoreInitPromise = initializeSettingsState((loadedSettings) => {
-    useSettingsStore.getState().initializeSettings(loadedSettings);
+    useSettingsStore.getState().actions.initializeSettings(loadedSettings);
   });
 
   return settingsStoreInitPromise;
 }
 
-export const useSettingsStore = create(
+const useSettingsStoreBase = create(
   immer(
     combine(
       {
         settings: getDefaultSettingsSnapshot(),
-        _lastAiChatToggleAt: 0,
         search: {
           query: "",
           results: [] as SearchResult[],
@@ -55,136 +48,135 @@ export const useSettingsStore = create(
           selectedResultId: null,
         } as SearchState,
       },
-      (set, get) => ({
-        updateSettingsFromJSON: (jsonString: string): boolean => {
-          try {
-            const validatedSettings = parseSettingsImportJson(jsonString);
+      (set) => ({
+        actions: {
+          updateSettingsFromJSON: (jsonString: string): boolean => {
+            try {
+              const validatedSettings = parseSettingsImportJson(jsonString);
 
-            if (!validatedSettings) {
+              if (!validatedSettings) {
+                return false;
+              }
+
+              set((state) => {
+                state.settings = validatedSettings;
+              });
+
+              applySettingsSideEffects(validatedSettings);
+              void saveSettingsToStore(validatedSettings);
+              return true;
+            } catch (error) {
+              console.error("Error parsing settings JSON:", error);
               return false;
             }
+          },
+
+          initializeSettings: (loadedSettings: Settings) => {
+            set((state) => {
+              state.settings = loadedSettings;
+            });
+          },
+
+          resetToDefaults: async () => {
+            const nextSettings = getDefaultSettingsSnapshot();
 
             set((state) => {
-              state.settings = validatedSettings;
+              state.settings = nextSettings;
             });
 
-            applySettingsSideEffects(validatedSettings);
-            void saveSettingsToStore(validatedSettings);
-            return true;
-          } catch (error) {
-            console.error("Error parsing settings JSON:", error);
-            return false;
-          }
-        },
+            applySettingsSideEffects(nextSettings);
+            await saveSettingsToStore(nextSettings);
+          },
 
-        initializeSettings: (loadedSettings: Settings) => {
-          set((state) => {
-            state.settings = loadedSettings;
-          });
-        },
+          updateSetting: async <K extends keyof Settings>(key: K, value: Settings[K]) => {
+            const normalizedValue = normalizeSettingValue(key, value);
+            const savePatch: Partial<Settings> = { [key]: normalizedValue };
 
-        resetToDefaults: async () => {
-          const nextSettings = getDefaultSettingsSnapshot();
+            set((state) => {
+              state.settings[key] = normalizedValue;
+              if (key === "syncSystemTheme" && normalizedValue === true) {
+                const syncThemePatch = getSystemSyncThemePreferencePatch(state.settings);
+                Object.assign(state.settings, syncThemePatch);
+                Object.assign(savePatch, syncThemePatch);
+              }
 
-          set((state) => {
-            state.settings = nextSettings;
-          });
+              const aiModelPatch = getAIModelSelectionPatch(state.settings, key);
+              Object.assign(state.settings, aiModelPatch);
+              Object.assign(savePatch, aiModelPatch);
+            });
 
-          applySettingsSideEffects(nextSettings);
-          await saveSettingsToStore(nextSettings);
-        },
+            applySettingSideEffect(
+              key,
+              normalizedValue,
+              () => useSettingsStore.getState().settings,
+            );
 
-        toggleAIChatVisible: (forceValue?: boolean) => {
-          const now = Date.now();
-          const previousToggleAt = get()._lastAiChatToggleAt;
-          if (now - previousToggleAt < AI_CHAT_TOGGLE_COOLDOWN_MS) {
-            return;
-          }
-
-          const nextValue = forceValue !== undefined ? forceValue : !get().settings.isAIChatVisible;
-
-          set((state) => {
-            state.settings.isAIChatVisible = nextValue;
-            state._lastAiChatToggleAt = now;
-          });
-
-          debouncedSaveSettingsToStore({ isAIChatVisible: nextValue });
-        },
-
-        updateSetting: async <K extends keyof Settings>(key: K, value: Settings[K]) => {
-          const normalizedValue = normalizeSettingValue(key, value);
-          const savePatch: Partial<Settings> = { [key]: normalizedValue };
-
-          set((state) => {
-            state.settings[key] = normalizedValue;
-            if (key === "syncSystemTheme" && normalizedValue === true) {
-              const syncThemePatch = getSystemSyncThemePreferencePatch(state.settings);
-              Object.assign(state.settings, syncThemePatch);
-              Object.assign(savePatch, syncThemePatch);
+            if (key === "theme") {
+              const activeProject = useWorkspaceTabsStore.getState().actions.getActiveProjectTab();
+              if (activeProject) {
+                useWorkspaceTabsStore
+                  .getState()
+                  .actions.setProjectTheme(activeProject.id, normalizedValue as string);
+              }
             }
 
-            const aiModelPatch = getAIModelSelectionPatch(state.settings, key);
-            Object.assign(state.settings, aiModelPatch);
-            Object.assign(savePatch, aiModelPatch);
-          });
+            debouncedSaveSettingsToStore(savePatch);
+          },
 
-          applySettingSideEffect(key, normalizedValue, () => useSettingsStore.getState().settings);
-          debouncedSaveSettingsToStore(savePatch);
-        },
-
-        setSearchQuery: (query: string) => {
-          set((state) => {
-            state.search.query = query;
-            state.search.selectedResultId = null;
-          });
-          useSettingsStore.getState().runSearch();
-        },
-
-        runSearch: () => {
-          const query = useSettingsStore.getState().search.query.trim().toLowerCase();
-
-          if (!query) {
+          setSearchQuery: (query: string) => {
             set((state) => {
-              state.search.results = [];
+              state.search.query = query;
+              state.search.selectedResultId = null;
+            });
+            useSettingsStore.getState().actions.runSearch();
+          },
+
+          runSearch: () => {
+            const query = useSettingsStore.getState().search.query.trim().toLowerCase();
+
+            if (!query) {
+              set((state) => {
+                state.search.results = [];
+                state.search.isSearching = false;
+              });
+              return;
+            }
+
+            set((state) => {
+              state.search.isSearching = true;
+            });
+
+            const results: SearchResult[] = settingsSearchIndex
+              .map((record) => {
+                return { ...record, score: scoreSettingSearchRecord(query, record) };
+              })
+              .filter((result) => result.score > 0)
+              .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
+
+            set((state) => {
+              state.search.results = results;
               state.search.isSearching = false;
             });
-            return;
-          }
+          },
 
-          set((state) => {
-            state.search.isSearching = true;
-          });
+          clearSearch: () => {
+            set((state) => {
+              state.search.query = "";
+              state.search.results = [];
+              state.search.isSearching = false;
+              state.search.selectedResultId = null;
+            });
+          },
 
-          const results: SearchResult[] = settingsSearchIndex
-            .map((record) => {
-              return { ...record, score: scoreSettingSearchRecord(query, record) };
-            })
-            .filter((result) => result.score > 0)
-            .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
-
-          set((state) => {
-            state.search.results = results;
-            state.search.isSearching = false;
-          });
-        },
-
-        clearSearch: () => {
-          set((state) => {
-            state.search.query = "";
-            state.search.results = [];
-            state.search.isSearching = false;
-            state.search.selectedResultId = null;
-          });
-        },
-
-        selectSearchResult: (resultId: string) => {
-          set((state) => {
-            state.search.selectedResultId = resultId;
-          });
+          selectSearchResult: (resultId: string) => {
+            set((state) => {
+              state.search.selectedResultId = resultId;
+            });
+          },
         },
       }),
     ),
   ),
 );
 
-export { defaultSettings, getDefaultSetting };
+export const useSettingsStore = createSelectors(useSettingsStoreBase);

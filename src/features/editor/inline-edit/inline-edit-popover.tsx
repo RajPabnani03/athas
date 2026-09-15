@@ -1,5 +1,6 @@
-import { ArrowBendDownLeftIcon as CornerDownLeft, XIcon as X } from "@phosphor-icons/react";
+import { ArrowCornerDownLeftIcon, XIcon } from "@/ui/icons";
 import { forwardRef } from "react";
+import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
 import Input from "@/ui/input";
 import type { Range } from "@/features/editor/types/editor.types";
@@ -19,14 +20,14 @@ export const InlineEditPopover = forwardRef<HTMLDivElement, InlineEditPopoverPro
     if (!state.inlineEditVisible || !state.popoverPosition) return null;
 
     return (
-      <div ref={ref} className="pointer-events-none absolute inset-0 z-[200]">
+      <div ref={ref} className="pointer-events-none absolute inset-0 z-200">
         <div
           ref={state.inlineEditPopoverRef}
           role="dialog"
           aria-modal="false"
           aria-labelledby="inline-edit-title"
           aria-describedby="inline-edit-description"
-          className="pointer-events-auto absolute overflow-hidden rounded-md border border-border/70 bg-primary-bg shadow-[var(--shadow-popover)]"
+          className="pointer-events-auto absolute overflow-hidden rounded-md border border-border/70 bg-background shadow-(--shadow-popover)"
           style={{
             top: `${zoneTop ?? state.popoverPosition.top}px`,
             left: `${state.popoverPosition.left}px`,
@@ -41,6 +42,7 @@ export const InlineEditPopover = forwardRef<HTMLDivElement, InlineEditPopoverPro
           </div>
           <div className="flex items-center gap-1.5 px-2 py-1.5">
             <Input
+              grow
               ref={state.inlineEditInstructionRef}
               autoFocus
               value={state.inlineEditInstruction}
@@ -51,19 +53,33 @@ export const InlineEditPopover = forwardRef<HTMLDivElement, InlineEditPopoverPro
                 }
               }}
               onKeyDown={(event) => {
+                if (
+                  (event.metaKey || event.ctrlKey) &&
+                  !event.altKey &&
+                  event.key.toLowerCase() === "a"
+                ) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.currentTarget.select();
+                  return;
+                }
                 if (event.key === "Enter") {
                   event.preventDefault();
+                  event.stopPropagation();
                   void state.handleApplyInlineEdit();
+                  return;
                 }
                 if (event.key === "Escape") {
                   event.preventDefault();
+                  event.stopPropagation();
                   if (!state.isInlineEditRunning) {
                     state.inlineEditToolbarActions.hide();
                   }
+                  return;
                 }
+                event.stopPropagation();
               }}
               variant="ghost"
-              size="sm"
               aria-label="Inline edit instruction"
               aria-describedby={
                 state.inlineEditError
@@ -71,7 +87,6 @@ export const InlineEditPopover = forwardRef<HTMLDivElement, InlineEditPopoverPro
                   : "inline-edit-description"
               }
               aria-invalid={state.inlineEditError ? true : undefined}
-              className="ui-font h-7 min-w-0 flex-1 bg-transparent px-0 ui-text-xs placeholder:text-text-lighter/80 focus:bg-transparent"
               placeholder={
                 selection && selection.start.offset !== selection.end.offset
                   ? "Edit selection..."
@@ -90,37 +105,36 @@ export const InlineEditPopover = forwardRef<HTMLDivElement, InlineEditPopoverPro
             <Button
               type="button"
               variant="ghost"
-              compact
+              iconOnly
               onClick={() => void state.handleApplyInlineEdit()}
               disabled={state.isInlineEditRunning}
-              className="text-accent hover:bg-transparent hover:text-accent/80"
+              tone="primary"
               aria-label={state.isInlineEditRunning ? "Applying inline edit" : "Apply inline edit"}
               tooltip="Apply inline edit"
               shortcut="enter"
             >
-              <CornerDownLeft />
+              <ArrowCornerDownLeftIcon />
             </Button>
             <Button
               type="button"
               variant="ghost"
-              compact
+              iconOnly
               onClick={() => state.inlineEditToolbarActions.hide()}
-              className="text-text-lighter hover:text-text"
               tooltip="Close inline edit"
               shortcut="escape"
             >
-              <X />
+              <XIcon />
             </Button>
           </div>
           {state.inlineEditError && (
-            <div
+            <Alert
               id="inline-edit-error"
-              role="alert"
               aria-live="assertive"
-              className="ui-font border-t border-border/50 bg-error/10 px-2 py-1 ui-text-xs text-error"
+              tone="error"
+              className="rounded-none border-x-0 border-b-0 py-1"
             >
-              {state.inlineEditError}
-            </div>
+              <AlertDescription>{state.inlineEditError}</AlertDescription>
+            </Alert>
           )}
         </div>
       </div>

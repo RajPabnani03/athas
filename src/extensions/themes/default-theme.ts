@@ -1,6 +1,7 @@
 import athasThemes from "./builtin/athas.json";
-import type { Theme, ThemeFile } from "./theme-schema";
-import type { ThemeDefinition } from "./types";
+import { toThemeDefinition } from "./theme-file";
+import type { ThemeFile } from "./theme-schema";
+import type { ThemeDefinition } from "./theme.types";
 
 export type AthasDefaultThemeType = "dark" | "light";
 
@@ -32,33 +33,6 @@ function toStringRecord(value: object): Record<string, string> {
   return result;
 }
 
-function toThemeDefinition(theme: Theme): ThemeDefinition {
-  const cssVariables: Record<string, string> = {};
-  const colors = toStringRecord(theme.colors);
-  for (const [key, value] of Object.entries(colors)) {
-    cssVariables[`--${key}`] = value;
-    cssVariables[`--color-${key}`] = value;
-  }
-
-  const syntaxTokens: Record<string, string> = {};
-  const syntax = toStringRecord(theme.syntax);
-  for (const [key, value] of Object.entries(syntax)) {
-    syntaxTokens[`--syntax-${key}`] = value;
-    syntaxTokens[`--color-syntax-${key}`] = value;
-  }
-
-  const isDark = theme.appearance === "dark";
-  return {
-    id: theme.id,
-    name: theme.name,
-    description: theme.description || "",
-    category: isDark ? "Dark" : "Light",
-    cssVariables,
-    syntaxTokens,
-    isDark,
-  };
-}
-
 function buildDefaultTheme(type: AthasDefaultThemeType): AthasDefaultTheme {
   const theme = athasThemeFile.themes.find((entry) => entry.appearance === type);
   if (!theme) {
@@ -69,12 +43,12 @@ function buildDefaultTheme(type: AthasDefaultThemeType): AthasDefaultTheme {
     id: theme.id,
     type,
     colors: toStringRecord(theme.colors),
-    syntax: toStringRecord(theme.syntax),
+    syntax: toStringRecord(theme.syntax ?? {}),
     definition: toThemeDefinition(theme),
   };
 }
 
-export const ATHAS_DEFAULT_THEMES: Record<AthasDefaultThemeType, AthasDefaultTheme> = {
+const ATHAS_DEFAULT_THEMES: Record<AthasDefaultThemeType, AthasDefaultTheme> = {
   dark: buildDefaultTheme("dark"),
   light: buildDefaultTheme("light"),
 };

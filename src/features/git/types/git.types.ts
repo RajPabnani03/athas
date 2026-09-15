@@ -42,6 +42,7 @@ export interface GitDiff {
   raw_patch?: string;
   additions?: number;
   deletions?: number;
+  is_truncated?: boolean;
 }
 
 export interface GitDiffStat {
@@ -95,6 +96,7 @@ export interface GitBlameLine {
   line_number: number;
   total_lines: number;
   commit_hash: string;
+  is_uncommitted: boolean;
   author: string;
   email: string;
   time: number;

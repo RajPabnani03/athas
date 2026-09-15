@@ -1,8 +1,8 @@
-import { ListChecksIcon as ListChecks, PlayIcon as Play } from "@phosphor-icons/react";
+import { ListChecksIcon, PlayIcon } from "@/ui/icons";
 import { memo, useCallback, useState } from "react";
 import type { ParsedPlan, PlanStep } from "@/features/ai/lib/plan-parser";
 import { Button } from "@/ui/button";
-import { cn } from "@/utils/cn";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/ui/card";
 import MarkdownRenderer from "./markdown-renderer";
 import { PlanStepDisplay } from "./plan-step-display";
 
@@ -39,38 +39,29 @@ export const PlanBlockDisplay = memo(function PlanBlockDisplay({
         </div>
       )}
 
-      <div className="my-2 rounded-2xl border border-accent/20 bg-accent/5">
-        <div className="flex items-center gap-1.5 border-accent/20 border-b px-3 py-2">
-          <ListChecks className="text-accent" />
-          <span className="font-medium text-accent ui-text-xs">
+      <Card className="my-2 border-primary/20 bg-primary/5">
+        <CardHeader className="flex flex-row items-center gap-1.5">
+          <ListChecksIcon className="text-primary" />
+          <CardTitle className="text-primary">
             Plan ({plan.steps.length} {plan.steps.length === 1 ? "step" : "steps"})
-          </span>
-        </div>
+          </CardTitle>
+        </CardHeader>
 
-        <div className="space-y-1.5 p-3">
+        <CardContent className="space-y-1.5">
           {plan.steps.map((step) => (
             <PlanStepDisplay key={step.index} step={step} status={getStepStatus(step.index)} />
           ))}
-        </div>
+        </CardContent>
 
         {!isStreaming && onExecuteStep && (
-          <div className="border-accent/20 border-t px-3 py-2">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={handleExecutePlan}
-              className={cn(
-                "gap-1.5 rounded-full border border-accent/30",
-                "bg-accent/20 text-accent hover:bg-accent/30",
-              )}
-              compact
-            >
-              <Play />
+          <CardFooter className="border-primary/20 bg-transparent">
+            <Button type="button" variant="accent" onClick={handleExecutePlan}>
+              <PlayIcon />
               Execute Plan
             </Button>
-          </div>
+          </CardFooter>
         )}
-      </div>
+      </Card>
 
       {plan.afterPlan && (
         <div className="mt-2">

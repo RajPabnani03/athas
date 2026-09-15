@@ -1,319 +1,287 @@
-import {
-  DatabaseIcon as Database,
-  FileTextIcon as FileText,
-  GitPullRequestIcon as GitPullRequest,
-  GlobeIcon as Globe,
-  MagnifyingGlassIcon as Search,
-  PlayCircleIcon as PlayCircle,
-  PlusIcon as Plus,
-  TerminalWindowIcon as TerminalWindow,
-} from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { FileExplorerIcon } from "@/features/file-explorer/components/file-explorer-icon";
-import type { FileItem } from "@/features/global-search/types/global-search.types";
+import { TagIcon, RocketIcon } from "@/ui/icons";
+import { useMemo, useRef, useState, type RefObject } from "react";
+import { ThemedFileIcon } from "@/extensions/icon-themes/components/themed-file-icon";
+import { openFiles } from "@/features/file-system/controllers/platform";
+import { useGitStore } from "@/features/git/stores/git.store";
+import type { PaneContent } from "@/features/panes/types/pane-content.types";
 import { useProjectStore } from "@/features/window/stores/project.store";
 import { Button } from "@/ui/button";
-import { Dropdown } from "@/ui/dropdown";
-import Input from "@/ui/input";
-import { cn } from "@/utils/cn";
 import {
-  chatComposerDropdownClassName,
-  chatComposerIconButtonClassName,
-} from "../input/chat-composer-control-styles";
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuEmpty,
+  DropdownMenuSearch,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuViewport,
+  DropdownMenuTrigger,
+} from "@/ui/dropdown";
+import { useMenuSearch } from "@/ui/menu-search";
+import {
+  DatabaseIcon,
+  FileTextIcon,
+  FilesIcon,
+  GitBranchIcon,
+  GitPullRequestIcon,
+  PlayCircleIcon,
+  PlusIcon,
+  TerminalWindowIcon,
+  UploadIcon,
+} from "@/ui/icons";
+import { GithubMark } from "@/ui/brand-marks";
 import { AIFileSelector } from "../mentions/ai-file-selector";
-
-import type { PaneContent } from "@/features/panes/types/pane-content.types";
+import {
+  getGitContextFiles,
+  groupContextBuffers,
+} from "@/features/ai/utils/context-selector-model";
 
 function getBufferContextDescription(buffer: PaneContent) {
-  if (buffer.type === "webViewer") return buffer.url;
   if (buffer.type === "terminal") return buffer.workingDirectory || "Terminal";
   if (buffer.type === "database") return `${buffer.databaseType} database`;
   if (buffer.type === "pullRequest") return `Pull request #${buffer.prNumber}`;
   if (buffer.type === "githubIssue") return `Issue #${buffer.issueNumber}`;
   if (buffer.type === "githubAction") return `Action run #${buffer.runId}`;
+  if (buffer.type === "githubDelivery")
+    return `${buffer.kind === "releases" ? "Release" : "Deployment"} · ${buffer.name}`;
   return buffer.path;
 }
 
 function getBufferContextIcon(buffer: PaneContent) {
-  if (buffer.type === "webViewer") return <Globe />;
-  if (buffer.type === "terminal") return <TerminalWindow />;
-  if (buffer.type === "database") return <Database />;
-  if (buffer.type === "pullRequest") return <GitPullRequest />;
-  if (buffer.type === "githubIssue") return <FileText />;
-  if (buffer.type === "githubAction") return <PlayCircle />;
-  return <FileExplorerIcon fileName={buffer.name} isDir={false} size={10} />;
+  if (buffer.type === "terminal") return <TerminalWindowIcon />;
+  if (buffer.type === "database") return <DatabaseIcon />;
+  if (buffer.type === "pullRequest") return <GitPullRequestIcon />;
+  if (buffer.type === "githubIssue") return <FileTextIcon />;
+  if (buffer.type === "githubAction") return <PlayCircleIcon />;
+  if (buffer.type === "githubDelivery")
+    return buffer.kind === "releases" ? <TagIcon /> : <RocketIcon />;
+  return <ThemedFileIcon fileName={buffer.name} isDir={false} />;
 }
 
 interface ContextSelectorProps {
   buffers: PaneContent[];
-  allProjectFiles: never[];
   selectedBufferIds: Set<string>;
+  selectedFilesPaths: Set<string>;
   onToggleBuffer: (bufferId: string) => void;
   onToggleFile: (filePath: string) => void;
   isOpen: boolean;
-  onToggleOpen: () => void;
-  anchorRef?: RefObject<HTMLElement | null>;
-  className?: string;
+  onOpenChange: (open: boolean) => void;
+  triggerRef?: RefObject<HTMLButtonElement | null>;
 }
 
 export function ContextSelector({
   buffers,
   selectedBufferIds,
+  selectedFilesPaths,
   onToggleBuffer,
   onToggleFile,
   isOpen,
-  onToggleOpen,
-  anchorRef,
-  className,
-}: Omit<ContextSelectorProps, "allProjectFiles">) {
-  const triggerRef = useRef<HTMLDivElement>(null);
-  const dropdownAnchorRef = anchorRef ?? triggerRef;
+  onOpenChange,
+  triggerRef,
+}: ContextSelectorProps) {
+  const bufferSearch = useMenuSearch();
+  const githubSearch = useMenuSearch();
+  const [fileQuery, setFileQuery] = useState("");
+  const [selectedFileIndex, setSelectedFileIndex] = useState(0);
+  const fileSearchInputRef = useRef<HTMLInputElement>(null);
+  const rootFolderPath = useProjectStore((state) => state.rootFolderPath);
+  const workspaceGitStatus = useGitStore((state) => state.workspaceGitStatus);
+  const currentWorkspaceRepoPath = useGitStore((state) => state.currentWorkspaceRepoPath);
 
-  const closeDropdown = useCallback(() => {
-    if (isOpen) {
-      onToggleOpen();
-    }
-  }, [isOpen, onToggleOpen]);
-
-  return (
-    <div className={cn("flex min-w-0 flex-1 flex-col gap-1.5", className)}>
-      <div className="flex min-w-0 items-center gap-1.5">
-        <div className="relative shrink-0" ref={triggerRef}>
-          <Button
-            onClick={onToggleOpen}
-            variant="ghost"
-            className={chatComposerIconButtonClassName()}
-            tooltip="Add context"
-            aria-label="Add context"
-            aria-expanded={isOpen}
-            aria-haspopup="true"
-            compact
-          >
-            <Plus />
-          </Button>
-        </div>
-      </div>
-
-      <Dropdown
-        isOpen={isOpen}
-        anchorRef={dropdownAnchorRef}
-        anchorSide="top"
-        onClose={closeDropdown}
-        className={chatComposerDropdownClassName("min-w-0")}
-        menuClassName="flex min-h-0 flex-col overflow-hidden"
-        style={{ maxHeight: "320px" }}
-        matchAnchorWidth
-        anchorMinWidth={280}
-      >
-        {isOpen ? (
-          <ContextSelectorDropdownContent
-            buffers={buffers}
-            selectedBufferIds={selectedBufferIds}
-            onToggleBuffer={onToggleBuffer}
-            onToggleFile={onToggleFile}
-          />
-        ) : null}
-      </Dropdown>
-    </div>
-  );
-}
-
-interface ContextSelectorDropdownContentProps {
-  buffers: PaneContent[];
-  selectedBufferIds: Set<string>;
-  onToggleBuffer: (bufferId: string) => void;
-  onToggleFile: (filePath: string) => void;
-}
-
-function ContextSelectorDropdownContent({
-  buffers,
-  selectedBufferIds,
-  onToggleBuffer,
-  onToggleFile,
-}: ContextSelectorDropdownContentProps) {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedContextIndex, setSelectedContextIndex] = useState(0);
-  const [visibleFileResults, setVisibleFileResults] = useState<FileItem[]>([]);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const { rootFolderPath } = useProjectStore();
-
-  const selectableBuffers = useMemo(
-    () => buffers.filter((buffer) => buffer.type !== "agent" && buffer.type !== "newTab"),
+  const { github: githubBuffers, openTabs } = useMemo(
+    () => groupContextBuffers(buffers),
     [buffers],
   );
-  const filteredContextBuffers = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
-    return selectableBuffers.filter((buffer) => {
-      if (!normalizedSearch) return true;
-      return (
-        buffer.name.toLowerCase().includes(normalizedSearch) ||
-        buffer.path.toLowerCase().includes(normalizedSearch) ||
-        buffer.type.toLowerCase().includes(normalizedSearch) ||
-        getBufferContextDescription(buffer).toLowerCase().includes(normalizedSearch)
-      );
-    });
-  }, [searchTerm, selectableBuffers]);
-
+  const filteredBuffers = bufferSearch.filter(openTabs, (buffer) => [
+    buffer.name,
+    buffer.path,
+    buffer.type,
+    getBufferContextDescription(buffer),
+  ]);
+  const filteredGithubBuffers = githubSearch.filter(githubBuffers, (buffer) => [
+    buffer.name,
+    buffer.path,
+    getBufferContextDescription(buffer),
+  ]);
+  const selectableBuffers = useMemo(
+    () => [...openTabs, ...githubBuffers],
+    [githubBuffers, openTabs],
+  );
   const bufferByPath = useMemo(
     () => new Map(selectableBuffers.map((buffer) => [buffer.path, buffer])),
     [selectableBuffers],
   );
+  const gitContextFiles = useMemo(
+    () =>
+      getGitContextFiles(workspaceGitStatus, currentWorkspaceRepoPath ?? rootFolderPath ?? null),
+    [currentWorkspaceRepoPath, rootFolderPath, workspaceGitStatus],
+  );
 
-  const handleFileSelect = (file: { path: string }) => {
-    const buffer = bufferByPath.get(file.path);
-    if (buffer) {
-      onToggleBuffer(buffer.id);
-      return;
-    }
-
-    onToggleFile(file.path);
-  };
-
-  useEffect(() => {
-    const focusTimer = setTimeout(() => searchInputRef.current?.focus(), 0);
-    return () => clearTimeout(focusTimer);
-  }, []);
-
-  const totalResults = filteredContextBuffers.length + visibleFileResults.length;
-  const boundedSelectedContextIndex =
-    totalResults === 0 ? 0 : Math.min(selectedContextIndex, totalResults - 1);
-  const activeFileIndex = boundedSelectedContextIndex - filteredContextBuffers.length;
-  const fileSelectedIndex = activeFileIndex >= 0 ? activeFileIndex : -1;
-
-  const selectCurrentContextResult = () => {
-    if (filteredContextBuffers[boundedSelectedContextIndex]) {
-      onToggleBuffer(filteredContextBuffers[boundedSelectedContextIndex].id);
-      searchInputRef.current?.focus();
-      return;
-    }
-
-    const file = visibleFileResults[fileSelectedIndex];
-    if (file) {
-      handleFileSelect(file);
-      searchInputRef.current?.focus();
+  const handleAttachFiles = async () => {
+    const selectedPaths = await openFiles();
+    for (const path of selectedPaths) {
+      if (!selectedFilesPaths.has(path)) onToggleFile(path);
     }
   };
+
+  const renderBufferOptions = (options: PaneContent[], emptyLabel: string) =>
+    options.length > 0 ? (
+      options.map((buffer) => (
+        <DropdownMenuCheckboxItem
+          key={buffer.id}
+          checked={selectedBufferIds.has(buffer.id)}
+          closeOnClick={false}
+          onCheckedChange={() => onToggleBuffer(buffer.id)}
+        >
+          {getBufferContextIcon(buffer)}
+          <span className="min-w-0 flex-1 truncate">{buffer.name}</span>
+          <span className="max-w-36 truncate text-subtle-foreground">
+            {getBufferContextDescription(buffer)}
+          </span>
+        </DropdownMenuCheckboxItem>
+      ))
+    ) : (
+      <DropdownMenuEmpty>{emptyLabel}</DropdownMenuEmpty>
+    );
 
   return (
-    <>
-      <div className="border-border/60 border-b bg-secondary-bg/95 px-1.5 py-1.5">
-        <Input
-          ref={searchInputRef}
-          type="text"
-          placeholder="Search context..."
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-          onKeyDown={(event) => {
-            if (totalResults === 0) return;
-
-            if (event.key === "ArrowDown") {
-              event.preventDefault();
-              setSelectedContextIndex((currentIndex) =>
-                Math.min(currentIndex + 1, totalResults - 1),
-              );
-              return;
-            }
-
-            if (event.key === "ArrowUp") {
-              event.preventDefault();
-              setSelectedContextIndex((currentIndex) => Math.max(currentIndex - 1, 0));
-              return;
-            }
-
-            if (event.key === "Home") {
-              event.preventDefault();
-              setSelectedContextIndex(0);
-              return;
-            }
-
-            if (event.key === "End") {
-              event.preventDefault();
-              setSelectedContextIndex(totalResults - 1);
-              return;
-            }
-
-            if (event.key === "Enter" || event.key === "Tab") {
-              event.preventDefault();
-              selectCurrentContextResult();
-            }
-          }}
-          variant="ghost"
-          size="xs"
-          leftIcon={Search}
-          className="w-full"
-          aria-label="Search context"
-        />
-      </div>
-      <AIFileSelector
-        files={[]}
-        query={searchTerm}
-        onQueryChange={setSearchTerm}
-        onSelect={handleFileSelect}
-        rootFolderPath={rootFolderPath}
-        selectedIndex={fileSelectedIndex}
-        onSelectedIndexChange={(index) =>
-          setSelectedContextIndex(filteredContextBuffers.length + index)
+    <DropdownMenu
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) {
+          bufferSearch.reset();
+          githubSearch.reset();
+          setFileQuery("");
+          setSelectedFileIndex(0);
         }
-        onResultsChange={setVisibleFileResults}
-        emptyLabel={searchTerm ? "No matching context found" : "Type to search files"}
-        compact
-        showSearchInput={false}
-        listClassName="max-h-[264px]"
-        leadingContent={
-          filteredContextBuffers.length > 0 ? (
-            <>
-              <div className="ui-text-xs px-2 pt-1.5 pb-1 font-medium leading-[1.35] text-text-lighter/75">
-                Open tabs
-              </div>
-              {filteredContextBuffers.map((buffer) => {
-                const index = filteredContextBuffers.indexOf(buffer);
-                const isSelected = selectedBufferIds.has(buffer.id);
-                return (
-                  <button
-                    key={buffer.id}
-                    type="button"
-                    data-context-buffer-option
-                    onClick={() => {
-                      onToggleBuffer(buffer.id);
-                      searchInputRef.current?.focus();
-                    }}
-                    onMouseEnter={() => setSelectedContextIndex(index)}
-                    className={cn(
-                      "ui-font flex min-h-7 w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left ui-text-xs leading-[1.35] transition-colors",
-                      boundedSelectedContextIndex === index
-                        ? "bg-selected text-text"
-                        : isSelected
-                          ? "bg-hover/70 text-text"
-                          : "text-text hover:bg-hover focus:bg-hover focus:outline-none",
-                      isSelected && boundedSelectedContextIndex !== index
-                        ? "shadow-[inset_0_0_0_1px_var(--color-border)]"
-                        : "",
-                    )}
-                  >
-                    <span className="flex size-3.5 shrink-0 items-center justify-center text-text-lighter [&_svg]:size-3">
-                      {getBufferContextIcon(buffer)}
-                    </span>
-                    <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                      <span className="min-w-0 max-w-[45%] shrink truncate text-text">
-                        {buffer.name}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-text-lighter/70">
-                        {getBufferContextDescription(buffer)}
-                      </span>
-                    </span>
-                    {isSelected && (
-                      <span className="ui-text-xs shrink-0 rounded border border-border/60 px-1 leading-[1.35] text-text-lighter">
-                        added
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </>
-          ) : null
+        onOpenChange(open);
+      }}
+    >
+      <DropdownMenuTrigger
+        render={
+          <Button
+            ref={triggerRef}
+            type="button"
+            variant="ghost"
+            tooltip="Add context"
+            aria-label="Add context"
+            iconOnly
+          />
         }
-        hasLeadingResults={filteredContextBuffers.length > 0}
-      />
-    </>
+      >
+        <PlusIcon />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" size="default">
+        <DropdownMenuItem onClick={() => void handleAttachFiles()}>
+          <UploadIcon />
+          Attach files…
+        </DropdownMenuItem>
+
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <FileTextIcon />
+            Project files
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent
+            size="panel"
+            className="h-80"
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <AIFileSelector
+              query={fileQuery}
+              onQueryChange={setFileQuery}
+              onSelect={(file) => {
+                const buffer = bufferByPath.get(file.path);
+                if (buffer) {
+                  onToggleBuffer(buffer.id);
+                } else {
+                  onToggleFile(file.path);
+                }
+                fileSearchInputRef.current?.focus();
+              }}
+              rootFolderPath={rootFolderPath}
+              selectedIndex={selectedFileIndex}
+              onSelectedIndexChange={setSelectedFileIndex}
+              searchInputRef={fileSearchInputRef}
+              emptyLabel="No matching files"
+              compact
+              autoFocusSearchInput
+            />
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <GitBranchIcon />
+            <span className="min-w-0 flex-1 truncate">Git changes</span>
+            <span className="shrink-0 text-subtle-foreground tabular-nums">
+              {gitContextFiles.length}
+            </span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent size="wide" viewport="list">
+            {gitContextFiles.length > 0 ? (
+              gitContextFiles.map((file) => (
+                <DropdownMenuCheckboxItem
+                  key={file.absolutePath}
+                  checked={selectedFilesPaths.has(file.absolutePath)}
+                  closeOnClick={false}
+                  onCheckedChange={() => onToggleFile(file.absolutePath)}
+                >
+                  <ThemedFileIcon fileName={file.path} isDir={false} />
+                  <span className="min-w-0 flex-1 truncate">{file.path}</span>
+                  <span className="text-subtle-foreground">
+                    {file.staged ? "Staged" : file.status}
+                  </span>
+                </DropdownMenuCheckboxItem>
+              ))
+            ) : (
+              <DropdownMenuEmpty>No attachable Git changes</DropdownMenuEmpty>
+            )}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <GithubMark />
+            <span className="min-w-0 flex-1 truncate">GitHub</span>
+            <span className="shrink-0 text-subtle-foreground tabular-nums">
+              {githubBuffers.length}
+            </span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent size="wide" viewport="searchable">
+            <DropdownMenuSearch
+              value={githubSearch.query}
+              onChange={(event) => githubSearch.setQuery(event.target.value)}
+              placeholder="Search GitHub tabs..."
+              autoFocus
+            />
+            <DropdownMenuViewport>
+              {renderBufferOptions(filteredGithubBuffers, "No open GitHub tabs")}
+            </DropdownMenuViewport>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <FilesIcon />
+            <span className="min-w-0 flex-1 truncate">Open tabs</span>
+            <span className="shrink-0 text-subtle-foreground tabular-nums">{openTabs.length}</span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent size="wide" viewport="searchable">
+            <DropdownMenuSearch
+              value={bufferSearch.query}
+              onChange={(event) => bufferSearch.setQuery(event.target.value)}
+              placeholder="Search open tabs..."
+              autoFocus
+            />
+            <DropdownMenuViewport>
+              {renderBufferOptions(filteredBuffers, "No matching open tabs")}
+            </DropdownMenuViewport>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

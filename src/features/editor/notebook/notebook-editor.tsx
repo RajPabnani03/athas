@@ -1,15 +1,15 @@
 import "../markdown/styles.css";
 import DOMPurify from "dompurify";
 import {
-  EyeIcon as Eye,
-  PencilSimpleIcon as Edit,
-  PlayIcon as Play,
-  PlusIcon as Plus,
-  CodeIcon as Code,
-  TextTIcon as Text,
-  TrashIcon as Trash,
-  WarningCircleIcon as Warning,
-} from "@phosphor-icons/react";
+  CodeIcon,
+  EyeIcon,
+  PenIcon,
+  PlayIcon,
+  PlusIcon,
+  TextIcon,
+  TrashIcon,
+  WarningCircleIcon,
+} from "@/ui/icons";
 import {
   closestCenter,
   DndContext,
@@ -34,9 +34,11 @@ import { useShallow } from "zustand/react/shallow";
 import { useEditorAppStore } from "@/features/editor/stores/editor-app.store";
 import { useEditorSettingsStore } from "@/features/editor/stores/settings.store";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { getBufferById } from "@/features/editor/utils/buffer-index";
 import { useHighlightedMarkdown } from "@/features/editor/markdown/use-highlighted-markdown";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { Button } from "@/ui/button";
+import { Empty, EmptyDescription, EmptyMedia } from "@/ui/empty";
 import { cn } from "@/utils/cn";
 import { HighlightedCode } from "./highlighted-code";
 import { NotebookCodeCellEditor } from "./notebook-code-cell-editor";
@@ -199,7 +201,7 @@ function MarkdownCellPreview({ source }: { source: string }) {
   const html = useHighlightedMarkdown(source);
   return (
     <div
-      className="markdown-preview !block !h-auto !overflow-visible !bg-transparent !p-0 py-1.5 [&_.markdown-content]:max-w-none"
+      className="markdown-preview block! h-auto! overflow-visible! bg-transparent! p-0! py-1.5 [&_.markdown-content]:max-w-none"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
@@ -209,14 +211,14 @@ function MarkdownOutput({ source }: { source: string }) {
   const html = useHighlightedMarkdown(source);
   return (
     <div
-      className="markdown-preview overflow-auto rounded-md border border-border bg-secondary-bg p-2.5 [&_.markdown-content]:max-w-none"
+      className="markdown-preview overflow-auto rounded-md border border-border bg-surface p-2.5 [&_.markdown-content]:max-w-none"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
 }
 
 const outputClassName =
-  "m-0 overflow-auto rounded-md border border-border bg-secondary-bg p-2.5 font-mono text-[0.92em] leading-[1.55] text-text";
+  "m-0 overflow-auto rounded-md border border-border bg-surface p-2.5 font-mono ui-text-sm leading-[1.55] text-foreground";
 
 function NotebookOutputView({ output }: { output: NotebookOutput }) {
   if (output.output_type === "stream") {
@@ -232,7 +234,12 @@ function NotebookOutputView({ output }: { output: NotebookOutput }) {
       ? output.traceback.join("\n")
       : [output.ename, output.evalue].filter(Boolean).join(": ");
     return (
-      <pre className={cn(outputClassName, "whitespace-pre-wrap border-error/45 text-error")}>
+      <pre
+        className={cn(
+          outputClassName,
+          "whitespace-pre-wrap border-destructive/45 text-destructive",
+        )}
+      >
         <code>{traceback}</code>
       </pre>
     );
@@ -261,7 +268,7 @@ function NotebookOutputView({ output }: { output: NotebookOutput }) {
     if (svg) {
       return (
         <div
-          className="overflow-auto rounded-md border border-border bg-secondary-bg p-2.5"
+          className="overflow-auto rounded-md border border-border bg-surface p-2.5"
           dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(svg) }}
         />
       );
@@ -273,7 +280,8 @@ function NotebookOutputView({ output }: { output: NotebookOutput }) {
         <iframe
           title="PDF output"
           src={`data:application/pdf;base64,${pdf}`}
-          className="h-[420px] w-full rounded-md border border-border bg-secondary-bg"
+          sandbox="allow-same-origin"
+          className="h-105 w-full rounded-md border border-border bg-surface"
         />
       );
     }
@@ -282,7 +290,7 @@ function NotebookOutputView({ output }: { output: NotebookOutput }) {
     if (html) {
       return (
         <div
-          className="overflow-auto rounded-md border border-border bg-secondary-bg p-2.5"
+          className="overflow-auto rounded-md border border-border bg-surface p-2.5"
           dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }}
         />
       );
@@ -407,10 +415,10 @@ function NotebookCellView({
       ref={setCellRef}
       style={style}
       tabIndex={0}
-      aria-selected={isSelected}
+      aria-current={isSelected ? "true" : undefined}
       className={cn(
         "group relative mb-4 grid grid-cols-[58px_minmax(0,1fr)] gap-2.5 rounded-md border border-transparent py-1 pr-1 outline-none transition-colors",
-        isSelected && "border-accent/45 bg-accent/5",
+        isSelected && "border-primary/45 bg-primary/5",
         isDragging && "z-10 opacity-45",
       )}
       onFocus={() => onSelect(cellIndex)}
@@ -420,14 +428,14 @@ function NotebookCellView({
       <div
         className={cn(
           "absolute top-1 bottom-1 left-0 w-0.5 rounded-full bg-transparent transition-colors",
-          isSelected && "bg-accent",
+          isSelected && "bg-primary",
         )}
       />
-      <div className="pt-[31px] text-right">
+      <div className="pt-7.75 text-right">
         <div
           ref={setActivatorNodeRef}
           aria-label="Move cell"
-          className="inline-flex cursor-grab touch-none items-center justify-end gap-1 rounded px-1 py-0.5 text-text-lighter transition-colors hover:bg-hover hover:text-text active:cursor-grabbing"
+          className="inline-flex cursor-grab touch-none items-center justify-end gap-1 rounded px-1 py-0.5 text-subtle-foreground transition-colors hover:bg-accent hover:text-foreground active:cursor-grabbing"
           onClick={() => onSelect(cellIndex)}
           {...attributes}
           {...listeners}
@@ -443,67 +451,57 @@ function NotebookCellView({
             <span className="size-1 rounded-full bg-current" />
             <span className="size-1 rounded-full bg-current" />
           </span>
-          <span className="font-mono text-[0.82em]">
+          <span className="font-mono ui-text-caption">
             {isCode ? `[${cell.execution_count ?? ""}]` : ""}
           </span>
         </div>
       </div>
       <div className="min-w-0">
         <div className="flex min-h-7 items-center justify-between gap-2 opacity-75 transition-opacity hover:opacity-100 focus-within:opacity-100">
-          <span className="font-mono text-[0.78em] text-text-lighter">{cell.cell_type}</span>
+          <span className="font-mono ui-text-caption text-subtle-foreground">{cell.cell_type}</span>
           <div className="flex items-center gap-0.5">
             {isCode ? (
               <Button
                 variant="ghost"
-                compact
-                className="h-6 min-w-6 text-text-lighter hover:text-text"
+                iconOnly
                 onClick={() => onRun(cellIndex)}
                 disabled={isRunning}
                 tooltip={isRunning ? "Running cell" : "Run cell"}
-                tooltipSide="bottom"
               >
-                <Play weight="duotone" />
+                <PlayIcon />
               </Button>
             ) : null}
             <Button
               variant="ghost"
-              compact
-              className="h-6 min-w-6 text-text-lighter hover:text-text"
+              iconOnly
               onClick={() => onTypeChange(cellIndex, isCode ? "markdown" : "code")}
               tooltip={isCode ? "Convert to Markdown" : "Convert to Code"}
-              tooltipSide="bottom"
             >
-              {isCode ? <Text /> : <Code />}
+              {isCode ? <TextIcon /> : <CodeIcon />}
             </Button>
             <Button
               variant="ghost"
-              compact
-              className="h-6 min-w-6 text-text-lighter hover:text-text"
+              iconOnly
               onClick={() => onInsertBelow(cellIndex, isCode ? "code" : "markdown")}
               tooltip="Insert cell below"
-              tooltipSide="bottom"
             >
-              <Plus />
+              <PlusIcon />
             </Button>
             <Button
               variant="ghost"
-              compact
-              className="h-6 min-w-6 text-text-lighter hover:text-text"
+              iconOnly
               onClick={() => onDelete(cellIndex)}
               tooltip="Delete cell"
-              tooltipSide="bottom"
             >
-              <Trash weight="duotone" />
+              <TrashIcon />
             </Button>
             <Button
               variant="ghost"
-              compact
-              className="h-6 min-w-6 text-text-lighter hover:text-text"
+              iconOnly
               onClick={() => onEditToggle(cellIndex)}
               tooltip={isEditing ? "Preview cell" : "Edit cell"}
-              tooltipSide="bottom"
             >
-              {isEditing ? <Eye weight="duotone" /> : <Edit weight="duotone" />}
+              {isEditing ? <EyeIcon /> : <PenIcon />}
             </Button>
           </div>
         </div>
@@ -518,7 +516,8 @@ function NotebookCellView({
             />
           ) : (
             <textarea
-              className="m-0 block min-h-[92px] w-full resize-y rounded-md border border-border bg-secondary-bg p-2.5 font-mono text-[0.92em] leading-[1.55] text-text outline-none focus:border-accent"
+              aria-label="Cell source"
+              className="m-0 block min-h-23 w-full resize-y rounded-md border border-border bg-surface p-2.5 font-mono ui-text-sm leading-[1.55] text-foreground outline-none focus:border-primary"
               value={source}
               spellCheck={isMarkdown}
               onChange={(event) => onSourceChange(cellIndex, event.target.value)}
@@ -551,9 +550,7 @@ export function NotebookEditor() {
   const cellRefs = useRef<Array<HTMLElement | null>>([]);
   const { bufferId, content, path } = useBufferStore(
     useShallow((state) => {
-      const buffer = state.activeBufferId
-        ? state.buffers.find((candidate) => candidate.id === state.activeBufferId)
-        : null;
+      const buffer = getBufferById(state.buffers, state.activeBufferId);
       return {
         bufferId: buffer?.id ?? null,
         content: buffer?.type === "editor" ? buffer.content : "",
@@ -770,14 +767,18 @@ export function NotebookEditor() {
 
   if (!parsed.ok) {
     return (
-      <div
+      <Empty
         data-notebook-editor
-        className="flex h-full items-center justify-center gap-2 overflow-auto bg-primary-bg px-[22px] py-[18px] pb-[calc(2rem+env(safe-area-inset-bottom))] text-text-lighter"
+        tone="error"
+        role="alert"
+        className="h-full overflow-auto bg-background px-5.5 py-4.5 pb-[calc(2rem+env(safe-area-inset-bottom))]"
         style={{ fontSize, fontFamily: uiFontFamily }}
       >
-        <Warning weight="duotone" />
-        <span>{parsed.message}</span>
-      </div>
+        <EmptyMedia>
+          <WarningCircleIcon />
+        </EmptyMedia>
+        <EmptyDescription>{parsed.message}</EmptyDescription>
+      </Empty>
     );
   }
 
@@ -786,27 +787,17 @@ export function NotebookEditor() {
   return (
     <div
       data-notebook-editor
-      className="h-full overflow-auto bg-primary-bg px-[22px] py-[18px] pb-[calc(2rem+env(safe-area-inset-bottom))] text-text"
+      className="h-full overflow-auto bg-background px-5.5 py-4.5 pb-[calc(2rem+env(safe-area-inset-bottom))] text-foreground"
       style={{ fontSize: `${fontSize}px`, fontFamily: `${uiFontFamily}, sans-serif` }}
     >
       <div className="mx-auto w-[min(100%,980px)]">
         <div className="mb-3 flex items-center justify-end gap-1">
-          <Button
-            variant="ghost"
-            compact
-            className="h-7 gap-1.5 text-text-lighter hover:text-text"
-            onClick={() => handleAddCell("code")}
-          >
-            <Code weight="duotone" />
+          <Button variant="ghost" onClick={() => handleAddCell("code")}>
+            <CodeIcon />
             Code
           </Button>
-          <Button
-            variant="ghost"
-            compact
-            className="h-7 gap-1.5 text-text-lighter hover:text-text"
-            onClick={() => handleAddCell("markdown")}
-          >
-            <Text weight="duotone" />
+          <Button variant="ghost" onClick={() => handleAddCell("markdown")}>
+            <TextIcon />
             Markdown
           </Button>
         </div>

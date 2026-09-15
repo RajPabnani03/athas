@@ -5,11 +5,13 @@
  * This is the SINGLE source of truth for all keyboard handling.
  */
 
-import { useEffect, useRef, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useEffect, useState } from "react";
 import { logger } from "@/features/editor/utils/logger";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { resolveEscapeGuard } from "@/utils/keyboard/escape-guard";
+import { isNativeTextInputTarget } from "@/utils/keyboard/text-input-target";
+import { isTerminalAltTextInput } from "@/features/terminal/utils/terminal-keyboard";
+import { markCloseTabShortcutHandled } from "@/features/window/utils/close-request-suppression";
 import { useUIState } from "@/features/window/stores/ui-state.store";
 import { IS_LINUX } from "@/utils/platform";
 import { useKeymapStore } from "../stores/keymaps.store";
@@ -22,56 +24,35 @@ import { isNativeMenuAccelerator } from "../utils/native-menu-accelerators";
 import { parseKeybinding } from "../utils/parser";
 import type { ParsedKey } from "../utils/parser";
 import { keymapRegistry } from "../utils/registry";
+import { isVimOwnedShortcut } from "../utils/vim-shortcuts";
 
 const CHORD_TIMEOUT = 1000; // 1 second to complete chord
-const CLOSE_TAB_CLOSE_REQUEST_WINDOW_MS = 1000;
 const closeTabShortcut = parseKeybinding("cmd+w").parts[0];
+const closeWindowShortcut = parseKeybinding("cmd+shift+w").parts[0];
+const INPUT_ALLOWED_COMMANDS = new Set(["file.quickOpen", "workbench.commandPalette"]);
 
 function isCloseTabShortcut(event: KeyboardEvent) {
   return keysMatch(eventToKey(event), closeTabShortcut);
 }
 
+function isCloseWindowShortcut(event: KeyboardEvent) {
+  return keysMatch(eventToKey(event), closeWindowShortcut);
+}
+
 export function useKeymaps() {
   const contexts = useKeymapStore.use.contexts();
   const [chordState, setChordState] = useState<ParsedKey[]>([]);
-  const chordTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const lastCloseTabShortcutAtRef = useRef(0);
 
   useEffect(() => {
-    if (!IS_LINUX || typeof window === "undefined") return;
+    if (chordState.length === 0) return;
 
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
+    const chordTimeout = setTimeout(() => {
+      setChordState([]);
+      logger.debug("Keymaps", "Chord timeout - reset");
+    }, CHORD_TIMEOUT);
 
-    const setupCloseRequestGuard = async () => {
-      try {
-        const removeListener = await getCurrentWindow().onCloseRequested((event) => {
-          const elapsed = Date.now() - lastCloseTabShortcutAtRef.current;
-
-          if (elapsed <= CLOSE_TAB_CLOSE_REQUEST_WINDOW_MS) {
-            event.preventDefault();
-            lastCloseTabShortcutAtRef.current = 0;
-          }
-        });
-
-        if (disposed) {
-          removeListener();
-          return;
-        }
-
-        unlisten = removeListener;
-      } catch (error) {
-        logger.debug("Keymaps", `Failed to register close request guard: ${String(error)}`);
-      }
-    };
-
-    void setupCloseRequestGuard();
-
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, []);
+    return () => clearTimeout(chordTimeout);
+  }, [chordState]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -97,8 +78,22 @@ export function useKeymaps() {
         return;
       }
 
+      const { settings } = useSettingsStore.getState();
+      if (settings.vimMode && isEditorTarget && isVimOwnedShortcut(e)) {
+        return;
+      }
+
+      if (isCloseWindowShortcut(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        keymapRegistry.executeCommand("workbench.closeWindow");
+        return;
+      }
+
       if (isCloseTabShortcut(e)) {
-        lastCloseTabShortcutAtRef.current = Date.now();
+        if (IS_LINUX) {
+          markCloseTabShortcutHandled();
+        }
         e.preventDefault();
         e.stopPropagation();
         keymapRegistry.executeCommand(
@@ -137,20 +132,9 @@ export function useKeymaps() {
       }
 
       // Vim mode bypass - let vim handle keys without modifiers
-      const { settings } = useSettingsStore.getState();
       const hasModifiers = e.metaKey || e.ctrlKey || e.altKey;
 
       if (settings.vimMode && !hasModifiers && !e.shiftKey) {
-        return;
-      }
-
-      // Skip if target is an input (except our editor textarea or terminal)
-      const isEditorTextarea = isEditorTarget;
-      const isTerminalTextarea = target?.classList.contains("xterm-helper-textarea") ?? false;
-      if (
-        target?.tagName === "INPUT" ||
-        (target?.tagName === "TEXTAREA" && !isEditorTextarea && !isTerminalTextarea)
-      ) {
         return;
       }
 
@@ -167,6 +151,34 @@ export function useKeymaps() {
 
       // Get current event key
       const eventKey = eventToKey(e);
+
+      // Skip if target is an input (except our editor textarea or terminal)
+      const isEditorTextarea = isEditorTarget;
+      const isTerminalTextarea = target?.classList.contains("xterm-helper-textarea") ?? false;
+      if (isTerminalTextarea && isTerminalAltTextInput(e)) {
+        return;
+      }
+
+      const isNativeTextInput = isNativeTextInputTarget(e.target, document.activeElement);
+      if (isNativeTextInput && !isEditorTextarea && !isTerminalTextarea) {
+        for (const keybinding of allKeybindings) {
+          if (!INPUT_ALLOWED_COMMANDS.has(keybinding.command)) continue;
+          if (!keybinding.enabled && keybinding.enabled !== undefined) continue;
+          if (keybinding.when && !evaluateWhenClause(keybinding.when, effectiveContexts)) continue;
+
+          if (matchKeybinding(e, keybinding.key, chordState).matched) {
+            e.preventDefault();
+            e.stopPropagation();
+            keymapRegistry.executeCommand(keybinding.command, keybinding.args);
+            logger.debug(
+              "Keymaps",
+              `Executed from input: ${keybinding.key} -> ${keybinding.command}`,
+            );
+            return;
+          }
+        }
+        return;
+      }
 
       // Try to match against registered keybindings
       for (const keybinding of allKeybindings) {
@@ -189,10 +201,6 @@ export function useKeymaps() {
 
           // Clear chord state
           setChordState([]);
-          if (chordTimeoutRef.current) {
-            clearTimeout(chordTimeoutRef.current);
-            chordTimeoutRef.current = null;
-          }
 
           // Execute command
           keymapRegistry.executeCommand(keybinding.command, keybinding.args);
@@ -208,17 +216,6 @@ export function useKeymaps() {
           const newChordState = [...chordState, eventKey];
           setChordState(newChordState);
 
-          // Set timeout to reset chord state
-          if (chordTimeoutRef.current) {
-            clearTimeout(chordTimeoutRef.current);
-          }
-
-          chordTimeoutRef.current = setTimeout(() => {
-            setChordState([]);
-            chordTimeoutRef.current = null;
-            logger.debug("Keymaps", "Chord timeout - reset");
-          }, CHORD_TIMEOUT);
-
           logger.debug("Keymaps", `Chord partial match: ${keybinding.key} (waiting for next key)`);
           return;
         }
@@ -227,10 +224,6 @@ export function useKeymaps() {
       // No match - clear chord state if any
       if (chordState.length > 0) {
         setChordState([]);
-        if (chordTimeoutRef.current) {
-          clearTimeout(chordTimeoutRef.current);
-          chordTimeoutRef.current = null;
-        }
       }
     };
 
@@ -238,9 +231,6 @@ export function useKeymaps() {
 
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true);
-      if (chordTimeoutRef.current) {
-        clearTimeout(chordTimeoutRef.current);
-      }
     };
   }, [contexts, chordState]);
 

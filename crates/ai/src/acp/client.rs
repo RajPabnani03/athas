@@ -9,14 +9,16 @@ use super::{
    workspace_path::{path_to_string, resolve_path_against_workspace},
 };
 use crate::runtime::AthasAppHandle as AppHandle;
-use agent_client_protocol::{self as acp_sdk, schema as acp};
-use athas_terminal::{TerminalConfig, TerminalManager};
+use agent_client_protocol::{self as acp_sdk, schema::v1 as acp};
+use athas_terminal::{
+   TerminalConfig, TerminalEvent, TerminalEventHandler, TerminalManager, TerminalSize,
+};
 use std::{
    collections::HashMap,
    path::PathBuf,
    sync::{Arc, Mutex as StdMutex},
 };
-use tauri::{Emitter, Listener};
+use tauri::Emitter;
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 /// Response for permission requests
@@ -75,149 +77,6 @@ impl AthasAcpClient {
 
    fn resolve_path(&self, path: &str) -> PathBuf {
       resolve_path_against_workspace(self.workspace_path.as_deref(), path)
-   }
-
-   fn extract_first_url(text: &str) -> Option<String> {
-      for scheme in ["https://", "http://"] {
-         if let Some(start) = text.find(scheme) {
-            let rest = &text[start..];
-            let end = rest
-               .find(|c: char| {
-                  c.is_whitespace()
-                     || matches!(c, '"' | '\'' | '`' | ')' | '}' | ']' | '|' | '<' | '>')
-               })
-               .unwrap_or(rest.len());
-            let url = rest[..end].trim_end_matches(['.', ',', ';']);
-            if !url.is_empty() {
-               return Some(url.to_string());
-            }
-         }
-      }
-      None
-   }
-
-   fn extract_json_string_fields(text: &str, field: &str) -> Vec<String> {
-      let mut values = Vec::new();
-      let needle = format!("\"{}\"", field);
-      let mut offset = 0usize;
-
-      while let Some(rel_idx) = text[offset..].find(&needle) {
-         let start = offset + rel_idx + needle.len();
-         let Some(colon_rel) = text[start..].find(':') else {
-            break;
-         };
-         let after_colon = start + colon_rel + 1;
-         let rest = &text[after_colon..];
-         let trimmed = rest.trim_start();
-         let ws = rest.len().saturating_sub(trimmed.len());
-         if !trimmed.starts_with('"') {
-            offset = after_colon + ws + 1;
-            continue;
-         }
-
-         let mut escaped = false;
-         let mut end = None;
-         for (i, ch) in trimmed[1..].char_indices() {
-            if escaped {
-               escaped = false;
-               continue;
-            }
-            if ch == '\\' {
-               escaped = true;
-               continue;
-            }
-            if ch == '"' {
-               end = Some(1 + i);
-               break;
-            }
-         }
-
-         if let Some(end_idx) = end {
-            let value = &trimmed[1..end_idx];
-            values.push(value.to_string());
-            offset = after_colon + ws + end_idx + 1;
-         } else {
-            break;
-         }
-      }
-
-      values
-   }
-
-   fn extract_webviewer_fallback_url(
-      tool_title: &str,
-      raw_input: Option<&serde_json::Value>,
-   ) -> Option<String> {
-      let raw_input_text = raw_input
-         .and_then(|value| serde_json::to_string(value).ok())
-         .unwrap_or_default();
-
-      let references_webviewer = tool_title.contains("athas.openWebViewer")
-         || raw_input_text.contains("athas.openWebViewer")
-         || (raw_input_text.contains("openWebViewer") && raw_input_text.contains("ext_method"));
-
-      if !references_webviewer {
-         return None;
-      }
-
-      Self::extract_first_url(tool_title).or_else(|| Self::extract_first_url(&raw_input_text))
-   }
-
-   fn extract_terminal_fallback_command(
-      tool_title: &str,
-      raw_input: Option<&serde_json::Value>,
-   ) -> Option<String> {
-      let raw_input_text = raw_input
-         .and_then(|value| serde_json::to_string(value).ok())
-         .unwrap_or_default();
-
-      let references_terminal = tool_title.contains("athas.openTerminal")
-         || raw_input_text.contains("athas.openTerminal")
-         || (raw_input_text.contains("openTerminal") && raw_input_text.contains("ext_method"));
-
-      if !references_terminal {
-         return None;
-      }
-
-      let candidates = Self::extract_json_string_fields(&raw_input_text, "command");
-      for candidate in candidates {
-         let candidate = candidate.trim();
-         if candidate.is_empty() {
-            continue;
-         }
-         if candidate.contains("ext_method") || candidate.contains("athas.openTerminal") {
-            continue;
-         }
-         return Some(candidate.to_string());
-      }
-
-      if raw_input_text.contains("lazygit") || tool_title.contains("lazygit") {
-         return Some("lazygit".to_string());
-      }
-
-      None
-   }
-
-   fn fallback_permission_response(
-      args: &acp::RequestPermissionRequest,
-   ) -> acp::RequestPermissionResponse {
-      let selected_option = args
-         .options
-         .iter()
-         .find(|opt| {
-            matches!(
-               opt.kind,
-               acp::PermissionOptionKind::RejectOnce | acp::PermissionOptionKind::RejectAlways
-            )
-         })
-         .or_else(|| args.options.first())
-         .map(|opt| acp::SelectedPermissionOutcome::new(opt.option_id.clone()));
-
-      if let Some(selected) = selected_option {
-         acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Selected(selected))
-      } else {
-         acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled)
-      }
    }
 
    fn map_plan_priority(priority: acp::PlanEntryPriority) -> AcpPlanEntryPriority {
@@ -361,6 +220,9 @@ impl AthasAcpClient {
             })
             .collect(),
          },
+         acp::SessionConfigKind::Boolean(boolean) => SessionConfigOptionKind::Boolean {
+            current_value: boolean.current_value,
+         },
          _ => return None,
       };
 
@@ -371,6 +233,7 @@ impl AthasAcpClient {
          category: option.category.map(|category| match category {
             acp::SessionConfigOptionCategory::Mode => "mode".to_string(),
             acp::SessionConfigOptionCategory::Model => "model".to_string(),
+            acp::SessionConfigOptionCategory::ModelConfig => "model_config".to_string(),
             acp::SessionConfigOptionCategory::ThoughtLevel => "thought_level".to_string(),
             acp::SessionConfigOptionCategory::Other(category) => category,
             _ => "other".to_string(),
@@ -453,7 +316,12 @@ impl AthasAcpClient {
       args: acp::RequestPermissionRequest,
    ) -> acp::Result<acp::RequestPermissionResponse> {
       let request_id = uuid::Uuid::new_v4().to_string();
-      let session_id = args.session_id.to_string();
+      let session_id = self
+         .current_session_id
+         .lock()
+         .await
+         .clone()
+         .unwrap_or_default();
 
       // Extract tool call info for the permission request
       let tool_call_id = args.tool_call.tool_call_id.clone();
@@ -463,15 +331,9 @@ impl AthasAcpClient {
          .title
          .as_deref()
          .unwrap_or("Tool call");
-      let fallback_webviewer_url =
-         Self::extract_webviewer_fallback_url(tool_title, args.tool_call.fields.raw_input.as_ref());
-      let fallback_terminal_command = Self::extract_terminal_fallback_command(
-         tool_title,
-         args.tool_call.fields.raw_input.as_ref(),
-      );
-
       // Emit permission request to frontend
       self.emit_event(AcpEvent::PermissionRequest {
+         session_id,
          request_id: request_id.clone(),
          permission_type: "tool_call".to_string(),
          resource: tool_call_id.to_string(),
@@ -529,27 +391,6 @@ impl AthasAcpClient {
             }
 
             if response.approved {
-               if let Some(url) = fallback_webviewer_url.clone() {
-                  // Some ACP adapters may try to invoke ext_method via shell command.
-                  // Execute the equivalent Athas UI action directly and reject the shell tool call.
-                  self.emit_event(AcpEvent::UiAction {
-                     session_id: session_id.clone(),
-                     action: UiAction::OpenWebViewer { url },
-                  });
-                  return Ok(Self::fallback_permission_response(&args));
-               }
-
-               if let Some(command) = fallback_terminal_command.clone() {
-                  // Same fallback for athas.openTerminal misuse through shell commands.
-                  self.emit_event(AcpEvent::UiAction {
-                     session_id: session_id.clone(),
-                     action: UiAction::OpenTerminal {
-                        command: Some(command),
-                     },
-                  });
-                  return Ok(Self::fallback_permission_response(&args));
-               }
-
                // Prefer allow-once/allow-always options if available
                let selected_option = args
                   .options
@@ -922,17 +763,34 @@ impl AthasAcpClient {
       let config = TerminalConfig {
          working_directory: working_dir,
          shell: None,
+         wsl_distribution: None,
+         wsl_working_directory: None,
          environment: env_map,
          command: Some(command),
          args: command_args,
-         rows: 24,
-         cols: 80,
+         size: TerminalSize::default(),
+         term_program_version: Some(self.app_handle.package_info().version.to_string()),
+         shell_integration: Some(false),
+         shell_integration_dir: None,
       };
 
-      match self
-         .terminal_manager
-         .create_terminal(config, self.app_handle.clone())
-      {
+      let states_for_events = self.terminal_states.clone();
+      let pending_events = Arc::new(StdMutex::new(Vec::<(String, TerminalEvent)>::new()));
+      let pending_events_for_handler = pending_events.clone();
+      let event_handler: TerminalEventHandler = Arc::new(move |terminal_id, event| {
+         let Ok(mut states) = states_for_events.lock() else {
+            return false;
+         };
+
+         if let Some(state) = states.get_mut(terminal_id) {
+            state.handle_event(event);
+         } else if let Ok(mut pending) = pending_events_for_handler.lock() {
+            pending.push((terminal_id.to_string(), event));
+         }
+         true
+      });
+
+      match self.terminal_manager.create_terminal(config, event_handler) {
          Ok(athas_terminal_id) => {
             let terminal_id = athas_terminal_id.clone();
             let output_limit = args.output_byte_limit.map(|l| l as u32);
@@ -940,91 +798,12 @@ impl AthasAcpClient {
             {
                let mut states = self.terminal_states.lock().unwrap();
                states.insert(terminal_id.clone(), state);
-            }
-
-            // Set up output listener
-            let output_event = format!("pty-output-{}", athas_terminal_id);
-            let states_clone = self.terminal_states.clone();
-            let terminal_id_clone = terminal_id.clone();
-            let output_listener_id = self.app_handle.listen(output_event, move |event| {
-               let payload = event.payload();
-               if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload)
-                  && let Some(data) = parsed.get("data").and_then(|d| d.as_str())
-                  && let Ok(mut states) = states_clone.lock()
-                  && let Some(state) = states.get_mut(&terminal_id_clone)
-               {
-                  state.append_output(data);
-               }
-            });
-            {
-               let mut states = self.terminal_states.lock().unwrap();
-               if let Some(state) = states.get_mut(&terminal_id) {
-                  state.listener_ids.push(output_listener_id);
-               }
-            }
-
-            // Set up exit-status listener
-            let exit_event = format!("pty-exit-{}", athas_terminal_id);
-            let states_clone = self.terminal_states.clone();
-            let terminal_id_clone = terminal_id.clone();
-            let exit_listener_id = self.app_handle.listen(exit_event, move |event| {
-               let payload = event.payload();
-               if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload) {
-                  let exit_code = parsed
-                     .get("exitCode")
-                     .and_then(|v| v.as_u64())
-                     .map(|v| v as u32);
-                  let signal = parsed
-                     .get("signal")
-                     .and_then(|v| v.as_str())
-                     .map(str::to_string);
-                  if let Ok(mut states) = states_clone.lock()
-                     && let Some(state) = states.get_mut(&terminal_id_clone)
-                  {
-                     state.set_exit_status(exit_code, signal);
+               if let Ok(mut pending) = pending_events.lock() {
+                  for (_, event) in pending.drain(..).filter(|(id, _)| id == &terminal_id) {
+                     if let Some(state) = states.get_mut(&terminal_id) {
+                        state.handle_event(event);
+                     }
                   }
-               }
-            });
-            {
-               let mut states = self.terminal_states.lock().unwrap();
-               if let Some(state) = states.get_mut(&terminal_id) {
-                  state.listener_ids.push(exit_listener_id);
-               }
-            }
-
-            // Set up error listener
-            let error_event = format!("pty-error-{}", athas_terminal_id);
-            let states_clone = self.terminal_states.clone();
-            let terminal_id_clone = terminal_id.clone();
-            let error_listener_id = self.app_handle.listen(error_event, move |_| {
-               if let Ok(mut states) = states_clone.lock()
-                  && let Some(state) = states.get_mut(&terminal_id_clone)
-               {
-                  state.set_exit_status(Some(1), Some("pty_error".to_string()));
-               }
-            });
-            {
-               let mut states = self.terminal_states.lock().unwrap();
-               if let Some(state) = states.get_mut(&terminal_id) {
-                  state.listener_ids.push(error_listener_id);
-               }
-            }
-
-            // Set up close listener
-            let close_event = format!("pty-closed-{}", athas_terminal_id);
-            let states_clone = self.terminal_states.clone();
-            let terminal_id_clone = terminal_id.clone();
-            let close_listener_id = self.app_handle.listen(close_event, move |_| {
-               if let Ok(mut states) = states_clone.lock()
-                  && let Some(state) = states.get_mut(&terminal_id_clone)
-               {
-                  state.set_exit_status(Some(0), None);
-               }
-            });
-            {
-               let mut states = self.terminal_states.lock().unwrap();
-               if let Some(state) = states.get_mut(&terminal_id) {
-                  state.listener_ids.push(close_listener_id);
                }
             }
 
@@ -1080,16 +859,12 @@ impl AthasAcpClient {
          states.remove(&terminal_id)
       };
 
-      if let Some(state) = removed_state {
-         for listener_id in state.listener_ids {
-            self.app_handle.unlisten(listener_id);
-         }
-         if let Err(e) = self
+      if let Some(state) = removed_state
+         && let Err(e) = self
             .terminal_manager
             .close_terminal(&state.athas_terminal_id)
-         {
-            log::warn!("Failed to close terminal {}: {}", terminal_id, e);
-         }
+      {
+         log::warn!("Failed to close terminal {}: {}", terminal_id, e);
       }
 
       Ok(acp::ReleaseTerminalResponse::new())
@@ -1176,24 +951,7 @@ impl AthasAcpClient {
          serde_json::from_str(args.params.get()).unwrap_or(serde_json::Value::Null);
 
       match &*args.method {
-         "athas.openWebViewer" => {
-            let url = params
-               .get("url")
-               .and_then(|v| v.as_str())
-               .unwrap_or("about:blank")
-               .to_string();
-
-            self.emit_event(AcpEvent::UiAction {
-               session_id,
-               action: UiAction::OpenWebViewer { url },
-            });
-
-            let response = serde_json::json!({ "success": true });
-            Ok(acp::ExtResponse::new(
-               serde_json::value::to_raw_value(&response).unwrap().into(),
-            ))
-         }
-         "athas.openTerminal" => {
+         "_athas/open_terminal" => {
             let command = params
                .get("command")
                .and_then(|v| v.as_str())
@@ -1209,14 +967,14 @@ impl AthasAcpClient {
                serde_json::value::to_raw_value(&response).unwrap().into(),
             ))
          }
-         "athas.setChatTitle" => {
+         "_athas/set_chat_title" => {
             let title = params
                .get("title")
                .and_then(|v| v.as_str())
                .map(str::trim)
                .filter(|title| !title.is_empty())
                .ok_or_else(|| {
-                  acp::Error::new(-32602, "athas.setChatTitle requires a title".to_string())
+                  acp::Error::new(-32602, "_athas/set_chat_title requires a title".to_string())
                })?
                .to_string();
 
@@ -1242,5 +1000,28 @@ impl AthasAcpClient {
          args.params.get()
       );
       Ok(())
+   }
+}
+
+#[cfg(test)]
+mod tests {
+   use super::{AthasAcpClient, SessionConfigOptionKind, acp};
+
+   #[test]
+   fn maps_boolean_model_configuration_options() {
+      let option = acp::SessionConfigOption::boolean("streaming", "Streaming", true)
+         .description("Stream partial responses")
+         .category(acp::SessionConfigOptionCategory::ModelConfig);
+
+      let mapped = AthasAcpClient::map_session_config_option(option).expect("mapped option");
+
+      assert_eq!(mapped.id, "streaming");
+      assert_eq!(mapped.category.as_deref(), Some("model_config"));
+      assert!(matches!(
+         mapped.kind,
+         SessionConfigOptionKind::Boolean {
+            current_value: true
+         }
+      ));
    }
 }

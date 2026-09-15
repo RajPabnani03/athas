@@ -1,18 +1,43 @@
-import { WarningCircleIcon as AlertCircle } from "@phosphor-icons/react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Button } from "@/ui/button";
+import { useEffect, useState } from "react";
+import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { useDesktopSignIn } from "@/features/window/hooks/use-desktop-sign-in";
 import { useAuthStore } from "@/features/window/stores/auth.store";
-import { LoadingIndicator } from "@/ui/loading";
+import { useUIState } from "@/features/window/stores/ui-state.store";
+import { EmptyState } from "@/ui/empty";
+import { Spinner } from "@/ui/spinner";
+import { getGhCliAvailability } from "../services/github-credential-service";
 import { GITHUB_ACCOUNT_API_BASE, GITHUB_CONNECTION_URL } from "../services/github-token-service";
 import { useGitHubStore } from "../stores/github.store";
 
-export function GitHubAuthStatusMessage() {
-  const githubAccountStatus = useGitHubStore((s) => s.githubAccountStatus);
-  const isCheckingAuth = useGitHubStore((s) => s.isCheckingAuth);
-  const checkAuth = useGitHubStore((s) => s.actions.checkAuth);
+export function GitHubAuthStatusMessage({
+  layout = "default",
+}: {
+  layout?: "default" | "sidebar";
+}) {
+  const githubAccountStatus = useGitHubStore.use.githubAccountStatus();
+  const authError = useGitHubStore.use.authError();
+  const isCheckingAuth = useGitHubStore.use.isCheckingAuth();
+  const checkAuth = useGitHubStore.use.actions().checkAuth;
   const isAthasAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isAthasAuthLoading = useAuthStore((s) => s.isLoading);
+  const openSettingsDialog = useUIState((s) => s.openSettingsDialog);
+  const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
+  const [canUseGhCli, setCanUseGhCli] = useState(false);
+
+  // The account token wins over `gh` under the automatic order, so an authenticated
+  // `gh` install is worth offering directly rather than burying it in settings.
+  useEffect(() => {
+    let cancelled = false;
+    void getGhCliAvailability()
+      .then((availability) => {
+        if (!cancelled) setCanUseGhCli(availability.hasToken);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const { signIn, isSigningIn } = useDesktopSignIn({
     apiBase: GITHUB_ACCOUNT_API_BASE,
     onSuccess: () => void checkAuth({ force: true }),
@@ -21,99 +46,81 @@ export function GitHubAuthStatusMessage() {
   const retry = () => void checkAuth({ force: true });
   const openGitHubConnection = () => void openUrl(GITHUB_CONNECTION_URL);
 
+  const useGhCli = async () => {
+    await updateSetting("githubTokenSource", "gh");
+    await checkAuth({ force: true });
+  };
+
+  // An organization that has not approved the Athas GitHub app stays unreachable with
+  // the account token, so offer a per-user credential as a first-class way out: the
+  // `gh` token when it is already there, the settings for a pasted token otherwise.
+  const ownCredentialAction = canUseGhCli
+    ? ({ label: "Use GitHub CLI", onClick: () => void useGhCli(), variant: "ghost" } as const)
+    : ({
+        label: "Use your own token",
+        onClick: () => openSettingsDialog("git", "GitHub Account"),
+        variant: "ghost",
+      } as const);
+
   if (
     isAthasAuthLoading ||
     isCheckingAuth ||
     (isAthasAuthenticated && githubAccountStatus === "unknown")
   ) {
     return (
-      <div className="flex flex-1 items-center justify-center p-4">
-        <LoadingIndicator label="Checking GitHub account" showLabel compact />
-      </div>
+      <EmptyState
+        layout={layout}
+        message={<Spinner label="Checking GitHub account" showLabel compact />}
+      />
+    );
+  }
+
+  if (authError && githubAccountStatus === "unknown") {
+    return (
+      <EmptyState
+        layout={layout}
+        title="GitHub is temporarily unavailable"
+        tone="error"
+        role="alert"
+        action={{ label: "Retry", onClick: retry }}
+      />
     );
   }
 
   if (!isAthasAuthenticated || githubAccountStatus === "notSignedIn") {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center p-4 text-center">
-        <AlertCircle className="mb-2 text-text-lighter" />
-        <p className="ui-text-sm text-text">GitHub account required</p>
-        <p className="ui-text-sm mt-1 text-text-lighter">
-          Sign in to Athas to use your connected GitHub account.
-        </p>
-        <Button
-          onClick={() => void signIn().catch(() => undefined)}
-          variant="ghost"
-          compact
-          disabled={isSigningIn}
-          className="mt-2 h-auto px-0 text-accent hover:bg-transparent hover:text-accent/80"
-          aria-label="Sign in to Athas"
-        >
-          {isSigningIn ? "Signing in..." : "Sign in"}
-        </Button>
-      </div>
+      <EmptyState
+        layout={layout}
+        title="GitHub account required"
+        action={{
+          label: isSigningIn ? "Signing in..." : "Sign in",
+          disabled: isSigningIn,
+          onClick: () => void signIn().catch(() => undefined),
+        }}
+        secondaryAction={ownCredentialAction}
+      />
     );
   }
 
   if (githubAccountStatus === "notConnected") {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center p-4 text-center">
-        <AlertCircle className="mb-2 text-text-lighter" />
-        <p className="ui-text-sm text-text">GitHub not connected</p>
-        <p className="ui-text-sm mt-1 text-text-lighter">
-          Connect your account to use PRs, Issues, Actions, and Releases.
-        </p>
-        <div className="mt-2 flex items-center gap-2">
-          <Button
-            onClick={openGitHubConnection}
-            variant="ghost"
-            className="h-auto px-0 text-accent hover:bg-transparent hover:text-accent/80"
-            aria-label="Connect GitHub"
-            compact
-          >
-            Connect GitHub
-          </Button>
-          <span className="text-border">|</span>
-          <Button
-            onClick={retry}
-            variant="ghost"
-            className="h-auto px-0 text-accent hover:bg-transparent hover:text-accent/80"
-            aria-label="Retry authentication check"
-            compact
-          >
-            Retry
-          </Button>
-        </div>
-      </div>
+      <EmptyState
+        layout={layout}
+        title="GitHub not connected"
+        action={{ label: "Connect GitHub", onClick: openGitHubConnection }}
+        secondaryAction={ownCredentialAction}
+        tertiaryAction={{ label: "Retry", onClick: retry, variant: "ghost" }}
+      />
     );
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center p-4 text-center">
-      <AlertCircle className="mb-2 text-text-lighter" />
-      <p className="ui-text-sm text-text">GitHub not authenticated</p>
-      <p className="ui-text-sm mt-1 text-text-lighter">Connect GitHub, then retry this view.</p>
-      <div className="mt-2 flex items-center gap-2">
-        <Button
-          onClick={openGitHubConnection}
-          variant="ghost"
-          className="h-auto px-0 text-accent hover:bg-transparent hover:text-accent/80"
-          aria-label="Connect GitHub"
-          compact
-        >
-          Connect GitHub
-        </Button>
-        <span className="text-border">|</span>
-        <Button
-          onClick={retry}
-          variant="ghost"
-          className="h-auto px-0 text-accent hover:bg-transparent hover:text-accent/80"
-          aria-label="Retry authentication check"
-          compact
-        >
-          Retry
-        </Button>
-      </div>
-    </div>
+    <EmptyState
+      layout={layout}
+      title="GitHub not authenticated"
+      action={{ label: "Connect GitHub", onClick: openGitHubConnection }}
+      secondaryAction={ownCredentialAction}
+      tertiaryAction={{ label: "Retry", onClick: retry, variant: "ghost" }}
+    />
   );
 }

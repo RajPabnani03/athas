@@ -48,16 +48,31 @@ describe("getExplorerTargetPath", () => {
     expect(getExplorerTargetPath(buffer)).toBe("/workspace/README.md");
   });
 
+  it("uses the source file for SVG preview buffers", () => {
+    const buffer: PaneContent = {
+      id: "svg-preview",
+      type: "svgPreview",
+      path: "/workspace/icon.svg:preview",
+      name: "icon.svg (Preview)",
+      isPinned: false,
+      isPreview: false,
+      isActive: true,
+      content: "<svg />",
+      sourceFilePath: "/workspace/icon.svg",
+    };
+
+    expect(getExplorerTargetPath(buffer)).toBe("/workspace/icon.svg");
+  });
+
   it("ignores non-file buffers", () => {
     const buffer = {
       id: "web",
-      type: "webViewer",
+      type: "newTab",
       path: "https://example.com",
       name: "Example",
       isPinned: false,
       isPreview: false,
       isActive: true,
-      url: "https://example.com",
     } satisfies PaneContent;
 
     expect(getExplorerTargetPath(buffer)).toBeUndefined();

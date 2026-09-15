@@ -1,7 +1,7 @@
-import { PlusIcon, XIcon } from "@phosphor-icons/react";
+import { PlusIcon, XIcon } from "@/ui/icons";
 import { useEffect, useState } from "react";
 import { Button } from "@/ui/button";
-import Checkbox from "@/ui/checkbox";
+import { Checkbox } from "@/ui/checkbox";
 import Dialog from "@/ui/dialog";
 import Input from "@/ui/input";
 import Select from "@/ui/select";
@@ -45,7 +45,7 @@ export const CreateRowModal = ({
   if (!isOpen) return null;
 
   return (
-    <Dialog onClose={handleClose} title={`Add Row to ${tableName}`} icon={PlusIcon} size="md">
+    <Dialog onClose={handleClose} title={`Add Row to ${tableName}`} icon={PlusIcon}>
       <form onSubmit={handleSubmit} className="space-y-4">
         {columns
           .filter((col) => col.name.toLowerCase() !== "rowid")
@@ -53,9 +53,9 @@ export const CreateRowModal = ({
             const fieldId = `create-row-field-${index}`;
             return (
               <div key={column.name} className="space-y-1">
-                <label htmlFor={fieldId} className="ui-font block ui-text-sm text-text">
+                <label htmlFor={fieldId} className="font-sans block ui-text-sm text-foreground">
                   {column.name}
-                  <span className="ml-1 text-text-lighter ui-text-xs">({column.type})</span>
+                  <span className="ml-1 text-subtle-foreground ui-text-sm">({column.type})</span>
                 </label>
                 <Input
                   id={fieldId}
@@ -69,7 +69,6 @@ export const CreateRowModal = ({
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                     setValues((prev) => ({ ...prev, [column.name]: e.target.value }))
                   }
-                  className="w-full"
                   placeholder={column.notnull ? "Required" : "Optional"}
                 />
               </div>
@@ -77,10 +76,10 @@ export const CreateRowModal = ({
           })}
 
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="ghost" onClick={handleClose} compact>
+          <Button type="button" variant="ghost" onClick={handleClose}>
             Cancel
           </Button>
-          <Button type="submit" className="gap-1" compact>
+          <Button type="submit">
             <PlusIcon size="14" />
             Add Row
           </Button>
@@ -131,7 +130,7 @@ export const EditRowModal = ({
   if (!isOpen) return null;
 
   return (
-    <Dialog onClose={handleClose} title={`Edit Row in ${tableName}`} size="md">
+    <Dialog onClose={handleClose} title={`Edit Row in ${tableName}`}>
       <form onSubmit={handleSubmit} className="space-y-4">
         {columns
           .filter((col) => col.name.toLowerCase() !== "rowid")
@@ -139,9 +138,9 @@ export const EditRowModal = ({
             const fieldId = `edit-row-field-${index}`;
             return (
               <div key={column.name} className="space-y-1">
-                <label htmlFor={fieldId} className="ui-font block ui-text-sm text-text">
+                <label htmlFor={fieldId} className="font-sans block ui-text-sm text-foreground">
                   {column.name}
-                  <span className="ml-1 text-text-lighter ui-text-xs">({column.type})</span>
+                  <span className="ml-1 text-subtle-foreground ui-text-sm">({column.type})</span>
                 </label>
                 <Input
                   id={fieldId}
@@ -155,7 +154,6 @@ export const EditRowModal = ({
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                     setValues((prev) => ({ ...prev, [column.name]: e.target.value }))
                   }
-                  className="w-full"
                   placeholder={column.notnull ? "Required" : "Optional"}
                 />
               </div>
@@ -163,12 +161,10 @@ export const EditRowModal = ({
           })}
 
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="ghost" onClick={handleClose} compact>
+          <Button type="button" variant="ghost" onClick={handleClose}>
             Cancel
           </Button>
-          <Button type="submit" compact>
-            Save Changes
-          </Button>
+          <Button type="submit">Save Changes</Button>
         </div>
       </form>
     </Dialog>
@@ -225,7 +221,7 @@ export const CreateTableModal = ({ isOpen, onClose, onSubmit }: CreateTableModal
     <Dialog onClose={handleClose} title="Create New Table" icon={PlusIcon} size="lg">
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-1">
-          <label htmlFor="table-name" className="ui-font block ui-text-sm text-text">
+          <label htmlFor="table-name" className="font-sans block ui-text-sm text-foreground">
             Table Name
           </label>
           <Input
@@ -238,16 +234,16 @@ export const CreateTableModal = ({ isOpen, onClose, onSubmit }: CreateTableModal
         </div>
 
         <div className="space-y-2">
-          <div className="ui-font block ui-text-sm text-text">Columns</div>
+          <div className="font-sans block ui-text-sm text-foreground">Columns</div>
           {columns.map((column, index) => (
             <div key={index} className="flex items-center gap-2">
               <Input
+                grow
                 value={column.name}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                   updateColumn(index, "name", e.target.value)
                 }
                 placeholder="Column name"
-                className="flex-1"
                 required
               />
               <Select
@@ -259,18 +255,17 @@ export const CreateTableModal = ({ isOpen, onClose, onSubmit }: CreateTableModal
                   { value: "REAL", label: "REAL" },
                   { value: "BLOB", label: "BLOB" },
                 ]}
-                size="md"
-                className="bg-input"
+                variant="surface"
               />
               <label
                 htmlFor={`column-not-null-${index}`}
-                className="ui-font flex items-center gap-1 text-text ui-text-xs"
+                className="font-sans flex items-center gap-1 text-foreground ui-text-sm"
               >
                 <Checkbox
                   id={`column-not-null-${index}`}
                   checked={column.notnull}
-                  onChange={(checked) => updateColumn(index, "notnull", checked)}
-                  ariaLabel={`Set ${column.name || `column ${index + 1}`} as not null`}
+                  onCheckedChange={(checked) => updateColumn(index, "notnull", checked)}
+                  aria-label={`Set ${column.name || `column ${index + 1}`} as not null`}
                 />
                 NOT NULL
               </label>
@@ -278,23 +273,23 @@ export const CreateTableModal = ({ isOpen, onClose, onSubmit }: CreateTableModal
                 <Button
                   type="button"
                   onClick={() => removeColumn(index)}
-                  variant="ghost"
-                  compact
-                  className="rounded-md text-error"
+                  variant="danger"
+                  iconOnly
+                  aria-label={`Remove ${column.name || `column ${index + 1}`}`}
                 >
                   <XIcon size="14" />
                 </Button>
               )}
             </div>
           ))}
-          <Button type="button" onClick={addColumn} variant="ghost" className="rounded-md" compact>
+          <Button type="button" onClick={addColumn} variant="ghost">
             <PlusIcon size="12" />
             Add Column
           </Button>
         </div>
 
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="ghost" onClick={handleClose} compact>
+          <Button type="button" variant="ghost" onClick={handleClose}>
             Cancel
           </Button>
           <Button type="submit" disabled={!canSubmit}>
