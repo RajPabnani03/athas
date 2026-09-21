@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch:
 
 concurrency:
@@ -13,8 +13,7 @@ concurrency:
 
 jobs:
   bun:
-    if: github.repository == 'athasdev/athas'
-    name: Bun — typecheck, frontend check
+    name: Bun — typecheck, frontend check, tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -37,8 +36,10 @@ jobs:
       - name: Run frontend checks
         run: bash scripts/check/frontend.sh
 
+      - name: Run frontend tests
+        run: vp test run
+
   rust:
-    if: github.repository == 'athasdev/athas'
     name: Rust — fmt, check, clippy, test
     runs-on: ubuntu-latest
     env:
