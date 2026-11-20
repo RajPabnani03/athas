@@ -5,7 +5,6 @@ import {
   type GeneratedUIExtension,
   normalizeGeneratedExtensionId,
   readStoredGeneratedExtensions,
-  storeGeneratedExtension,
 } from "./generated-ui-extension-storage";
 import { validateGeneratedExtensionSource } from "./generated-ui-extension-source";
 import {
@@ -37,10 +36,7 @@ export function createGeneratedExtensionManifest(
   };
 }
 
-export async function installGeneratedUIExtension(
-  extension: GeneratedUIExtension,
-  options: { persist?: boolean } = {},
-) {
+async function installGeneratedUIExtension(extension: GeneratedUIExtension): Promise<void> {
   const store = useUIExtensionStore.getState();
   const { actions } = store;
   const extensionId = normalizeGeneratedExtensionId(extension.id);
@@ -73,10 +69,6 @@ export async function installGeneratedUIExtension(
       contributionType: extension.contributionType,
       state: "active",
     });
-    if (options.persist !== false) {
-      storeGeneratedExtension(extension);
-    }
-    return { extensionId };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Install failed";
     actions.updateExtensionState(extensionId, "error", message);
@@ -87,7 +79,7 @@ export async function installGeneratedUIExtension(
 export async function initializeGeneratedUIExtensions(): Promise<void> {
   for (const extension of readStoredGeneratedExtensions()) {
     try {
-      await installGeneratedUIExtension(extension, { persist: false });
+      await installGeneratedUIExtension(extension);
     } catch (error) {
       console.error("Failed to initialize generated UI integration:", error);
     }

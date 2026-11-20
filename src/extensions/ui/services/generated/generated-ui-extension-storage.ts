@@ -66,13 +66,3 @@ export function readStoredGeneratedExtensions(): GeneratedUIExtension[] {
     return [];
   }
 }
-
-export function storeGeneratedExtension(extension: GeneratedUIExtension): void {
-  const storedExtensions = readStoredGeneratedExtensions();
-  const nextExtensions = [
-    ...storedExtensions.filter((storedExtension) => storedExtension.id !== extension.id),
-    extension,
-  ];
-
-  localStorage.setItem(GENERATED_EXTENSIONS_STORAGE_KEY, JSON.stringify(nextExtensions));
-}
