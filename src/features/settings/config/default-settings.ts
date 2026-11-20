@@ -134,13 +134,11 @@ export const defaultSettings: Settings = {
   coreFeatures: {
     git: true,
     github: true,
-    remote: true,
     terminal: true,
     search: true,
     diagnostics: true,
     debugger: true,
     docker: true,
-    aiChat: true,
     teamCollaboration: true,
     breadcrumbs: true,
     persistentCommands: true,
