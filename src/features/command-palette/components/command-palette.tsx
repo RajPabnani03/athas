@@ -64,7 +64,6 @@ import {
   type CommandPaletteFilter,
 } from "../utils/command-palette-results";
 import { useActionsStore } from "../stores/action-history.store";
-import { useCommandPaletteViews } from "../services/command-palette-view-registry";
 
 interface CommandPaletteContentProps {
   commandPaletteInitialView: CommandPaletteViewId;
@@ -166,7 +165,6 @@ const CommandPaletteContent = ({ commandPaletteInitialView }: CommandPaletteCont
   const activeRepoPath = useRepositoryStore.use.activeRepoPath();
   const { checkAuth: checkGitHubAuth } = useGitHubStore.use.actions();
   const extensionCommands = useUIExtensionStore.use.commands();
-  const extensionViews = useCommandPaletteViews();
   const { showToast } = useToast();
   const openWhatsNew = useWhatsNewStore((state) => state.actions.open);
   const openOnboarding = useOnboardingStore((state) => state.actions.openPreview);
@@ -442,8 +440,6 @@ const CommandPaletteContent = ({ commandPaletteInitialView }: CommandPaletteCont
     selectedElement?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [selectedIndex, paletteActions.length]);
 
-  const extensionView = extensionViews.get(currentView);
-
   return (
     <Command isVisible onClose={onClose}>
       {currentView === "color-theme" ? (
@@ -483,12 +479,6 @@ const CommandPaletteContent = ({ commandPaletteInitialView }: CommandPaletteCont
           onBack={popView}
           onClose={onClose}
         />
-      ) : extensionView ? (
-        extensionView.render({
-          isActive: true,
-          onBack: popView,
-          onClose,
-        })
       ) : (
         <>
           <CommandHeader
