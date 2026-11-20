@@ -64,6 +64,66 @@ describe("generated UI extension storage", () => {
     expect(() => validateGeneratedExtensionSource("   ")).toThrow("must not be empty");
   });
 
+  it("normalizes host permissions for stored extensions", () => {
+    const manifest = createGeneratedExtensionManifest({
+      id: "release-health",
+      name: "Release Health",
+      description: "Tracks release readiness.",
+      contributionType: "command",
+      permissions: {
+        workspace: "read",
+        network: ["https://status.example.com/", "https://status.example.com"],
+        clipboardWrite: true,
+      },
+      code: `
+        api.commands.register({
+          id: "refresh",
+          title: "Refresh",
+          async run() {
+            await api.workspace.getCurrent();
+            await api.http.request({ url: "https://status.example.com/health" });
+            await api.clipboard.writeText("workspace ready");
+          },
+        });
+      `,
+    });
+
+    expect(manifest.permissions).toEqual({
+      workspace: "read",
+      network: ["https://status.example.com"],
+      clipboardWrite: true,
+    });
+  });
+
+  it.each([
+    {
+      permissions: undefined,
+      code: 'api.commands.register({ id: "read", title: "Read", run: () => api.workspace.getCurrent() });',
+      error: "uses workspace read without requesting permission",
+    },
+    {
+      permissions: { openExternal: true },
+      code: 'api.sidebar.registerView({ id: "health", title: "Health", render: () => api.ui.empty("Ready") });',
+      error: "requests unused external links permission",
+    },
+    {
+      permissions: { network: ["https://*"] },
+      code: 'api.commands.register({ id: "load", title: "Load", run: () => api.http.request({ url: "https://example.com" }) });',
+      error: "must be an exact origin",
+    },
+  ])("rejects stored extension permissions: $error", ({ code, permissions, error }) => {
+    expect(() =>
+      createGeneratedExtensionManifest({
+        id: "release-health",
+        name: "Release Health",
+        description: "Tracks release readiness.",
+        contributionType: "command",
+        code,
+        permissions,
+      }),
+    ).toThrow(error);
+  });
+
   it("keeps compatible stored extensions available for worker migration", () => {
     const stored = [
       {
