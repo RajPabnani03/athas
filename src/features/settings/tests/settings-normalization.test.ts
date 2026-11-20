@@ -232,7 +232,6 @@ describe("settings normalization", () => {
       coreFeatures: {
         git: true,
         github: true,
-        remote: true,
         terminal: true,
         ghosttyTerminal: true,
         search: true,
@@ -240,7 +239,6 @@ describe("settings normalization", () => {
         debugger: false,
         outline: true,
         webViewer: true,
-        aiChat: true,
         teamCollaboration: true,
         breadcrumbs: true,
         persistentCommands: true,
@@ -274,13 +272,19 @@ describe("settings normalization", () => {
       ...getDefaultSettingsSnapshot(),
       coreFeatures: {
         ...getDefaultSettingsSnapshot().coreFeatures,
+        aiChat: false,
         athasEditorEngine: true,
+        debugger: false,
         energyEdge: true,
+        remote: false,
       },
     } as never);
 
-    expect("athasEditorEngine" in normalized.coreFeatures).toBe(false);
-    expect("energyEdge" in normalized.coreFeatures).toBe(false);
+    expect(normalized.coreFeatures).not.toHaveProperty("aiChat");
+    expect(normalized.coreFeatures).not.toHaveProperty("athasEditorEngine");
+    expect(normalized.coreFeatures).not.toHaveProperty("energyEdge");
+    expect(normalized.coreFeatures).not.toHaveProperty("remote");
+    expect(normalized.coreFeatures.debugger).toBe(false);
   });
 
   it.each(["worktrees", "review"])("removes retired %s from git sidebar settings", (retired) => {

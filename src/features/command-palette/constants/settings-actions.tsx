@@ -545,40 +545,6 @@ export const createSettingsActions = (params: SettingsActionsParams): Action[] =
       },
     },
     {
-      id: "toggle-ai-chat-feature",
-      label: settings.coreFeatures.aiChat
-        ? "Features: Disable Agent Sessions"
-        : "Features: Enable Agent Sessions",
-      description: settings.coreFeatures.aiChat
-        ? "Disable agent sessions"
-        : "Enable agent sessions",
-      icon: <ChatBubbleTextIcon />,
-      category: "Features",
-      action: () => {
-        updateSetting("coreFeatures", {
-          ...settings.coreFeatures,
-          aiChat: !settings.coreFeatures.aiChat,
-        });
-        onClose();
-      },
-    },
-    {
-      id: "toggle-remote-feature",
-      label: settings.coreFeatures.remote ? "Features: Disable Remote" : "Features: Enable Remote",
-      description: settings.coreFeatures.remote
-        ? "Disable remote development"
-        : "Enable remote development",
-      icon: <CloudIcon />,
-      category: "Features",
-      action: () => {
-        updateSetting("coreFeatures", {
-          ...settings.coreFeatures,
-          remote: !settings.coreFeatures.remote,
-        });
-        onClose();
-      },
-    },
-    {
       id: "toggle-commands-persistence",
       label: settings.coreFeatures.persistentCommands
         ? "Features: Disable Persistent Commands"
