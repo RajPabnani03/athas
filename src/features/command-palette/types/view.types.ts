@@ -1,11 +1,7 @@
-type BuiltInCommandPaletteViewId =
+export type CommandPaletteViewId =
   | "root"
   | "color-theme"
   | "icon-theme"
   | "local-history"
   | "outline"
   | "databases";
-
-type ExtensionCommandPaletteViewId = `extension:${string}`;
-
-export type CommandPaletteViewId = BuiltInCommandPaletteViewId | ExtensionCommandPaletteViewId;
