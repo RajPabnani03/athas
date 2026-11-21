@@ -4,9 +4,11 @@ import type { useBufferStore as useBufferStoreHook } from "../stores/buffer.stor
 import type { useEditorAppStore as useEditorAppStoreHook } from "../stores/editor-app.store";
 
 const mocks = vi.hoisted(() => ({
+  copyFile: vi.fn(),
   notifyDocumentSave: vi.fn(),
   recordLocalHistoryFile: vi.fn(),
   save: vi.fn(),
+  showAlertDialog: vi.fn(),
   showChoiceDialog: vi.fn(),
   stopForFile: vi.fn(),
   writeFile: vi.fn(),
@@ -17,9 +19,17 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 vi.mock("@/ui/dialog", () => ({
-  showAlertDialog: vi.fn(),
+  showAlertDialog: mocks.showAlertDialog,
   showChoiceDialog: mocks.showChoiceDialog,
 }));
+
+vi.mock("@tauri-apps/plugin-fs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@tauri-apps/plugin-fs")>();
+  return {
+    ...original,
+    copyFile: mocks.copyFile,
+  };
+});
 
 vi.mock("@/features/editor/lsp/lsp-client", () => ({
   LspClient: {
@@ -119,6 +129,8 @@ describe("editor save as", () => {
     mocks.recordLocalHistoryFile.mockResolvedValue(undefined);
     mocks.notifyDocumentSave.mockResolvedValue(undefined);
     mocks.stopForFile.mockResolvedValue(undefined);
+    mocks.copyFile.mockResolvedValue(undefined);
+    mocks.showAlertDialog.mockResolvedValue(undefined);
 
     ({ useBufferStore } = await import("../stores/buffer.store"));
     ({ useEditorAppStore } = await import("../stores/editor-app.store"));
@@ -228,7 +240,32 @@ describe("editor save as", () => {
     expect(buffers.find((buffer) => buffer.id === "destination-buffer")).toBeUndefined();
   });
 
-  it("writes a non-editor buffer through the fs plugin instead of the missing write_file command", async () => {
+  it("copies the source bytes for a file-backed non-editor buffer", async () => {
+    useBufferStore.setState({
+      activeBufferId: "image-buffer",
+      buffers: [
+        {
+          id: "image-buffer",
+          type: "image",
+          path: "/workspace/pic.png",
+          name: "pic.png",
+          isPinned: false,
+          isPreview: false,
+          isActive: true,
+        },
+      ],
+      pendingClose: null,
+      closedBuffersHistory: [],
+    });
+
+    const saved = await useEditorAppStore.getState().actions.handleSaveAs();
+
+    expect(saved).toBe(true);
+    expect(mocks.copyFile).toHaveBeenCalledWith("/workspace/pic.png", "/workspace/copy.ts");
+    expect(mocks.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("refuses Save As for a tab with no file instead of writing an empty one", async () => {
     useBufferStore.setState({
       activeBufferId: "terminal-buffer",
       buffers: [
@@ -249,8 +286,10 @@ describe("editor save as", () => {
 
     const saved = await useEditorAppStore.getState().actions.handleSaveAs();
 
-    expect(saved).toBe(true);
-    expect(mocks.writeFile).toHaveBeenCalledWith("/workspace/copy.ts", "");
+    expect(saved).toBe(false);
+    expect(mocks.showAlertDialog).toHaveBeenCalledOnce();
+    expect(mocks.copyFile).not.toHaveBeenCalled();
+    expect(mocks.writeFile).not.toHaveBeenCalled();
     expect(useBufferStore.getState().buffers[0]).toMatchObject({
       id: "terminal-buffer",
       path: "terminal://session-1",

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { copyFile } from "@tauri-apps/plugin-fs";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { extensionRegistry } from "@/extensions/registry/extension-registry";
@@ -58,7 +59,14 @@ async function saveEditorBufferAs(bufferId: string): Promise<boolean> {
     if (!buffer) return false;
 
     if (!isEditorContent(buffer)) {
-      await writeFile(result, "");
+      if (!buffer.path || buffer.path.includes("://")) {
+        await showAlertDialog("Save As is not available for this tab.", "Save As");
+        return false;
+      }
+
+      if (result !== buffer.path) {
+        await copyFile(buffer.path, result);
+      }
       return true;
     }
 
