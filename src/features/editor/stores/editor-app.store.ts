@@ -9,11 +9,11 @@ import { emitGitChanged } from "@/features/git/events/git-events";
 import { recordLocalHistoryFile } from "@/features/local-history/api/local-history-api";
 import { isEditorContent } from "@/features/panes/types/pane-content.types";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
-import { showAlertDialog } from "@/ui/dialog";
+import { showAlertDialog, showChoiceDialog } from "@/ui/dialog";
 import { createSelectors } from "@/utils/zustand-selectors";
 import { writeFile } from "@/features/file-system/controllers/platform";
 import type { EditorContentChangeOptions, Position, Range } from "../types/editor.types";
-import { getBufferById } from "../utils/buffer-index";
+import { getBufferById, getBufferByPath } from "../utils/buffer-index";
 import { getDirtyWritableEditorBuffers } from "../utils/editor-buffer-selectors";
 import { trackBufferHistoryChange } from "./buffer-history-tracking";
 import { useBufferStore } from "./buffer.store";
@@ -63,8 +63,37 @@ async function saveEditorBufferAs(bufferId: string): Promise<boolean> {
     }
 
     const contentToSave = buffer.content;
+    const { buffers: currentBuffers } = useBufferStore.getState();
+    const destinationBuffer = getBufferByPath(
+      currentBuffers.filter((candidate) => candidate.id !== buffer.id),
+      result,
+    );
+
+    if (destinationBuffer) {
+      const destinationHasEdits = isEditorContent(destinationBuffer) && destinationBuffer.isDirty;
+
+      if (destinationHasEdits) {
+        const choice = await showChoiceDialog<"cancel" | "replace">(
+          `${destinationBuffer.name} is open with unsaved changes. Saving here replaces its contents on disk and closes that tab.`,
+          {
+            title: "File Already Open",
+            choices: [
+              { value: "cancel", label: "Cancel" },
+              { value: "replace", label: "Replace File", variant: "danger" },
+            ],
+          },
+        );
+
+        if (choice !== "replace") return false;
+      }
+    }
+
     await writeFile(result, contentToSave);
     await recordLocalHistoryBeforeWrite(result, "save");
+
+    if (destinationBuffer) {
+      useBufferStore.getState().actions.closeBufferForce(destinationBuffer.id);
+    }
 
     const canRebindPath =
       buffer.path.startsWith("untitled:") || (!buffer.isVirtual && !buffer.path.includes("://"));

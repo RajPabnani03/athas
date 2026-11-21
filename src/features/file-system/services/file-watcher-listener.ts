@@ -6,6 +6,7 @@ import { emitGitChanged } from "@/features/git/events/git-events";
 import type { PaneContent } from "@/features/panes/types/pane-content.types";
 import { workspaceRuntimeRegistry } from "@/features/workspace/runtime/workspace-runtime-registry";
 import { showChoiceDialog } from "@/ui/dialog";
+import { readFileContent } from "@/features/file-system/controllers/file-operations";
 import { useFileSystemStore } from "../stores/file-system.store";
 import { useFileWatcherStore } from "../stores/file-watcher.store";
 import {
@@ -63,6 +64,13 @@ export async function initializeFileWatcherListener() {
 
     const shouldReload = await resolveDirtyBufferConflict(buffer);
     if (!shouldReload) {
+      try {
+        const diskContent = await readFileContent(path);
+        bufferState.actions.markBufferSaved(buffer.id, diskContent);
+      } catch (error) {
+        console.warn("Failed to record the on-disk baseline after keeping local changes:", error);
+      }
+
       emitGitChanged({
         filePath: path,
         scopes: ["working-tree"],

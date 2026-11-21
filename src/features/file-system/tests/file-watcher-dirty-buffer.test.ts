@@ -126,7 +126,7 @@ describe("file watcher dirty buffer conflict", () => {
     });
   }
 
-  it("keeps unsaved edits when the user chooses to keep their changes", async () => {
+  it("keeps unsaved edits and rebases them on the content now on disk", async () => {
     setBuffer(makeEditorBuffer("/workspace/watched.ts", "my unsaved edits", true));
     mocks.showChoiceDialog.mockResolvedValue("keep");
 
@@ -135,9 +135,9 @@ describe("file watcher dirty buffer conflict", () => {
     });
 
     expect(mocks.showChoiceDialog).toHaveBeenCalledOnce();
-    expect(mocks.readFileContent).not.toHaveBeenCalled();
     expect(useBufferStore.getState().buffers[0]).toMatchObject({
       content: "my unsaved edits",
+      savedContent: "changed on disk",
       isDirty: true,
     });
   });
@@ -181,9 +181,9 @@ describe("file watcher dirty buffer conflict", () => {
       payload: { path: "/workspace/watched.ts", event_type: "reloaded" },
     });
 
-    expect(mocks.readFileContent).not.toHaveBeenCalled();
     expect(useBufferStore.getState().buffers[0]).toMatchObject({
       content: "my unsaved edits",
+      savedContent: "changed on disk",
       isDirty: true,
     });
   });

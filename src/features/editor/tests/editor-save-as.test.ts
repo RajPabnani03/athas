@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   notifyDocumentSave: vi.fn(),
   recordLocalHistoryFile: vi.fn(),
   save: vi.fn(),
+  showChoiceDialog: vi.fn(),
+  stopForFile: vi.fn(),
   writeFile: vi.fn(),
 }));
 
@@ -14,10 +16,16 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: mocks.save,
 }));
 
+vi.mock("@/ui/dialog", () => ({
+  showAlertDialog: vi.fn(),
+  showChoiceDialog: mocks.showChoiceDialog,
+}));
+
 vi.mock("@/features/editor/lsp/lsp-client", () => ({
   LspClient: {
     getInstance: () => ({
       notifyDocumentSave: mocks.notifyDocumentSave,
+      stopForFile: mocks.stopForFile,
     }),
   },
 }));
@@ -56,7 +64,7 @@ const createMockStorage = () => {
   };
 };
 
-function makeEditorBuffer(): EditorContent {
+function makeEditorBuffer(overrides: Partial<EditorContent> = {}): EditorContent {
   return {
     id: "save-as-buffer",
     type: "editor",
@@ -71,7 +79,20 @@ function makeEditorBuffer(): EditorContent {
     isActive: true,
     language: "typescript",
     tokens: [],
+    ...overrides,
   };
+}
+
+function makeDestinationBuffer(isDirty: boolean): EditorContent {
+  return makeEditorBuffer({
+    id: "destination-buffer",
+    path: "/workspace/copy.ts",
+    name: "copy.ts",
+    content: isDirty ? "destination edits" : "destination content",
+    savedContent: "destination content",
+    isDirty,
+    isActive: false,
+  });
 }
 
 describe("editor save as", () => {
@@ -93,9 +114,11 @@ describe("editor save as", () => {
       dispatchEvent: vi.fn(),
     });
     mocks.save.mockResolvedValue("/workspace/copy.ts");
+    mocks.showChoiceDialog.mockResolvedValue("replace");
     mocks.writeFile.mockResolvedValue(undefined);
     mocks.recordLocalHistoryFile.mockResolvedValue(undefined);
     mocks.notifyDocumentSave.mockResolvedValue(undefined);
+    mocks.stopForFile.mockResolvedValue(undefined);
 
     ({ useBufferStore } = await import("../stores/buffer.store"));
     ({ useEditorAppStore } = await import("../stores/editor-app.store"));
@@ -148,6 +171,61 @@ describe("editor save as", () => {
       name: "copy.ts",
       isDirty: false,
     });
+  });
+
+  it("closes an already-open clean destination so only one buffer owns the path", async () => {
+    useBufferStore.setState({
+      activeBufferId: "save-as-buffer",
+      buffers: [makeEditorBuffer(), makeDestinationBuffer(false)],
+      pendingClose: null,
+      closedBuffersHistory: [],
+    });
+
+    const saved = await useEditorAppStore.getState().actions.handleSaveAs();
+
+    expect(saved).toBe(true);
+    expect(mocks.writeFile).toHaveBeenCalledWith("/workspace/copy.ts", "edited content");
+    const buffers = useBufferStore.getState().buffers;
+    const boundToCopy = buffers.filter((buffer) => buffer.path === "/workspace/copy.ts");
+    expect(boundToCopy).toHaveLength(1);
+    expect(boundToCopy[0]).toMatchObject({ id: "save-as-buffer", isDirty: false });
+    expect(buffers.find((buffer) => buffer.id === "destination-buffer")).toBeUndefined();
+  });
+
+  it("cancels without writing when the open destination has unsaved changes", async () => {
+    useBufferStore.setState({
+      activeBufferId: "save-as-buffer",
+      buffers: [makeEditorBuffer(), makeDestinationBuffer(true)],
+      pendingClose: null,
+      closedBuffersHistory: [],
+    });
+    mocks.showChoiceDialog.mockResolvedValue("cancel");
+
+    const saved = await useEditorAppStore.getState().actions.handleSaveAs();
+
+    expect(saved).toBe(false);
+    expect(mocks.showChoiceDialog).toHaveBeenCalledOnce();
+    expect(mocks.writeFile).not.toHaveBeenCalled();
+    expect(useBufferStore.getState().buffers).toHaveLength(2);
+  });
+
+  it("replaces an open dirty destination only after confirmation", async () => {
+    useBufferStore.setState({
+      activeBufferId: "save-as-buffer",
+      buffers: [makeEditorBuffer(), makeDestinationBuffer(true)],
+      pendingClose: null,
+      closedBuffersHistory: [],
+    });
+    mocks.showChoiceDialog.mockResolvedValue("replace");
+
+    const saved = await useEditorAppStore.getState().actions.handleSaveAs();
+
+    expect(saved).toBe(true);
+    expect(mocks.showChoiceDialog).toHaveBeenCalledOnce();
+    expect(mocks.writeFile).toHaveBeenCalledWith("/workspace/copy.ts", "edited content");
+    const buffers = useBufferStore.getState().buffers;
+    expect(buffers.filter((buffer) => buffer.path === "/workspace/copy.ts")).toHaveLength(1);
+    expect(buffers.find((buffer) => buffer.id === "destination-buffer")).toBeUndefined();
   });
 
   it("keeps the buffer bound to the original file when the dialog is cancelled", async () => {
