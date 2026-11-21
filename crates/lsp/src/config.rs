@@ -51,7 +51,7 @@ impl LspRegistry {
       self
          .servers
          .iter()
-         .find(|s| s.file_extensions.contains(&extension.to_string()))
+         .find(|s| s.file_extensions.iter().any(|ext| ext == extension))
    }
 
    pub fn find_server_for_workspace(&self, workspace: &Path) -> Option<&LspServerConfig> {
