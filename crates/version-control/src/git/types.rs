@@ -50,6 +50,12 @@ pub struct GitDiffLine {
    pub content: String,
    pub old_line_number: Option<u32>,
    pub new_line_number: Option<u32>,
+   #[serde(default, skip_serializing_if = "is_false")]
+   pub no_trailing_newline: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+   !*value
 }
 
 #[derive(Serialize)]

@@ -92,6 +92,17 @@ impl ParsedDiffFile {
 
       self.lines.push(line);
    }
+
+   fn mark_no_trailing_newline(&mut self, content: &[u8]) {
+      if self.raw_patch.is_some() {
+         self.push_raw_line('\\', content);
+         return;
+      }
+
+      if let Some(line) = self.lines.last_mut() {
+         line.no_trailing_newline = true;
+      }
+   }
 }
 
 pub fn parse_diff_to_lines(diff: &mut Diff) -> Result<ParsedDiffLines, String> {
@@ -110,6 +121,7 @@ pub fn parse_diff_to_lines(diff: &mut Diff) -> Result<ParsedDiffLines, String> {
                   ),
                   old_line_number: None,
                   new_line_number: None,
+                  no_trailing_newline: false,
                });
                is_truncated = true;
             }
@@ -125,6 +137,7 @@ pub fn parse_diff_to_lines(diff: &mut Diff) -> Result<ParsedDiffLines, String> {
                   content,
                   old_line_number: None,
                   new_line_number: None,
+                  no_trailing_newline: false,
                });
             }
             '+' => {
@@ -135,6 +148,7 @@ pub fn parse_diff_to_lines(diff: &mut Diff) -> Result<ParsedDiffLines, String> {
                      .to_string(),
                   old_line_number: None,
                   new_line_number: line.new_lineno(),
+                  no_trailing_newline: false,
                });
             }
             '-' => {
@@ -145,6 +159,7 @@ pub fn parse_diff_to_lines(diff: &mut Diff) -> Result<ParsedDiffLines, String> {
                      .to_string(),
                   old_line_number: line.old_lineno(),
                   new_line_number: None,
+                  no_trailing_newline: false,
                });
             }
             ' ' => {
@@ -155,7 +170,13 @@ pub fn parse_diff_to_lines(diff: &mut Diff) -> Result<ParsedDiffLines, String> {
                      .to_string(),
                   old_line_number: line.old_lineno(),
                   new_line_number: line.new_lineno(),
+                  no_trailing_newline: false,
                });
+            }
+            '\\' | '=' | '>' | '<' => {
+               if let Some(previous) = lines.last_mut() {
+                  previous.no_trailing_newline = true;
+               }
             }
             _ => {}
          }
@@ -205,6 +226,7 @@ fn parse_diff_to_file_entries(diff: &mut Diff) -> Result<HashMap<String, ParsedD
                      content: String::from_utf8_lossy(content).to_string(),
                      old_line_number: None,
                      new_line_number: None,
+                     no_trailing_newline: false,
                   },
                   content,
                );
@@ -219,6 +241,7 @@ fn parse_diff_to_file_entries(diff: &mut Diff) -> Result<HashMap<String, ParsedD
                         .to_string(),
                      old_line_number: None,
                      new_line_number: line.new_lineno(),
+                     no_trailing_newline: false,
                   },
                   content,
                );
@@ -233,6 +256,7 @@ fn parse_diff_to_file_entries(diff: &mut Diff) -> Result<HashMap<String, ParsedD
                         .to_string(),
                      old_line_number: line.old_lineno(),
                      new_line_number: None,
+                     no_trailing_newline: false,
                   },
                   content,
                );
@@ -247,10 +271,12 @@ fn parse_diff_to_file_entries(diff: &mut Diff) -> Result<HashMap<String, ParsedD
                         .to_string(),
                      old_line_number: line.old_lineno(),
                      new_line_number: line.new_lineno(),
+                     no_trailing_newline: false,
                   },
                   content,
                );
             }
+            '\\' | '=' | '>' | '<' => entry.mark_no_trailing_newline(content),
             _ => {}
          }
 
@@ -660,6 +686,7 @@ fn parse_content_patch(patch: &Patch<'_>) -> Result<ParsedDiffLines, String> {
             .to_string(),
          old_line_number: None,
          new_line_number: None,
+         no_trailing_newline: false,
       });
 
       for line_index in 0..line_count {
@@ -672,6 +699,7 @@ fn parse_content_patch(patch: &Patch<'_>) -> Result<ParsedDiffLines, String> {
                ),
                old_line_number: None,
                new_line_number: None,
+               no_trailing_newline: false,
             });
             return Ok(ParsedDiffLines {
                lines,
@@ -686,6 +714,12 @@ fn parse_content_patch(patch: &Patch<'_>) -> Result<ParsedDiffLines, String> {
             '+' => DiffLineType::Added,
             '-' => DiffLineType::Removed,
             ' ' => DiffLineType::Context,
+            '\\' | '=' | '>' | '<' => {
+               if let Some(previous) = lines.last_mut() {
+                  previous.no_trailing_newline = true;
+               }
+               continue;
+            }
             _ => continue,
          };
          lines.push(GitDiffLine {
@@ -695,6 +729,7 @@ fn parse_content_patch(patch: &Patch<'_>) -> Result<ParsedDiffLines, String> {
                .to_string(),
             old_line_number: line.old_lineno(),
             new_line_number: line.new_lineno(),
+            no_trailing_newline: false,
          });
       }
    }
