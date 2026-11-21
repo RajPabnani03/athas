@@ -25,6 +25,7 @@ export interface GitDiffLine {
   content: string;
   old_line_number?: number;
   new_line_number?: number;
+  no_trailing_newline?: boolean;
 }
 
 export interface GitDiff {
