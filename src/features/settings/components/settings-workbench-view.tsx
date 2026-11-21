@@ -330,11 +330,12 @@ const SettingsWorkbenchView = () => {
           side="bottom"
           align="start"
           size="trigger"
+          viewport="scroll"
           initialFocus={false}
           finalFocus={false}
           className="gap-0 p-0"
         >
-          <div className="max-h-80 overflow-y-auto p-1">
+          <div className="p-1">
             {visibleSearchDropdownResults.length > 0 ? (
               visibleSearchDropdownResults.map((result) => {
                 const isSelected = selectedResultId === result.id;
