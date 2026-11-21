@@ -1,6 +1,7 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use base64::{Engine as _, engine::general_purpose};
 use git2::{Oid, Repository};
+use std::path::{Path, PathBuf};
 
 pub trait IntoStringError<T> {
    fn into_string_error(self) -> Result<T, String>;
@@ -76,4 +77,68 @@ pub fn format_git_time(seconds: Option<i64>) -> String {
       .and_then(|s| chrono::DateTime::<chrono::Utc>::from_timestamp(s, 0))
       .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
       .unwrap_or_default()
+}
+
+fn status_entry_path(entry: &git2::StatusEntry<'_>) -> PathBuf {
+   #[cfg(unix)]
+   {
+      use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+      PathBuf::from(OsStr::from_bytes(entry.path_bytes()))
+   }
+   #[cfg(not(unix))]
+   {
+      PathBuf::from(entry.path().unwrap_or_default())
+   }
+}
+
+pub fn path_to_bytes(path: &Path) -> Vec<u8> {
+   #[cfg(unix)]
+   {
+      use std::os::unix::ffi::OsStrExt;
+      path.as_os_str().as_bytes().to_vec()
+   }
+   #[cfg(not(unix))]
+   {
+      path.to_string_lossy().into_owned().into_bytes()
+   }
+}
+
+pub fn resolve_status_path(repo: &Repository, requested_path: &str) -> Result<PathBuf> {
+   if !requested_path.contains(char::REPLACEMENT_CHARACTER) {
+      return Ok(PathBuf::from(requested_path));
+   }
+
+   let mut options = git2::StatusOptions::new();
+   options
+      .include_untracked(true)
+      .recurse_untracked_dirs(false)
+      .include_ignored(false);
+
+   let statuses = repo.statuses(Some(&mut options))?;
+   let mut byte_paths: Vec<PathBuf> = Vec::new();
+   let mut exact_matches = 0;
+
+   for entry in statuses.iter() {
+      if String::from_utf8_lossy(entry.path_bytes()) != requested_path {
+         continue;
+      }
+
+      if entry.path() == Some(requested_path) {
+         exact_matches += 1;
+         continue;
+      }
+
+      let candidate = status_entry_path(&entry);
+      if !byte_paths.contains(&candidate) {
+         byte_paths.push(candidate);
+      }
+   }
+
+   if exact_matches > 0 || byte_paths.len() != 1 {
+      bail!(
+         "Path {requested_path} cannot be tied to a single file: the name reads the same as a           distinct file or as a file that is no longer listed, so acting on it is refused"
+      );
+   }
+
+   Ok(byte_paths.remove(0))
 }

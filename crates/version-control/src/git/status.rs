@@ -35,7 +35,7 @@ fn _git_status(repo_path: String) -> Result<GitStatus> {
          continue;
       }
 
-      let path = entry.path().context("Invalid path")?.to_string();
+      let path = String::from_utf8_lossy(entry.path_bytes()).into_owned();
 
       let has_staged = status_flags.intersects(
          git2::Status::INDEX_NEW
@@ -177,6 +177,32 @@ mod tests {
 
       assert_ne!(branch, "unknown");
       assert!(!branch.is_empty());
+   }
+
+   #[cfg(unix)]
+   #[test]
+   fn status_keeps_reading_after_a_non_utf8_path() {
+      use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+      let temp_dir = tempfile::tempdir().expect("temp dir");
+      Repository::init(temp_dir.path()).expect("repo init");
+
+      let invalid_name = OsStr::from_bytes(b"bad-\xff-name.txt");
+      fs::write(temp_dir.path().join(invalid_name), "content").expect("write invalid file");
+      fs::write(temp_dir.path().join("plain.txt"), "content").expect("write plain file");
+
+      let status = _git_status(temp_dir.path().to_string_lossy().into_owned()).expect("status");
+
+      let paths = status
+         .files
+         .iter()
+         .map(|file| file.path.as_str())
+         .collect::<Vec<_>>();
+      assert!(paths.contains(&"plain.txt"), "paths: {paths:?}");
+      assert!(
+         paths.iter().any(|path| path.contains('\u{fffd}')),
+         "paths: {paths:?}"
+      );
    }
 
    #[test]
