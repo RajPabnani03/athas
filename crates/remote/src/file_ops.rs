@@ -1,6 +1,6 @@
 use crate::{ssh_helpers::shell_quote, state::CONNECTIONS};
 use serde::{Deserialize, Serialize};
-use ssh2::{RenameFlags, Session, Sftp};
+use ssh2::{FileType, RenameFlags, Session, Sftp};
 use std::{
    io::{Read, Write},
    path::{Path, PathBuf},
@@ -15,12 +15,29 @@ pub struct RemoteFileEntry {
 }
 
 trait AtomicFileWriter {
+   fn is_symlink(&self, path: &Path) -> bool;
+   fn exists(&self, path: &Path) -> bool;
+   fn resolve(&self, path: &Path) -> Result<PathBuf, String>;
    fn create_temporary(&self, path: &Path) -> Result<Box<dyn Write>, String>;
    fn rename_over(&self, from: &Path, to: &Path) -> Result<(), String>;
    fn remove(&self, path: &Path) -> Result<(), String>;
 }
 
 impl AtomicFileWriter for Sftp {
+   fn is_symlink(&self, path: &Path) -> bool {
+      Sftp::lstat(self, path)
+         .map(|stat| stat.file_type() == FileType::Symlink)
+         .unwrap_or(false)
+   }
+
+   fn exists(&self, path: &Path) -> bool {
+      Sftp::stat(self, path).is_ok()
+   }
+
+   fn resolve(&self, path: &Path) -> Result<PathBuf, String> {
+      Sftp::realpath(self, path).map_err(|e| e.to_string())
+   }
+
    fn create_temporary(&self, path: &Path) -> Result<Box<dyn Write>, String> {
       let file =
          Sftp::create(self, path).map_err(|e| format!("Failed to create temporary file: {}", e))?;
@@ -50,7 +67,8 @@ fn write_atomically(
    target: &Path,
    content: &[u8],
 ) -> Result<(), String> {
-   let temporary = sibling_temporary_path(target);
+   let target = resolve_write_target(writer, target)?;
+   let temporary = sibling_temporary_path(&target);
 
    let written = (|| -> Result<(), String> {
       let mut file = writer.create_temporary(&temporary)?;
@@ -61,7 +79,7 @@ fn write_atomically(
          .flush()
          .map_err(|e| format!("Failed to write file: {}", e))?;
       drop(file);
-      writer.rename_over(&temporary, target)
+      writer.rename_over(&temporary, &target)
    })();
 
    if written.is_err() {
@@ -69,6 +87,29 @@ fn write_atomically(
    }
 
    written
+}
+
+/// A symlinked target stays a symlink: the write lands on the file the link
+/// points at, and the temporary file is created beside that resolved file so the
+/// rename stays inside one filesystem.
+fn resolve_write_target(writer: &dyn AtomicFileWriter, target: &Path) -> Result<PathBuf, String> {
+   if !writer.is_symlink(target) {
+      return Ok(target.to_path_buf());
+   }
+
+   let resolved = writer
+      .resolve(target)
+      .map_err(|e| format!("Failed to resolve symlink {}: {}", target.display(), e))?;
+
+   if !writer.exists(&resolved) {
+      return Err(format!(
+         "Failed to resolve symlink {}: {} does not exist",
+         target.display(),
+         resolved.display()
+      ));
+   }
+
+   Ok(resolved)
 }
 
 fn sibling_temporary_path(target: &Path) -> PathBuf {
@@ -92,22 +133,27 @@ fn sibling_temporary_path(target: &Path) -> PathBuf {
 /// temporary file, refuse it when fewer bytes arrived than were sent, and only
 /// then move it over the target.
 fn atomic_write_command(file_path: &str, byte_len: usize) -> String {
-   let target = shell_quote(file_path);
-   let template = shell_quote(&format!("{}.athas-XXXXXX", file_path));
+   let path = shell_quote(file_path);
+   let unresolved = shell_quote(&format!("Failed to resolve symlink: {}", file_path));
 
    [
       "set -e".to_string(),
-      format!("tmp=$(mktemp {template})"),
+      format!("target={path}"),
+      format!(
+         "if [ -L {path} ]; then target=$(readlink -f -- {path} 2>/dev/null || realpath -- {path} \
+          2>/dev/null || true); if [ -z \"$target\" ] || [ ! -f \"$target\" ]; then echo \
+          {unresolved} >&2; exit 1; fi; fi"
+      ),
+      "tmp=$(mktemp \"${target}.athas-XXXXXX\")".to_string(),
       "trap 'rm -f \"$tmp\"' EXIT HUP INT TERM".to_string(),
       "cat > \"$tmp\"".to_string(),
       format!("[ \"$(wc -c < \"$tmp\")\" -eq {byte_len} ]"),
-      format!(
-         "if [ -e {target} ]; then mode=$(stat -c %a {target} 2>/dev/null || stat -f %Lp {target} \
-          2>/dev/null || true); fi"
-      ),
+      "if [ -e \"$target\" ]; then mode=$(stat -c %a \"$target\" 2>/dev/null || stat -f %Lp \
+       \"$target\" 2>/dev/null || true); fi"
+         .to_string(),
       "if [ -z \"$mode\" ]; then mode=$(printf '%o' $(( 0666 & ~0$(umask) ))); fi".to_string(),
       "chmod \"$mode\" \"$tmp\"".to_string(),
-      format!("mv -f \"$tmp\" {target}"),
+      "mv -f \"$tmp\" \"$target\"".to_string(),
       "trap - EXIT".to_string(),
    ]
    .join("; ")

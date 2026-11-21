@@ -53,6 +53,28 @@ struct TestWriter {
 }
 
 impl AtomicFileWriter for TestWriter {
+   fn is_symlink(&self, path: &Path) -> bool {
+      fs::symlink_metadata(path)
+         .map(|metadata| metadata.file_type().is_symlink())
+         .unwrap_or(false)
+   }
+
+   fn exists(&self, path: &Path) -> bool {
+      path.exists()
+   }
+
+   fn resolve(&self, path: &Path) -> Result<PathBuf, String> {
+      let parent = path.parent().unwrap_or_else(|| Path::new(""));
+      let target = fs::read_link(path).map_err(|e| e.to_string())?;
+      let resolved = if target.is_absolute() {
+         target
+      } else {
+         parent.join(target)
+      };
+
+      Ok(fs::canonicalize(&resolved).unwrap_or(resolved))
+   }
+
    fn create_temporary(&self, path: &Path) -> Result<Box<dyn Write>, String> {
       if self.deny_create {
          return Err("Failed to create temporary file: Permission denied".to_string());
@@ -187,13 +209,13 @@ fn places_the_temporary_file_next_to_the_target() {
 }
 
 #[cfg(unix)]
-fn run_write_command(script: &str, input: &[u8]) -> std::process::ExitStatus {
+fn run_write_command(script: &str, input: &[u8]) -> (std::process::ExitStatus, String) {
    let mut child = Command::new("sh")
       .arg("-c")
       .arg(script)
       .stdin(Stdio::piped())
       .stdout(Stdio::null())
-      .stderr(Stdio::null())
+      .stderr(Stdio::piped())
       .spawn()
       .unwrap();
 
@@ -201,7 +223,11 @@ fn run_write_command(script: &str, input: &[u8]) -> std::process::ExitStatus {
    let _ = stdin.write_all(input);
    drop(stdin);
 
-   child.wait().unwrap()
+   let output = child.wait_with_output().unwrap();
+   (
+      output.status,
+      String::from_utf8_lossy(&output.stderr).into_owned(),
+   )
 }
 
 #[cfg(unix)]
@@ -221,9 +247,9 @@ fn shell_write_replaces_the_target_and_keeps_its_permissions() {
    fs::set_permissions(&target, fs::Permissions::from_mode(0o750)).unwrap();
    let path = target.to_str().unwrap().to_string();
 
-   let status = run_write_command(&atomic_write_command(&path, 11), b"replacement");
+   let (status, stderr) = run_write_command(&atomic_write_command(&path, 11), b"replacement");
 
-   assert!(status.success(), "{status}");
+   assert!(status.success(), "{status} {stderr}");
    assert_eq!(fs::read_to_string(&target).unwrap(), "replacement");
    assert_eq!(
       fs::metadata(&target).unwrap().permissions().mode() & 0o777,
@@ -239,9 +265,9 @@ fn shell_write_keeps_the_original_when_the_stream_ends_early() {
    let target = dir.write("notes.txt", "original");
    let path = target.to_str().unwrap().to_string();
 
-   let status = run_write_command(&atomic_write_command(&path, 11), b"repl");
+   let (status, stderr) = run_write_command(&atomic_write_command(&path, 11), b"repl");
 
-   assert!(!status.success(), "{status}");
+   assert!(!status.success(), "{status} {stderr}");
    assert_eq!(fs::read_to_string(&target).unwrap(), "original");
    assert_eq!(dir.names(), vec!["notes.txt".to_string()]);
 }
@@ -258,11 +284,11 @@ fn shell_write_keeps_the_original_when_the_directory_is_not_writable() {
    let path = target.to_str().unwrap().to_string();
    fs::set_permissions(&dir.0, fs::Permissions::from_mode(0o555)).unwrap();
 
-   let status = run_write_command(&atomic_write_command(&path, 11), b"replacement");
+   let (status, stderr) = run_write_command(&atomic_write_command(&path, 11), b"replacement");
 
    fs::set_permissions(&dir.0, fs::Permissions::from_mode(0o755)).unwrap();
 
-   assert!(!status.success(), "{status}");
+   assert!(!status.success(), "{status} {stderr}");
    assert_eq!(fs::read_to_string(&target).unwrap(), "original");
    assert_eq!(dir.names(), vec!["notes.txt".to_string()]);
 }
@@ -274,12 +300,128 @@ fn shell_write_creates_a_new_file_with_the_umask_default_mode() {
    let target = dir.0.join("new.txt");
    let path = target.to_str().unwrap().to_string();
 
-   let status = run_write_command(&atomic_write_command(&path, 7), b"content");
+   let (status, stderr) = run_write_command(&atomic_write_command(&path, 7), b"content");
 
-   assert!(status.success(), "{status}");
+   assert!(status.success(), "{status} {stderr}");
    assert_eq!(fs::read_to_string(&target).unwrap(), "content");
    assert_ne!(
       fs::metadata(&target).unwrap().permissions().mode() & 0o777,
       0o600
    );
+}
+
+#[cfg(unix)]
+fn link_to(target: &Path, link: &Path) {
+   std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+#[cfg(unix)]
+fn is_symlink(path: &Path) -> bool {
+   fs::symlink_metadata(path).unwrap().file_type().is_symlink()
+}
+
+#[cfg(unix)]
+#[test]
+fn writes_through_a_symlink_whose_target_is_in_the_same_directory() {
+   let dir = TestDir::new("link-same");
+   let target = dir.write("real.txt", "original");
+   let link = dir.0.join("link.txt");
+   link_to(Path::new("real.txt"), &link);
+
+   write_atomically(&TestWriter::default(), &link, b"replacement").unwrap();
+
+   assert!(is_symlink(&link));
+   assert_eq!(fs::read_to_string(&target).unwrap(), "replacement");
+   assert_eq!(dir.names(), vec!["link.txt", "real.txt"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn writes_through_a_symlink_whose_target_is_in_another_directory() {
+   let dir = TestDir::new("link-other");
+   let other = dir.0.join("other");
+   fs::create_dir(&other).unwrap();
+   let target = other.join("real.txt");
+   fs::write(&target, "original").unwrap();
+   let link = dir.0.join("link.txt");
+   link_to(&target, &link);
+
+   write_atomically(&TestWriter::default(), &link, b"replacement").unwrap();
+
+   assert!(is_symlink(&link));
+   assert_eq!(fs::read_to_string(&target).unwrap(), "replacement");
+   assert_eq!(dir.names(), vec!["link.txt", "other"]);
+   assert_eq!(fs::read_dir(&other).unwrap().count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn fails_on_a_dangling_symlink_instead_of_replacing_it() {
+   let dir = TestDir::new("link-dangling");
+   let link = dir.0.join("link.txt");
+   link_to(Path::new("missing.txt"), &link);
+
+   let error = write_atomically(&TestWriter::default(), &link, b"replacement").unwrap_err();
+
+   assert!(error.contains("Failed to resolve symlink"), "{error}");
+   assert!(error.contains("link.txt"), "{error}");
+   assert!(is_symlink(&link));
+   assert!(!dir.0.join("missing.txt").exists());
+   assert_eq!(dir.names(), vec!["link.txt"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn shell_write_keeps_a_symlink_in_the_same_directory() {
+   let dir = TestDir::new("shell-link-same");
+   let target = dir.write("real.txt", "original");
+   let link = dir.0.join("link.txt");
+   link_to(Path::new("real.txt"), &link);
+   let path = link.to_str().unwrap().to_string();
+
+   let (status, stderr) = run_write_command(&atomic_write_command(&path, 11), b"replacement");
+
+   assert!(status.success(), "{status} {stderr}");
+   assert!(is_symlink(&link));
+   assert_eq!(fs::read_to_string(&target).unwrap(), "replacement");
+   assert_eq!(dir.names(), vec!["link.txt", "real.txt"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn shell_write_keeps_a_symlink_pointing_into_another_directory() {
+   let dir = TestDir::new("shell-link-other");
+   let other = dir.0.join("other");
+   fs::create_dir(&other).unwrap();
+   let target = other.join("real.txt");
+   fs::write(&target, "original").unwrap();
+   let link = dir.0.join("link.txt");
+   link_to(&target, &link);
+   let path = link.to_str().unwrap().to_string();
+
+   let (status, stderr) = run_write_command(&atomic_write_command(&path, 11), b"replacement");
+
+   assert!(status.success(), "{status} {stderr}");
+   assert!(is_symlink(&link));
+   assert_eq!(fs::read_to_string(&target).unwrap(), "replacement");
+   assert_eq!(dir.names(), vec!["link.txt", "other"]);
+   assert_eq!(fs::read_dir(&other).unwrap().count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn shell_write_fails_on_a_dangling_symlink() {
+   let dir = TestDir::new("shell-link-dangling");
+   let link = dir.0.join("link.txt");
+   link_to(Path::new("missing.txt"), &link);
+   let path = link.to_str().unwrap().to_string();
+
+   let (status, stderr) = run_write_command(&atomic_write_command(&path, 11), b"replacement");
+
+   assert!(!status.success(), "{status}");
+   assert!(stderr.contains("Failed to resolve symlink"), "{stderr}");
+   assert!(stderr.contains("link.txt"), "{stderr}");
+   assert!(is_symlink(&link));
+   assert!(!dir.0.join("missing.txt").exists());
+   assert_eq!(dir.names(), vec!["link.txt"]);
 }
