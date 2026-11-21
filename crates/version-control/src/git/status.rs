@@ -182,8 +182,7 @@ mod tests {
    #[cfg(unix)]
    #[test]
    fn status_keeps_reading_after_a_non_utf8_path() {
-      use std::ffi::OsStr;
-      use std::os::unix::ffi::OsStrExt;
+      use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
 
       let temp_dir = tempfile::tempdir().expect("temp dir");
       Repository::init(temp_dir.path()).expect("repo init");

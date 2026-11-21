@@ -234,6 +234,55 @@ mod tests {
       );
    }
 
+   fn commit_all(repo_path: &str) {
+      let repo = Repository::open(repo_path).expect("repo");
+      let mut index = repo.index().expect("index");
+      index
+         .add_all(["*"].iter(), IndexAddOption::DEFAULT, None)
+         .expect("stage changes");
+      index.write().expect("write index");
+      let tree_id = index.write_tree().expect("write tree");
+      let tree = repo.find_tree(tree_id).expect("find tree");
+      let signature = Signature::now("Athas Test", "athas@example.com").expect("signature");
+      let parent = repo
+         .head()
+         .ok()
+         .and_then(|head| head.target())
+         .map(|oid| repo.find_commit(oid).expect("parent commit"));
+      let parents = parent.iter().collect::<Vec<_>>();
+      repo
+         .commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "commit",
+            &tree,
+            &parents,
+         )
+         .expect("commit");
+   }
+
+   #[test]
+   fn discard_refuses_a_stale_lossy_path_that_only_matches_a_lookalike() {
+      let invalid_name = OsStr::from_bytes(b"bad-\xff-name.txt");
+      let lookalike_name = OsStr::from_bytes(b"bad-\xef\xbf\xbd-name.txt");
+      let (temp_dir, repo_path) = init_repo_with_files(&[invalid_name, lookalike_name]);
+
+      fs::remove_file(temp_dir.path().join(invalid_name)).expect("revert bytes file");
+      commit_all(&repo_path);
+      fs::write(temp_dir.path().join(lookalike_name), "changed lookalike\n")
+         .expect("change lookalike");
+
+      let lossy_path = String::from_utf8_lossy(invalid_name.as_bytes()).into_owned();
+      let result = _git_discard_file_changes(repo_path, lossy_path);
+
+      assert!(result.is_err(), "discard should refuse a stale lossy path");
+      assert_eq!(
+         fs::read_to_string(temp_dir.path().join(lookalike_name)).expect("read lookalike"),
+         "changed lookalike\n"
+      );
+   }
+
    #[test]
    fn discard_refuses_a_path_that_matches_two_files() {
       let invalid_name = OsStr::from_bytes(b"bad-\xff-name.txt");

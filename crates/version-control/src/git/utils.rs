@@ -104,6 +104,10 @@ pub fn path_to_bytes(path: &Path) -> Vec<u8> {
 }
 
 pub fn resolve_status_path(repo: &Repository, requested_path: &str) -> Result<PathBuf> {
+   if !requested_path.contains(char::REPLACEMENT_CHARACTER) {
+      return Ok(PathBuf::from(requested_path));
+   }
+
    let mut options = git2::StatusOptions::new();
    options
       .include_untracked(true)
@@ -111,24 +115,30 @@ pub fn resolve_status_path(repo: &Repository, requested_path: &str) -> Result<Pa
       .include_ignored(false);
 
    let statuses = repo.statuses(Some(&mut options))?;
-   let mut candidates: Vec<PathBuf> = Vec::new();
+   let mut byte_paths: Vec<PathBuf> = Vec::new();
+   let mut exact_matches = 0;
 
    for entry in statuses.iter() {
       if String::from_utf8_lossy(entry.path_bytes()) != requested_path {
          continue;
       }
 
+      if entry.path() == Some(requested_path) {
+         exact_matches += 1;
+         continue;
+      }
+
       let candidate = status_entry_path(&entry);
-      if !candidates.contains(&candidate) {
-         candidates.push(candidate);
+      if !byte_paths.contains(&candidate) {
+         byte_paths.push(candidate);
       }
    }
 
-   match candidates.len() {
-      0 => Ok(PathBuf::from(requested_path)),
-      1 => Ok(candidates.remove(0)),
-      _ => bail!(
-         "Path {requested_path} matches more than one file; refusing to act on an ambiguous path"
-      ),
+   if exact_matches > 0 || byte_paths.len() != 1 {
+      bail!(
+         "Path {requested_path} cannot be tied to a single file: the name reads the same as a           distinct file or as a file that is no longer listed, so acting on it is refused"
+      );
    }
+
+   Ok(byte_paths.remove(0))
 }
