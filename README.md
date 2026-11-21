@@ -82,13 +82,20 @@ To build Athas from source, install [Node.js 24](https://nodejs.org),
 ```bash
 git clone https://github.com/athasdev/athas.git
 cd athas
-bun setup
+bun install --ignore-scripts
+bun scripts/postinstall.ts
+bun run prepare
 bun dev
 ```
 
-`bun setup` installs the project dependencies and checks the native requirements for your
-platform. See the [contributing guide](CONTRIBUTING.md) for validation commands and contribution
-guidelines.
+`bun install --ignore-scripts` skips the licence check in the `nucleo-ui-outline-18` package, and
+`bun scripts/postinstall.ts` builds the bundled tree-sitter parsers. A plain `bun install` fails on
+a machine without `NUCLEO_LICENSE_KEY`, which is why the install is split in two. `bun run prepare`
+then installs the repository's Git hooks, which `--ignore-scripts` also skips.
+
+Linux needs the WebKitGTK and GTK development packages before the Rust build will link, and the
+Rust checks need the nightly toolchain's `rustfmt` and `clippy` components. The
+[contributing guide](CONTRIBUTING.md) lists the exact packages and every validation command.
 
 ## Documentation
 
