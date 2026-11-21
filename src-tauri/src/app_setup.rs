@@ -22,7 +22,7 @@ use tokio::sync::Mutex;
 pub fn configure_app(app: &mut tauri::App<AthasRuntime>) -> Result<(), Box<dyn std::error::Error>> {
    app.state::<commands::ui::StartupTiming>()
       .record("native:setup:start");
-   #[cfg(all(target_os = "linux", feature = "linux"))]
+   #[cfg(target_os = "linux")]
    if commands::development::cli_windows::requests_need_workbench(
       &commands::development::cli_args::parse_cli_argv(
          &std::env::args().collect::<Vec<_>>(),
@@ -68,7 +68,7 @@ pub fn configure_app(app: &mut tauri::App<AthasRuntime>) -> Result<(), Box<dyn s
    Ok(())
 }
 
-#[cfg(all(target_os = "linux", feature = "linux"))]
+#[cfg(target_os = "linux")]
 fn create_initial_linux_window(
    app: &tauri::App<AthasRuntime>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -80,9 +80,12 @@ fn create_initial_linux_window(
       .find(|window| window.label == "main")
       .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "main window config"))?;
 
-   tauri::WebviewWindowBuilder::from_config(app.handle(), config)?
-      .browser_runtime_style(tauri_runtime_cef::RuntimeStyle::Alloy)
-      .build()?;
+   let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), config)?;
+
+   #[cfg(feature = "linux")]
+   let builder = builder.browser_runtime_style(tauri_runtime_cef::RuntimeStyle::Alloy);
+
+   builder.build()?;
 
    Ok(())
 }
