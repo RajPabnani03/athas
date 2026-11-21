@@ -190,6 +190,59 @@ pub(super) async fn write_file(
    }
 }
 
+fn parse_listing(output: &str, dir_path: &str) -> Vec<RemoteFileEntry> {
+   output
+      .lines()
+      .filter_map(|line| parse_listing_line(line, dir_path))
+      .collect()
+}
+
+fn parse_listing_line(line: &str, dir_path: &str) -> Option<RemoteFileEntry> {
+   let mut fields = [""; 8];
+   let mut rest = line;
+
+   for field in &mut fields {
+      rest = rest.trim_start();
+      let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+      if end == 0 {
+         return None;
+      }
+      *field = &rest[..end];
+      rest = &rest[end..];
+   }
+
+   let mode = fields[0];
+   if mode.len() < 10 || !"-dlbcps".contains(mode.as_bytes()[0] as char) {
+      return None;
+   }
+
+   let listed_name = rest.trim_start();
+   let name = if mode.starts_with('l') {
+      listed_name
+         .split_once(" -> ")
+         .map_or(listed_name, |(name, _)| name)
+   } else {
+      listed_name
+   };
+
+   if name.is_empty() || name == "." || name == ".." || name.starts_with('.') {
+      return None;
+   }
+
+   let path = if dir_path == "/" {
+      format!("/{}", name)
+   } else {
+      format!("{}/{}", dir_path, name)
+   };
+
+   Some(RemoteFileEntry {
+      name: name.to_string(),
+      path,
+      is_dir: mode.starts_with('d'),
+      size: fields[4].parse().unwrap_or(0),
+   })
+}
+
 pub(super) async fn read_directory(
    connection_id: String,
    path: String,
@@ -251,35 +304,7 @@ pub(super) async fn read_directory(
       channel.close().ok();
       channel.wait_close().ok();
 
-      let entries: Vec<RemoteFileEntry> = output
-         .lines()
-         .skip(1)
-         .filter_map(|line| {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 9 {
-               return None;
-            }
-            let name = parts[8..].join(" ");
-            if name == "." || name == ".." || name.starts_with('.') {
-               return None;
-            }
-            let is_dir = parts[0].starts_with('d');
-            let size: u64 = parts[4].parse().unwrap_or(0);
-            let full_path = if dir_path == "/" {
-               format!("/{}", name)
-            } else {
-               format!("{}/{}", dir_path, name)
-            };
-            Some(RemoteFileEntry {
-               name,
-               path: full_path,
-               is_dir,
-               size,
-            })
-         })
-         .collect();
-
-      Ok(entries)
+      Ok(parse_listing(&output, dir_path))
    }
 }
 
@@ -324,6 +349,10 @@ pub(super) async fn read_file(connection_id: String, file_path: String) -> Resul
       Ok(content)
    }
 }
+
+#[cfg(test)]
+#[path = "../tests/file_ops/listing.rs"]
+mod listing_tests;
 
 #[cfg(test)]
 #[path = "../tests/file_ops/write.rs"]
