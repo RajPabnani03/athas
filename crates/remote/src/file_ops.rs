@@ -1,6 +1,10 @@
 use crate::{ssh_helpers::shell_quote, state::CONNECTIONS};
 use serde::{Deserialize, Serialize};
-use std::io::{Read, Write};
+use ssh2::{FileStat, FileType, OpenFlags, OpenType, RenameFlags, Session, Sftp};
+use std::{
+   io::{Read, Write},
+   path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteFileEntry {
@@ -8,6 +12,239 @@ pub struct RemoteFileEntry {
    pub path: String,
    pub is_dir: bool,
    pub size: u64,
+}
+
+/// Mode a new file asks for; the remote server masks it with its own umask.
+const DEFAULT_FILE_MODE: u32 = 0o666;
+
+trait AtomicFileWriter {
+   fn is_symlink(&self, path: &Path) -> bool;
+   fn exists(&self, path: &Path) -> bool;
+   fn mode(&self, path: &Path) -> Option<u32>;
+   fn resolve(&self, path: &Path) -> Result<PathBuf, String>;
+   fn create_temporary(&self, path: &Path, mode: u32) -> Result<Box<dyn Write>, String>;
+   fn set_mode(&self, path: &Path, mode: u32) -> Result<(), String>;
+   fn rename_over(&self, from: &Path, to: &Path) -> Result<(), String>;
+   fn remove(&self, path: &Path) -> Result<(), String>;
+}
+
+impl AtomicFileWriter for Sftp {
+   fn is_symlink(&self, path: &Path) -> bool {
+      Sftp::lstat(self, path)
+         .map(|stat| stat.file_type() == FileType::Symlink)
+         .unwrap_or(false)
+   }
+
+   fn exists(&self, path: &Path) -> bool {
+      Sftp::stat(self, path).is_ok()
+   }
+
+   fn mode(&self, path: &Path) -> Option<u32> {
+      Sftp::stat(self, path).ok().and_then(|stat| stat.perm)
+   }
+
+   fn resolve(&self, path: &Path) -> Result<PathBuf, String> {
+      Sftp::realpath(self, path).map_err(|e| e.to_string())
+   }
+
+   fn create_temporary(&self, path: &Path, mode: u32) -> Result<Box<dyn Write>, String> {
+      let file = Sftp::open_mode(
+         self,
+         path,
+         OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
+         (mode & 0o777) as i32,
+         OpenType::File,
+      )
+      .map_err(|e| format!("Failed to create temporary file: {}", e))?;
+
+      Ok(Box::new(file))
+   }
+
+   fn set_mode(&self, path: &Path, mode: u32) -> Result<(), String> {
+      let stat = FileStat {
+         size: None,
+         uid: None,
+         gid: None,
+         perm: Some(mode & 0o7777),
+         atime: None,
+         mtime: None,
+      };
+
+      Sftp::setstat(self, path, stat).map_err(|e| format!("Failed to set file permissions: {}", e))
+   }
+
+   fn rename_over(&self, from: &Path, to: &Path) -> Result<(), String> {
+      Sftp::rename(
+         self,
+         from,
+         to,
+         Some(RenameFlags::OVERWRITE | RenameFlags::ATOMIC | RenameFlags::NATIVE),
+      )
+      .map_err(|e| format!("Failed to replace file: {}", e))
+   }
+
+   fn remove(&self, path: &Path) -> Result<(), String> {
+      Sftp::unlink(self, path).map_err(|e| format!("Failed to remove temporary file: {}", e))
+   }
+}
+
+/// Writes through a sibling temporary file and renames it over the target, so a
+/// write that dies partway through leaves the original file untouched instead of
+/// truncating it.
+fn write_atomically(
+   writer: &dyn AtomicFileWriter,
+   target: &Path,
+   content: &[u8],
+) -> Result<(), String> {
+   let target = resolve_write_target(writer, target)?;
+   let mode = writer.mode(&target);
+   let temporary = sibling_temporary_path(&target);
+
+   let written = (|| -> Result<(), String> {
+      let mut file = writer.create_temporary(&temporary, mode.unwrap_or(DEFAULT_FILE_MODE))?;
+      file
+         .write_all(content)
+         .map_err(|e| format!("Failed to write file: {}", e))?;
+      file
+         .flush()
+         .map_err(|e| format!("Failed to write file: {}", e))?;
+      drop(file);
+
+      if let Some(mode) = mode {
+         writer.set_mode(&temporary, mode)?;
+      }
+
+      writer.rename_over(&temporary, &target)
+   })();
+
+   if written.is_err() {
+      let _ = writer.remove(&temporary);
+   }
+
+   written
+}
+
+/// A symlinked target stays a symlink: the write lands on the file the link
+/// points at, and the temporary file is created beside that resolved file so the
+/// rename stays inside one filesystem.
+fn resolve_write_target(writer: &dyn AtomicFileWriter, target: &Path) -> Result<PathBuf, String> {
+   if !writer.is_symlink(target) {
+      return Ok(target.to_path_buf());
+   }
+
+   let resolved = writer
+      .resolve(target)
+      .map_err(|e| format!("Failed to resolve symlink {}: {}", target.display(), e))?;
+
+   if !writer.exists(&resolved) {
+      return Err(format!(
+         "Failed to resolve symlink {}: {} does not exist",
+         target.display(),
+         resolved.display()
+      ));
+   }
+
+   Ok(resolved)
+}
+
+fn sibling_temporary_path(target: &Path) -> PathBuf {
+   let parent = target.parent().unwrap_or_else(|| Path::new(""));
+   let name = target.file_name().map(|name| name.to_string_lossy());
+   let prefix = name.as_deref().map_or("", |name| truncate_bytes(name, 80));
+
+   parent.join(format!(
+      ".{}.athas-{}.tmp",
+      prefix,
+      uuid::Uuid::new_v4().simple()
+   ))
+}
+
+/// Keeps the temporary name inside filesystem name limits, which count bytes
+/// rather than characters.
+fn truncate_bytes(value: &str, max_len: usize) -> &str {
+   if value.len() <= max_len {
+      return value;
+   }
+
+   let mut end = max_len;
+   while !value.is_char_boundary(end) {
+      end -= 1;
+   }
+
+   &value[..end]
+}
+
+/// The remote shell equivalent of [`write_atomically`]: stream into a sibling
+/// temporary file, refuse it when fewer bytes arrived than were sent, and only
+/// then move it over the target.
+fn atomic_write_command(file_path: &str, byte_len: usize) -> String {
+   let path = shell_quote(file_path);
+   let unresolved = shell_quote(&format!("Failed to resolve symlink: {}", file_path));
+
+   [
+      "set -e".to_string(),
+      format!("target={path}"),
+      format!(
+         "if [ -L {path} ]; then target=$(readlink -f -- {path} 2>/dev/null || realpath -- {path} \
+          2>/dev/null || true); if [ -z \"$target\" ] || [ ! -f \"$target\" ]; then echo \
+          {unresolved} >&2; exit 1; fi; fi"
+      ),
+      "tmp=$(mktemp \"$(dirname -- \"$target\")/.athas-XXXXXXXXXX\")".to_string(),
+      "trap 'rm -f \"$tmp\"' EXIT HUP INT TERM".to_string(),
+      "cat > \"$tmp\"".to_string(),
+      format!("[ \"$(wc -c < \"$tmp\")\" -eq {byte_len} ]"),
+      "if [ -e \"$target\" ]; then mode=$(stat -c %a \"$target\" 2>/dev/null || stat -f %Lp \
+       \"$target\" 2>/dev/null || true); fi"
+         .to_string(),
+      "if [ -z \"$mode\" ]; then mode=$(printf '%o' $(( 0666 & ~0$(umask) ))); fi".to_string(),
+      "chmod \"$mode\" \"$tmp\"".to_string(),
+      "mv -f \"$tmp\" \"$target\"".to_string(),
+      "trap - EXIT".to_string(),
+   ]
+   .join("; ")
+}
+
+fn write_file_over_channel(
+   session: &Session,
+   file_path: &str,
+   content: &[u8],
+) -> Result<(), String> {
+   let mut channel = session
+      .channel_session()
+      .map_err(|e| format!("Failed to create channel: {}", e))?;
+
+   channel
+      .exec(&atomic_write_command(file_path, content.len()))
+      .map_err(|e| format!("Failed to execute command: {}", e))?;
+
+   channel
+      .write_all(content)
+      .map_err(|e| format!("Failed to write content: {}", e))?;
+
+   channel
+      .send_eof()
+      .map_err(|e| format!("Failed to send EOF: {}", e))?;
+
+   let mut stderr = String::new();
+   channel
+      .stderr()
+      .read_to_string(&mut stderr)
+      .map_err(|e| format!("Failed to read command error output: {}", e))?;
+
+   channel.close().ok();
+   channel.wait_close().ok();
+
+   let exit_status = channel.exit_status().unwrap_or_default();
+   if exit_status != 0 {
+      let details = stderr.trim();
+      return Err(if details.is_empty() {
+         format!("Remote write failed with exit status {}", exit_status)
+      } else {
+         details.to_string()
+      });
+   }
+
+   Ok(())
 }
 
 pub(super) async fn write_file(
@@ -22,39 +259,63 @@ pub(super) async fn write_file(
       .get(&connection_id)
       .ok_or("Connection not found")?;
 
-   if let Some(sftp) = sftp_opt {
-      let remote_path = std::path::Path::new(&file_path);
-      let mut file = sftp
-         .create(remote_path)
-         .map_err(|e| format!("Failed to create file: {}", e))?;
-
-      file
-         .write_all(content.as_bytes())
-         .map_err(|e| format!("Failed to write file: {}", e))?;
-
-      Ok(())
-   } else {
-      let mut channel = session
-         .channel_session()
-         .map_err(|e| format!("Failed to create channel: {}", e))?;
-
-      let command = format!("cat > '{}'", file_path.replace('\'', "'\\''"));
-      channel
-         .exec(&command)
-         .map_err(|e| format!("Failed to execute command: {}", e))?;
-
-      channel
-         .write_all(content.as_bytes())
-         .map_err(|e| format!("Failed to write content: {}", e))?;
-
-      channel
-         .send_eof()
-         .map_err(|e| format!("Failed to send EOF: {}", e))?;
-
-      channel.close().ok();
-      channel.wait_close().ok();
-      Ok(())
+   match sftp_opt {
+      Some(sftp) => write_atomically(sftp, Path::new(&file_path), content.as_bytes()),
+      None => write_file_over_channel(session, &file_path, content.as_bytes()),
    }
+}
+
+fn parse_listing(output: &str, dir_path: &str) -> Vec<RemoteFileEntry> {
+   output
+      .lines()
+      .filter_map(|line| parse_listing_line(line, dir_path))
+      .collect()
+}
+
+fn parse_listing_line(line: &str, dir_path: &str) -> Option<RemoteFileEntry> {
+   let mut fields = [""; 8];
+   let mut rest = line;
+
+   for field in &mut fields {
+      rest = rest.trim_start();
+      let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+      if end == 0 {
+         return None;
+      }
+      *field = &rest[..end];
+      rest = &rest[end..];
+   }
+
+   let mode = fields[0];
+   if mode.len() < 10 || !"-dlbcps".contains(mode.as_bytes()[0] as char) {
+      return None;
+   }
+
+   let listed_name = rest.trim_start();
+   let name = if mode.starts_with('l') {
+      listed_name
+         .split_once(" -> ")
+         .map_or(listed_name, |(name, _)| name)
+   } else {
+      listed_name
+   };
+
+   if name.is_empty() || name == "." || name == ".." || name.starts_with('.') {
+      return None;
+   }
+
+   let path = if dir_path == "/" {
+      format!("/{}", name)
+   } else {
+      format!("{}/{}", dir_path, name)
+   };
+
+   Some(RemoteFileEntry {
+      name: name.to_string(),
+      path,
+      is_dir: mode.starts_with('d'),
+      size: fields[4].parse().unwrap_or(0),
+   })
 }
 
 pub(super) async fn read_directory(
@@ -118,35 +379,7 @@ pub(super) async fn read_directory(
       channel.close().ok();
       channel.wait_close().ok();
 
-      let entries: Vec<RemoteFileEntry> = output
-         .lines()
-         .skip(1)
-         .filter_map(|line| {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 9 {
-               return None;
-            }
-            let name = parts[8..].join(" ");
-            if name == "." || name == ".." || name.starts_with('.') {
-               return None;
-            }
-            let is_dir = parts[0].starts_with('d');
-            let size: u64 = parts[4].parse().unwrap_or(0);
-            let full_path = if dir_path == "/" {
-               format!("/{}", name)
-            } else {
-               format!("{}/{}", dir_path, name)
-            };
-            Some(RemoteFileEntry {
-               name,
-               path: full_path,
-               is_dir,
-               size,
-            })
-         })
-         .collect();
-
-      Ok(entries)
+      Ok(parse_listing(&output, dir_path))
    }
 }
 
@@ -191,3 +424,11 @@ pub(super) async fn read_file(connection_id: String, file_path: String) -> Resul
       Ok(content)
    }
 }
+
+#[cfg(test)]
+#[path = "../tests/file_ops/listing.rs"]
+mod listing_tests;
+
+#[cfg(test)]
+#[path = "../tests/file_ops/write.rs"]
+mod write_tests;
