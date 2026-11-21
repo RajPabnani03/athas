@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   recordLocalHistoryFile: vi.fn(),
   save: vi.fn(),
   showAlertDialog: vi.fn(),
+  stat: vi.fn(),
   showChoiceDialog: vi.fn(),
   stopForFile: vi.fn(),
   writeFile: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("@tauri-apps/plugin-fs", async (importOriginal) => {
   return {
     ...original,
     copyFile: mocks.copyFile,
+    stat: mocks.stat,
   };
 });
 
@@ -130,6 +132,7 @@ describe("editor save as", () => {
     mocks.notifyDocumentSave.mockResolvedValue(undefined);
     mocks.stopForFile.mockResolvedValue(undefined);
     mocks.copyFile.mockResolvedValue(undefined);
+    mocks.stat.mockRejectedValue(new Error("not found"));
     mocks.showAlertDialog.mockResolvedValue(undefined);
 
     ({ useBufferStore } = await import("../stores/buffer.store"));
@@ -263,6 +266,116 @@ describe("editor save as", () => {
     expect(saved).toBe(true);
     expect(mocks.copyFile).toHaveBeenCalledWith("/workspace/pic.png", "/workspace/copy.ts");
     expect(mocks.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("refuses a preview tab whose path is not a real file", async () => {
+    useBufferStore.setState({
+      activeBufferId: "preview-buffer",
+      buffers: [
+        {
+          id: "preview-buffer",
+          type: "markdownPreview",
+          path: "/workspace/notes.md:preview",
+          name: "notes.md (Preview)",
+          content: "# Notes",
+          sourceFilePath: "/workspace/notes.md",
+          isPinned: false,
+          isPreview: false,
+          isActive: true,
+        },
+      ],
+      pendingClose: null,
+      closedBuffersHistory: [],
+    });
+
+    const saved = await useEditorAppStore.getState().actions.handleSaveAs();
+
+    expect(saved).toBe(false);
+    expect(mocks.showAlertDialog).toHaveBeenCalledOnce();
+    expect(mocks.copyFile).not.toHaveBeenCalled();
+    expect(mocks.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("closes an open destination tab before rebinding a non-editor copy", async () => {
+    useBufferStore.setState({
+      activeBufferId: "image-buffer",
+      buffers: [
+        {
+          id: "image-buffer",
+          type: "image",
+          path: "/workspace/pic.png",
+          name: "pic.png",
+          isPinned: false,
+          isPreview: false,
+          isActive: true,
+        },
+        makeDestinationBuffer(false),
+      ],
+      pendingClose: null,
+      closedBuffersHistory: [],
+    });
+
+    const saved = await useEditorAppStore.getState().actions.handleSaveAs();
+
+    expect(saved).toBe(true);
+    expect(mocks.copyFile).toHaveBeenCalledWith("/workspace/pic.png", "/workspace/copy.ts");
+    expect(
+      useBufferStore.getState().buffers.find((b) => b.id === "destination-buffer"),
+    ).toBeUndefined();
+  });
+
+  it("does not copy over a dirty destination tab without confirmation", async () => {
+    useBufferStore.setState({
+      activeBufferId: "image-buffer",
+      buffers: [
+        {
+          id: "image-buffer",
+          type: "image",
+          path: "/workspace/pic.png",
+          name: "pic.png",
+          isPinned: false,
+          isPreview: false,
+          isActive: true,
+        },
+        makeDestinationBuffer(true),
+      ],
+      pendingClose: null,
+      closedBuffersHistory: [],
+    });
+    mocks.showChoiceDialog.mockResolvedValue("cancel");
+
+    const saved = await useEditorAppStore.getState().actions.handleSaveAs();
+
+    expect(saved).toBe(false);
+    expect(mocks.showChoiceDialog).toHaveBeenCalledOnce();
+    expect(mocks.copyFile).not.toHaveBeenCalled();
+    expect(useBufferStore.getState().buffers).toHaveLength(2);
+  });
+
+  it("skips the copy when the destination names the same file through another path", async () => {
+    useBufferStore.setState({
+      activeBufferId: "image-buffer",
+      buffers: [
+        {
+          id: "image-buffer",
+          type: "image",
+          path: "/workspace/pic.png",
+          name: "pic.png",
+          isPinned: false,
+          isPreview: false,
+          isActive: true,
+        },
+      ],
+      pendingClose: null,
+      closedBuffersHistory: [],
+    });
+    mocks.stat.mockResolvedValue({ dev: 1, ino: 42 });
+    mocks.save.mockResolvedValue("/workspace/pic-link.png");
+
+    const saved = await useEditorAppStore.getState().actions.handleSaveAs();
+
+    expect(saved).toBe(true);
+    expect(mocks.copyFile).not.toHaveBeenCalled();
   });
 
   it("refuses Save As for a tab with no file instead of writing an empty one", async () => {

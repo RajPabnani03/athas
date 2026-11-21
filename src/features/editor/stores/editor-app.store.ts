@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { copyFile } from "@tauri-apps/plugin-fs";
+import { copyFile, stat } from "@tauri-apps/plugin-fs";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { extensionRegistry } from "@/extensions/registry/extension-registry";
@@ -31,6 +31,24 @@ async function recordLocalHistoryBeforeWrite(
   }
 }
 
+const COPYABLE_BUFFER_TYPES = new Set<string>(["image", "pdf", "binary"]);
+
+async function pathsPointAtSameFile(sourcePath: string, targetPath: string): Promise<boolean> {
+  if (sourcePath === targetPath) return true;
+
+  try {
+    const [source, target] = await Promise.all([stat(sourcePath), stat(targetPath)]);
+    return (
+      source.dev !== undefined &&
+      source.dev === target.dev &&
+      source.ino !== undefined &&
+      source.ino === target.ino
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function saveEditorBufferAs(bufferId: string): Promise<boolean> {
   const { buffers } = useBufferStore.getState();
   const { markBufferSaved, updateBufferPath } = useBufferStore.getState().actions;
@@ -58,19 +76,6 @@ async function saveEditorBufferAs(bufferId: string): Promise<boolean> {
     const buffer = getBufferById(useBufferStore.getState().buffers, bufferId);
     if (!buffer) return false;
 
-    if (!isEditorContent(buffer)) {
-      if (!buffer.path || buffer.path.includes("://")) {
-        await showAlertDialog("Save As is not available for this tab.", "Save As");
-        return false;
-      }
-
-      if (result !== buffer.path) {
-        await copyFile(buffer.path, result);
-      }
-      return true;
-    }
-
-    const contentToSave = buffer.content;
     const { buffers: currentBuffers } = useBufferStore.getState();
     const destinationBuffer = getBufferByPath(
       currentBuffers.filter((candidate) => candidate.id !== buffer.id),
@@ -96,6 +101,23 @@ async function saveEditorBufferAs(bufferId: string): Promise<boolean> {
       }
     }
 
+    if (!isEditorContent(buffer)) {
+      if (!COPYABLE_BUFFER_TYPES.has(buffer.type) || !buffer.path || buffer.path.includes("://")) {
+        await showAlertDialog("Save As is not available for this tab.", "Save As");
+        return false;
+      }
+
+      if (!(await pathsPointAtSameFile(buffer.path, result))) {
+        await copyFile(buffer.path, result);
+      }
+
+      if (destinationBuffer) {
+        useBufferStore.getState().actions.closeBufferForce(destinationBuffer.id);
+      }
+      return true;
+    }
+
+    const contentToSave = buffer.content;
     await writeFile(result, contentToSave);
     await recordLocalHistoryBeforeWrite(result, "save");
 
