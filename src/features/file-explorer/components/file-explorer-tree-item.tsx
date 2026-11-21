@@ -1,4 +1,4 @@
-import type React from "react";
+import { TreeIndentGuides } from "@/components/tree-indent-guides";
 import { memo } from "react";
 import type { FileTreeGitStatusDecoration } from "@/features/file-explorer/lib/file-tree-git-status";
 import type { FileEntry } from "@/features/file-system/types/app.types";
@@ -114,34 +114,25 @@ function FileExplorerTreeItemComponent({
   const showDirectorySize = shouldShowDirectorySize(file);
   const directorySize = useDirectorySize(file.path, showDirectorySize);
   const formattedDirectorySize = directorySize === null ? null : formatFileSize(directorySize);
-  const guideLevels = Array.from({ length: depth }, (_, level) => level);
   const renderTreeGuides = () =>
     showIndentGuides ? (
-      <div className="file-tree-guides pointer-events-none absolute inset-0 z-1">
-        {guideLevels.map((level) => {
+      <TreeIndentGuides
+        depth={depth}
+        baseIndent={FILE_TREE_BASE_INDENT}
+        indentSize={indentSize}
+        previousDepth={previousDepth}
+        nextDepth={nextDepth}
+        guideProps={(level) => {
           const target = guideTargets[level];
-          const startsHere = previousDepth <= level;
-          const endsHere = nextDepth <= level;
-          return (
-            <span
-              key={level}
-              className="file-tree-guide pointer-events-auto absolute w-[7px] -translate-x-[3px] opacity-90 before:absolute before:inset-y-0 before:left-[3px] before:w-px before:bg-subtle-foreground/18"
-              data-file-path={target?.path}
-              data-is-dir={target?.isDir}
-              data-path={target?.path}
-              data-active={target?.isActive ? "true" : undefined}
-              title={target?.name}
-              style={
-                {
-                  left: `calc(${FILE_TREE_BASE_INDENT + level * indentSize}px + 7px)`,
-                  top: startsHere ? "4px" : "0",
-                  bottom: endsHere ? "4px" : "0",
-                } as React.CSSProperties
-              }
-            />
-          );
-        })}
-      </div>
+          return {
+            "data-file-path": target?.path,
+            "data-is-dir": target?.isDir,
+            "data-path": target?.path,
+            "data-active": target?.isActive ? "true" : undefined,
+            title: target?.name,
+          };
+        }}
+      />
     ) : null;
 
   if (file.isEditing || file.isRenaming) {

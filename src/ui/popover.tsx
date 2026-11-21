@@ -8,7 +8,12 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { OVERLAY_MAX_WIDTH, type OverlaySize, OVERLAY_SIZES } from "@/ui/overlay-size";
+import {
+  OVERLAY_MAX_HEIGHT,
+  OVERLAY_MAX_WIDTH,
+  type OverlaySize,
+  OVERLAY_SIZES,
+} from "@/ui/overlay-size";
 import { instantTransition, overlayEntrance } from "@/utils/motion";
 import { cn } from "@/utils/cn";
 
@@ -97,6 +102,16 @@ export function FloatingPopoverContent({
   return createPortal(<AnimatePresence>{node}</AnimatePresence>, portalContainer ?? document.body);
 }
 
+/**
+ * Scroll behaviour of the popup. `scroll` caps the surface at the shared overlay
+ * height and lets it scroll, so a value or list too tall for the window stays
+ * inside the popover instead of painting past its edge.
+ */
+const POPOVER_VIEWPORT_VARIANTS = {
+  default: "",
+  scroll: `overflow-y-auto ${OVERLAY_MAX_HEIGHT}`,
+} as const;
+
 function Popover(props: PopoverPrimitive.Root.Props) {
   return <PopoverPrimitive.Root data-slot="popover" {...props} />;
 }
@@ -115,6 +130,7 @@ function PopoverContent({
   anchor,
   portalContainer,
   size = "wide",
+  viewport = "default",
   ...props
 }: PopoverPrimitive.Popup.Props &
   Pick<
@@ -124,6 +140,8 @@ function PopoverContent({
     portalContainer?: HTMLElement | ShadowRoot | null;
     /** Width preset from the shared overlay scale. See `@/ui/overlay-size`. */
     size?: OverlaySize;
+    /** Scroll cap from the shared overlay scale. `scroll` for content that can outgrow the window. */
+    viewport?: keyof typeof POPOVER_VIEWPORT_VARIANTS;
   }) {
   return (
     <PopoverPrimitive.Portal data-slot="popover-portal" container={portalContainer}>
@@ -142,6 +160,7 @@ function PopoverContent({
             "z-10070 flex origin-(--transform-origin) flex-col gap-2 rounded-lg bg-surface/98 p-2 font-sans text-foreground shadow-(--shadow-card) ring-1 ring-border/50 outline-none backdrop-blur-sm transition-opacity duration-75 data-ending-style:opacity-0 data-starting-style:opacity-0 ui-text-chrome",
             OVERLAY_MAX_WIDTH,
             OVERLAY_SIZES[size],
+            POPOVER_VIEWPORT_VARIANTS[viewport],
             className,
           )}
           {...props}
