@@ -58,7 +58,7 @@ async function saveEditorBufferAs(bufferId: string): Promise<boolean> {
     if (!buffer) return false;
 
     if (!isEditorContent(buffer)) {
-      await invoke("write_file", { path: result, contents: "" });
+      await writeFile(result, "");
       return true;
     }
 

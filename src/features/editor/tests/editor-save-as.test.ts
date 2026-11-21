@@ -228,6 +228,35 @@ describe("editor save as", () => {
     expect(buffers.find((buffer) => buffer.id === "destination-buffer")).toBeUndefined();
   });
 
+  it("writes a non-editor buffer through the fs plugin instead of the missing write_file command", async () => {
+    useBufferStore.setState({
+      activeBufferId: "terminal-buffer",
+      buffers: [
+        {
+          id: "terminal-buffer",
+          type: "terminal",
+          path: "terminal://session-1",
+          name: "Terminal",
+          sessionId: "session-1",
+          isPinned: false,
+          isPreview: false,
+          isActive: true,
+        },
+      ],
+      pendingClose: null,
+      closedBuffersHistory: [],
+    });
+
+    const saved = await useEditorAppStore.getState().actions.handleSaveAs();
+
+    expect(saved).toBe(true);
+    expect(mocks.writeFile).toHaveBeenCalledWith("/workspace/copy.ts", "");
+    expect(useBufferStore.getState().buffers[0]).toMatchObject({
+      id: "terminal-buffer",
+      path: "terminal://session-1",
+    });
+  });
+
   it("keeps the buffer bound to the original file when the dialog is cancelled", async () => {
     mocks.save.mockResolvedValue(null);
 
