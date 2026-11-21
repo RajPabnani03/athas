@@ -3,7 +3,9 @@ import { dirname } from "@tauri-apps/api/path";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { getBufferByPath } from "@/features/editor/utils/buffer-index";
 import { emitGitChanged } from "@/features/git/events/git-events";
+import type { PaneContent } from "@/features/panes/types/pane-content.types";
 import { workspaceRuntimeRegistry } from "@/features/workspace/runtime/workspace-runtime-registry";
+import { showChoiceDialog } from "@/ui/dialog";
 import { useFileSystemStore } from "../stores/file-system.store";
 import { useFileWatcherStore } from "../stores/file-watcher.store";
 import {
@@ -17,6 +19,7 @@ interface FileChangeEvent {
 }
 
 let unlistenFileChanged: UnlistenFn | null = null;
+const pendingConflictPrompts = new Set<string>();
 
 function scheduleDirectoryRefresh(workspaceId: string, directoryPath: string) {
   scheduleFileWatcherRefresh(workspaceId, directoryPath, async () => {
@@ -58,6 +61,16 @@ export async function initializeFileWatcherListener() {
       return;
     }
 
+    const shouldReload = await resolveDirtyBufferConflict(buffer);
+    if (!shouldReload) {
+      emitGitChanged({
+        filePath: path,
+        scopes: ["working-tree"],
+        source: "external-file-change",
+      });
+      return;
+    }
+
     await bufferState.actions.reloadBufferFromDisk(buffer.id);
     window.dispatchEvent(new CustomEvent("file-reloaded", { detail: { path } }));
     emitGitChanged({
@@ -66,6 +79,34 @@ export async function initializeFileWatcherListener() {
       source: "external-file-change",
     });
   });
+}
+
+async function resolveDirtyBufferConflict(buffer: PaneContent): Promise<boolean> {
+  if (buffer.type !== "editor" || buffer.isVirtual || !buffer.isDirty) {
+    return true;
+  }
+
+  if (pendingConflictPrompts.has(buffer.path)) {
+    return false;
+  }
+
+  pendingConflictPrompts.add(buffer.path);
+
+  try {
+    const choice = await showChoiceDialog<"keep" | "reload">(
+      `${buffer.name} changed on disk while you had unsaved changes. Reloading discards those changes.`,
+      {
+        title: "File Changed on Disk",
+        choices: [
+          { value: "keep", label: "Keep My Changes" },
+          { value: "reload", label: "Reload From Disk", variant: "danger" },
+        ],
+      },
+    );
+    return choice === "reload";
+  } finally {
+    pendingConflictPrompts.delete(buffer.path);
+  }
 }
 
 export async function cleanupFileWatcherListener() {
