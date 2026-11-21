@@ -825,9 +825,9 @@ export const TerminalEmulator = ({
 
   const getSearchOptions = useCallback((options: TerminalSearchOptions): ISearchOptions => {
     const rootStyles = getComputedStyle(document.documentElement);
-    const selected = rootStyles.getPropertyValue("--selected").trim() || "#3b82f6";
-    const accent = rootStyles.getPropertyValue("--primary").trim() || "#60a5fa";
-    const border = rootStyles.getPropertyValue("--border").trim() || "#4b5563";
+    const selected = rootStyles.getPropertyValue("--selected").trim();
+    const accent = rootStyles.getPropertyValue("--primary").trim();
+    const border = rootStyles.getPropertyValue("--border").trim();
 
     return {
       caseSensitive: options.caseSensitive,
