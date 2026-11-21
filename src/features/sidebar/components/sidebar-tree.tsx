@@ -1,3 +1,4 @@
+import { TreeIndentGuides } from "@/components/tree-indent-guides";
 import { ChevronDownIcon, ChevronRightIcon } from "@/ui/icons";
 import type React from "react";
 import { forwardRef, useCallback } from "react";
@@ -5,45 +6,6 @@ import { cn } from "@/utils/cn";
 
 const SIDEBAR_TREE_BASE_INDENT = 10;
 const SIDEBAR_TREE_INDENT_SIZE = 14;
-
-interface SidebarTreeGuidesProps {
-  depth: number;
-  baseIndent?: number;
-  indentSize?: number;
-  previousDepth?: number;
-  nextDepth?: number;
-}
-
-function SidebarTreeGuides({
-  depth,
-  baseIndent = SIDEBAR_TREE_BASE_INDENT,
-  indentSize = SIDEBAR_TREE_INDENT_SIZE,
-  previousDepth = depth,
-  nextDepth = depth,
-}: SidebarTreeGuidesProps) {
-  if (depth <= 0) return null;
-
-  return (
-    <div className="file-tree-guides pointer-events-none absolute inset-0 z-1">
-      {Array.from({ length: depth }, (_, level) => {
-        const startsHere = previousDepth <= level;
-        const endsHere = nextDepth <= level;
-
-        return (
-          <span
-            key={level}
-            className="file-tree-guide pointer-events-auto absolute w-[7px] -translate-x-[3px] opacity-90 before:absolute before:inset-y-0 before:left-[3px] before:w-px before:bg-subtle-foreground/18"
-            style={{
-              left: `calc(${baseIndent + level * indentSize}px + 7px)`,
-              top: startsHere ? "4px" : "0",
-              bottom: endsHere ? "4px" : "0",
-            }}
-          />
-        );
-      })}
-    </div>
-  );
-}
 
 interface SidebarTreeProps extends React.ComponentPropsWithoutRef<"div"> {
   label: string;
@@ -223,7 +185,7 @@ export const SidebarTreeRow = forwardRef<HTMLButtonElement, SidebarTreeRowProps>
         {guides !== undefined ? (
           guides
         ) : showGuides ? (
-          <SidebarTreeGuides
+          <TreeIndentGuides
             depth={depth}
             baseIndent={baseIndent}
             indentSize={indentSize}
