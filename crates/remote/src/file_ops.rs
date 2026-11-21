@@ -1,6 +1,6 @@
 use crate::{ssh_helpers::shell_quote, state::CONNECTIONS};
 use serde::{Deserialize, Serialize};
-use ssh2::{FileType, RenameFlags, Session, Sftp};
+use ssh2::{FileStat, FileType, OpenFlags, OpenType, RenameFlags, Session, Sftp};
 use std::{
    io::{Read, Write},
    path::{Path, PathBuf},
@@ -14,11 +14,16 @@ pub struct RemoteFileEntry {
    pub size: u64,
 }
 
+/// Mode a new file asks for; the remote server masks it with its own umask.
+const DEFAULT_FILE_MODE: u32 = 0o666;
+
 trait AtomicFileWriter {
    fn is_symlink(&self, path: &Path) -> bool;
    fn exists(&self, path: &Path) -> bool;
+   fn mode(&self, path: &Path) -> Option<u32>;
    fn resolve(&self, path: &Path) -> Result<PathBuf, String>;
-   fn create_temporary(&self, path: &Path) -> Result<Box<dyn Write>, String>;
+   fn create_temporary(&self, path: &Path, mode: u32) -> Result<Box<dyn Write>, String>;
+   fn set_mode(&self, path: &Path, mode: u32) -> Result<(), String>;
    fn rename_over(&self, from: &Path, to: &Path) -> Result<(), String>;
    fn remove(&self, path: &Path) -> Result<(), String>;
 }
@@ -34,14 +39,38 @@ impl AtomicFileWriter for Sftp {
       Sftp::stat(self, path).is_ok()
    }
 
+   fn mode(&self, path: &Path) -> Option<u32> {
+      Sftp::stat(self, path).ok().and_then(|stat| stat.perm)
+   }
+
    fn resolve(&self, path: &Path) -> Result<PathBuf, String> {
       Sftp::realpath(self, path).map_err(|e| e.to_string())
    }
 
-   fn create_temporary(&self, path: &Path) -> Result<Box<dyn Write>, String> {
-      let file =
-         Sftp::create(self, path).map_err(|e| format!("Failed to create temporary file: {}", e))?;
+   fn create_temporary(&self, path: &Path, mode: u32) -> Result<Box<dyn Write>, String> {
+      let file = Sftp::open_mode(
+         self,
+         path,
+         OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
+         (mode & 0o777) as i32,
+         OpenType::File,
+      )
+      .map_err(|e| format!("Failed to create temporary file: {}", e))?;
+
       Ok(Box::new(file))
+   }
+
+   fn set_mode(&self, path: &Path, mode: u32) -> Result<(), String> {
+      let stat = FileStat {
+         size: None,
+         uid: None,
+         gid: None,
+         perm: Some(mode & 0o7777),
+         atime: None,
+         mtime: None,
+      };
+
+      Sftp::setstat(self, path, stat).map_err(|e| format!("Failed to set file permissions: {}", e))
    }
 
    fn rename_over(&self, from: &Path, to: &Path) -> Result<(), String> {
@@ -68,10 +97,11 @@ fn write_atomically(
    content: &[u8],
 ) -> Result<(), String> {
    let target = resolve_write_target(writer, target)?;
+   let mode = writer.mode(&target);
    let temporary = sibling_temporary_path(&target);
 
    let written = (|| -> Result<(), String> {
-      let mut file = writer.create_temporary(&temporary)?;
+      let mut file = writer.create_temporary(&temporary, mode.unwrap_or(DEFAULT_FILE_MODE))?;
       file
          .write_all(content)
          .map_err(|e| format!("Failed to write file: {}", e))?;
@@ -79,6 +109,11 @@ fn write_atomically(
          .flush()
          .map_err(|e| format!("Failed to write file: {}", e))?;
       drop(file);
+
+      if let Some(mode) = mode {
+         writer.set_mode(&temporary, mode)?;
+      }
+
       writer.rename_over(&temporary, &target)
    })();
 
@@ -114,19 +149,29 @@ fn resolve_write_target(writer: &dyn AtomicFileWriter, target: &Path) -> Result<
 
 fn sibling_temporary_path(target: &Path) -> PathBuf {
    let parent = target.parent().unwrap_or_else(|| Path::new(""));
-   let name: String = target
-      .file_name()
-      .map(|name| name.to_string_lossy().into_owned())
-      .unwrap_or_default()
-      .chars()
-      .take(120)
-      .collect();
+   let name = target.file_name().map(|name| name.to_string_lossy());
+   let prefix = name.as_deref().map_or("", |name| truncate_bytes(name, 80));
 
    parent.join(format!(
       ".{}.athas-{}.tmp",
-      name,
+      prefix,
       uuid::Uuid::new_v4().simple()
    ))
+}
+
+/// Keeps the temporary name inside filesystem name limits, which count bytes
+/// rather than characters.
+fn truncate_bytes(value: &str, max_len: usize) -> &str {
+   if value.len() <= max_len {
+      return value;
+   }
+
+   let mut end = max_len;
+   while !value.is_char_boundary(end) {
+      end -= 1;
+   }
+
+   &value[..end]
 }
 
 /// The remote shell equivalent of [`write_atomically`]: stream into a sibling
@@ -144,7 +189,7 @@ fn atomic_write_command(file_path: &str, byte_len: usize) -> String {
           2>/dev/null || true); if [ -z \"$target\" ] || [ ! -f \"$target\" ]; then echo \
           {unresolved} >&2; exit 1; fi; fi"
       ),
-      "tmp=$(mktemp \"${target}.athas-XXXXXX\")".to_string(),
+      "tmp=$(mktemp \"$(dirname -- \"$target\")/.athas-XXXXXXXXXX\")".to_string(),
       "trap 'rm -f \"$tmp\"' EXIT HUP INT TERM".to_string(),
       "cat > \"$tmp\"".to_string(),
       format!("[ \"$(wc -c < \"$tmp\")\" -eq {byte_len} ]"),
@@ -157,22 +202,6 @@ fn atomic_write_command(file_path: &str, byte_len: usize) -> String {
       "trap - EXIT".to_string(),
    ]
    .join("; ")
-}
-
-fn write_file_sftp(sftp: &Sftp, file_path: &str, content: &[u8]) -> Result<(), String> {
-   let target = Path::new(file_path);
-   let mode = sftp.stat(target).ok().and_then(|stat| stat.perm);
-
-   write_atomically(sftp, target, content)?;
-
-   if let Some(mode) = mode
-      && let Ok(mut stat) = sftp.stat(target)
-   {
-      stat.perm = Some(mode);
-      let _ = sftp.setstat(target, stat);
-   }
-
-   Ok(())
 }
 
 fn write_file_over_channel(
@@ -231,7 +260,7 @@ pub(super) async fn write_file(
       .ok_or("Connection not found")?;
 
    match sftp_opt {
-      Some(sftp) => write_file_sftp(sftp, &file_path, content.as_bytes()),
+      Some(sftp) => write_atomically(sftp, Path::new(&file_path), content.as_bytes()),
       None => write_file_over_channel(session, &file_path, content.as_bytes()),
    }
 }

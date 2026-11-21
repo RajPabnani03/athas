@@ -1,5 +1,6 @@
 use super::{AtomicFileWriter, atomic_write_command, sibling_temporary_path, write_atomically};
 use std::{
+   cell::Cell,
    fs,
    io::{self, Write},
    path::{Path, PathBuf},
@@ -50,6 +51,8 @@ struct TestWriter {
    write_limit: Option<usize>,
    deny_create: bool,
    deny_rename: bool,
+   deny_set_mode: bool,
+   created_mode: Cell<Option<u32>>,
 }
 
 impl AtomicFileWriter for TestWriter {
@@ -61,6 +64,10 @@ impl AtomicFileWriter for TestWriter {
 
    fn exists(&self, path: &Path) -> bool {
       path.exists()
+   }
+
+   fn mode(&self, path: &Path) -> Option<u32> {
+      test_mode(path)
    }
 
    fn resolve(&self, path: &Path) -> Result<PathBuf, String> {
@@ -75,18 +82,28 @@ impl AtomicFileWriter for TestWriter {
       Ok(fs::canonicalize(&resolved).unwrap_or(resolved))
    }
 
-   fn create_temporary(&self, path: &Path) -> Result<Box<dyn Write>, String> {
+   fn create_temporary(&self, path: &Path, mode: u32) -> Result<Box<dyn Write>, String> {
       if self.deny_create {
          return Err("Failed to create temporary file: Permission denied".to_string());
       }
 
+      self.created_mode.set(Some(mode));
       let file =
          fs::File::create(path).map_err(|e| format!("Failed to create temporary file: {}", e))?;
+      let _ = set_test_mode(path, mode);
 
       match self.write_limit {
          Some(limit) => Ok(Box::new(InterruptedWriter { file, limit })),
          None => Ok(Box::new(file)),
       }
+   }
+
+   fn set_mode(&self, path: &Path, mode: u32) -> Result<(), String> {
+      if self.deny_set_mode {
+         return Err("Failed to set file permissions: Permission denied".to_string());
+      }
+
+      set_test_mode(path, mode)
    }
 
    fn rename_over(&self, from: &Path, to: &Path) -> Result<(), String> {
@@ -100,6 +117,30 @@ impl AtomicFileWriter for TestWriter {
    fn remove(&self, path: &Path) -> Result<(), String> {
       fs::remove_file(path).map_err(|e| format!("Failed to remove temporary file: {}", e))
    }
+}
+
+#[cfg(unix)]
+fn set_test_mode(path: &Path, mode: u32) -> Result<(), String> {
+   fs::set_permissions(path, fs::Permissions::from_mode(mode & 0o7777)).map_err(|e| e.to_string())
+}
+
+#[cfg(not(unix))]
+fn set_test_mode(path: &Path, mode: u32) -> Result<(), String> {
+   let _ = (path, mode);
+   Ok(())
+}
+
+#[cfg(unix)]
+fn test_mode(path: &Path) -> Option<u32> {
+   fs::metadata(path)
+      .ok()
+      .map(|metadata| metadata.permissions().mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn test_mode(path: &Path) -> Option<u32> {
+   let _ = path;
+   None
 }
 
 struct InterruptedWriter {
@@ -300,13 +341,14 @@ fn shell_write_creates_a_new_file_with_the_umask_default_mode() {
    let target = dir.0.join("new.txt");
    let path = target.to_str().unwrap().to_string();
 
-   let (status, stderr) = run_write_command(&atomic_write_command(&path, 7), b"content");
+   let script = format!("umask 022; {}", atomic_write_command(&path, 7));
+   let (status, stderr) = run_write_command(&script, b"content");
 
    assert!(status.success(), "{status} {stderr}");
    assert_eq!(fs::read_to_string(&target).unwrap(), "content");
-   assert_ne!(
+   assert_eq!(
       fs::metadata(&target).unwrap().permissions().mode() & 0o777,
-      0o600
+      0o644
    );
 }
 
@@ -424,4 +466,84 @@ fn shell_write_fails_on_a_dangling_symlink() {
    assert!(is_symlink(&link));
    assert!(!dir.0.join("missing.txt").exists());
    assert_eq!(dir.names(), vec!["link.txt"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn creates_the_temporary_file_with_the_target_mode() {
+   let dir = TestDir::new("mode-existing");
+   let target = dir.write("secret.txt", "original");
+   fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+   let writer = TestWriter::default();
+
+   write_atomically(&writer, &target, b"replacement").unwrap();
+
+   assert_eq!(writer.created_mode.get(), Some(0o600));
+   assert_eq!(
+      fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
+      0o600
+   );
+}
+
+#[test]
+fn creates_a_new_file_with_the_default_mode() {
+   let dir = TestDir::new("mode-new");
+   let target = dir.0.join("new.txt");
+   let writer = TestWriter::default();
+
+   write_atomically(&writer, &target, b"content").unwrap();
+
+   assert_eq!(writer.created_mode.get(), Some(0o666));
+}
+
+#[cfg(unix)]
+#[test]
+fn keeps_the_original_when_the_mode_cannot_be_applied() {
+   let dir = TestDir::new("mode-denied");
+   let target = dir.write("notes.txt", "original");
+
+   let error = write_atomically(
+      &TestWriter {
+         deny_set_mode: true,
+         ..TestWriter::default()
+      },
+      &target,
+      b"replacement",
+   )
+   .unwrap_err();
+
+   assert!(error.contains("Failed to set file permissions"), "{error}");
+   assert_eq!(fs::read_to_string(&target).unwrap(), "original");
+   assert_eq!(dir.names(), vec!["notes.txt".to_string()]);
+}
+
+#[test]
+fn keeps_temporary_names_within_the_common_name_limit() {
+   for name in ["a".repeat(250), format!("{}.txt", "a".repeat(250))] {
+      let temporary = sibling_temporary_path(&Path::new("/srv").join(&name));
+      let temporary_name = temporary.file_name().unwrap().to_string_lossy();
+
+      assert!(temporary_name.len() <= 145, "{temporary_name}");
+   }
+
+   let wide = format!("{}.txt", "配".repeat(75));
+   let temporary = sibling_temporary_path(&Path::new("/srv").join(&wide));
+   let temporary_name = temporary.file_name().unwrap().to_string_lossy();
+
+   assert!(temporary_name.len() <= 145, "{temporary_name}");
+}
+
+#[cfg(unix)]
+#[test]
+fn shell_write_handles_a_name_close_to_the_filesystem_limit() {
+   let dir = TestDir::new("shell-long-name");
+   let name = format!("{}.txt", "n".repeat(240));
+   let target = dir.write(&name, "original");
+   let path = target.to_str().unwrap().to_string();
+
+   let (status, stderr) = run_write_command(&atomic_write_command(&path, 11), b"replacement");
+
+   assert!(status.success(), "{status} {stderr}");
+   assert_eq!(fs::read_to_string(&target).unwrap(), "replacement");
+   assert_eq!(dir.names(), vec![name]);
 }
