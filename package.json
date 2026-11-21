@@ -15,6 +15,7 @@
     "fix": "vp check --fix",
     "format": "vp fmt --write .",
     "check:rust": "bash scripts/check/rust.sh",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "reset:workspace": "bun scripts/reset-workspace.ts",
     "postinstall": "bun scripts/postinstall.ts",
     "prepare": "vp config --no-agent",
