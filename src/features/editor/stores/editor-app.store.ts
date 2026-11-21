@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { copyFile, stat } from "@tauri-apps/plugin-fs";
+import { copyFile, readFile, stat, writeFile as writeFileBytes } from "@tauri-apps/plugin-fs";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { extensionRegistry } from "@/extensions/registry/extension-registry";
@@ -11,6 +11,7 @@ import { recordLocalHistoryFile } from "@/features/local-history/api/local-histo
 import { isEditorContent } from "@/features/panes/types/pane-content.types";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import { showAlertDialog, showChoiceDialog } from "@/ui/dialog";
+import { IS_WINDOWS } from "@/utils/platform";
 import { createSelectors } from "@/utils/zustand-selectors";
 import { writeFile } from "@/features/file-system/controllers/platform";
 import type { EditorContentChangeOptions, Position, Range } from "../types/editor.types";
@@ -33,8 +34,17 @@ async function recordLocalHistoryBeforeWrite(
 
 const COPYABLE_BUFFER_TYPES = new Set<string>(["image", "pdf", "binary"]);
 
-async function pathsPointAtSameFile(sourcePath: string, targetPath: string): Promise<boolean> {
-  if (sourcePath === targetPath) return true;
+type PathComparison = "same" | "different" | "unknown";
+
+function normalizeWindowsPath(path: string): string {
+  return path.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+}
+
+async function comparePaths(sourcePath: string, targetPath: string): Promise<PathComparison> {
+  if (sourcePath === targetPath) return "same";
+  if (IS_WINDOWS && normalizeWindowsPath(sourcePath) === normalizeWindowsPath(targetPath)) {
+    return "same";
+  }
 
   const source = await stat(sourcePath);
 
@@ -42,15 +52,19 @@ async function pathsPointAtSameFile(sourcePath: string, targetPath: string): Pro
   try {
     target = await stat(targetPath);
   } catch {
-    return false;
+    return "different";
   }
 
-  return (
-    typeof source.dev === "number" &&
-    typeof source.ino === "number" &&
-    source.dev === target.dev &&
-    source.ino === target.ino
-  );
+  if (
+    typeof source.dev !== "number" ||
+    typeof source.ino !== "number" ||
+    typeof target.dev !== "number" ||
+    typeof target.ino !== "number"
+  ) {
+    return "unknown";
+  }
+
+  return source.dev === target.dev && source.ino === target.ino ? "same" : "different";
 }
 
 async function saveEditorBufferAs(bufferId: string): Promise<boolean> {
@@ -111,8 +125,13 @@ async function saveEditorBufferAs(bufferId: string): Promise<boolean> {
         return false;
       }
 
-      if (!(await pathsPointAtSameFile(buffer.path, result))) {
+      const comparison = await comparePaths(buffer.path, result);
+
+      if (comparison === "different") {
         await copyFile(buffer.path, result);
+      } else if (comparison === "unknown") {
+        const bytes = await readFile(buffer.path);
+        await writeFileBytes(result, bytes);
       }
 
       if (destinationBuffer) {

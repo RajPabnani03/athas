@@ -3,8 +3,12 @@ import type { EditorContent } from "@/features/panes/types/pane-content.types";
 import type { useBufferStore as useBufferStoreHook } from "../stores/buffer.store";
 import type { useEditorAppStore as useEditorAppStoreHook } from "../stores/editor-app.store";
 
+const windowsFlag = vi.hoisted(() => ({ value: false }));
+
 const mocks = vi.hoisted(() => ({
   copyFile: vi.fn(),
+  readFile: vi.fn(),
+  writeFileBytes: vi.fn(),
   notifyDocumentSave: vi.fn(),
   recordLocalHistoryFile: vi.fn(),
   save: vi.fn(),
@@ -29,7 +33,19 @@ vi.mock("@tauri-apps/plugin-fs", async (importOriginal) => {
   return {
     ...original,
     copyFile: mocks.copyFile,
+    readFile: mocks.readFile,
     stat: mocks.stat,
+    writeFile: mocks.writeFileBytes,
+  };
+});
+
+vi.mock("@/utils/platform", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/utils/platform")>();
+  return {
+    ...original,
+    get IS_WINDOWS() {
+      return windowsFlag.value;
+    },
   };
 });
 
@@ -132,6 +148,9 @@ describe("editor save as", () => {
     mocks.notifyDocumentSave.mockResolvedValue(undefined);
     mocks.stopForFile.mockResolvedValue(undefined);
     mocks.copyFile.mockResolvedValue(undefined);
+    mocks.readFile.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    mocks.writeFileBytes.mockResolvedValue(undefined);
+    windowsFlag.value = false;
     mocks.stat.mockImplementation(async (path: string) => {
       if (path.includes("copy.ts")) {
         throw new Error("not found");
@@ -357,7 +376,7 @@ describe("editor save as", () => {
     expect(useBufferStore.getState().buffers).toHaveLength(2);
   });
 
-  it("copies when the platform reports no device or inode for the files", async () => {
+  it("reads then writes when the platform cannot report device or inode", async () => {
     useBufferStore.setState({
       activeBufferId: "image-buffer",
       buffers: [
@@ -379,7 +398,40 @@ describe("editor save as", () => {
     const saved = await useEditorAppStore.getState().actions.handleSaveAs();
 
     expect(saved).toBe(true);
-    expect(mocks.copyFile).toHaveBeenCalledWith("/workspace/pic.png", "/workspace/copy.ts");
+    expect(mocks.copyFile).not.toHaveBeenCalled();
+    expect(mocks.readFile).toHaveBeenCalledWith("/workspace/pic.png");
+    expect(mocks.writeFileBytes).toHaveBeenCalledWith(
+      "/workspace/copy.ts",
+      new Uint8Array([1, 2, 3]),
+    );
+  });
+
+  it("skips a case-differing destination of the same file on Windows", async () => {
+    windowsFlag.value = true;
+    useBufferStore.setState({
+      activeBufferId: "image-buffer",
+      buffers: [
+        {
+          id: "image-buffer",
+          type: "image",
+          path: "C:/Workspace/Pic.png",
+          name: "Pic.png",
+          isPinned: false,
+          isPreview: false,
+          isActive: true,
+        },
+      ],
+      pendingClose: null,
+      closedBuffersHistory: [],
+    });
+    mocks.save.mockResolvedValue("C:\\workspace\\pic.png");
+    mocks.stat.mockResolvedValue({ dev: null, ino: null });
+
+    const saved = await useEditorAppStore.getState().actions.handleSaveAs();
+
+    expect(saved).toBe(true);
+    expect(mocks.copyFile).not.toHaveBeenCalled();
+    expect(mocks.readFile).not.toHaveBeenCalled();
   });
 
   it("fails visibly instead of copying when the source cannot be inspected", async () => {
