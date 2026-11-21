@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { copyFile, readFile, stat, writeFile as writeFileBytes } from "@tauri-apps/plugin-fs";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { extensionRegistry } from "@/extensions/registry/extension-registry";
@@ -9,10 +10,12 @@ import { emitGitChanged } from "@/features/git/events/git-events";
 import { recordLocalHistoryFile } from "@/features/local-history/api/local-history-api";
 import { isEditorContent } from "@/features/panes/types/pane-content.types";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
+import { showAlertDialog, showChoiceDialog } from "@/ui/dialog";
+import { IS_WINDOWS } from "@/utils/platform";
 import { createSelectors } from "@/utils/zustand-selectors";
 import { writeFile } from "@/features/file-system/controllers/platform";
 import type { EditorContentChangeOptions, Position, Range } from "../types/editor.types";
-import { getBufferById } from "../utils/buffer-index";
+import { getBufferById, getBufferByPath } from "../utils/buffer-index";
 import { getDirtyWritableEditorBuffers } from "../utils/editor-buffer-selectors";
 import { trackBufferHistoryChange } from "./buffer-history-tracking";
 import { useBufferStore } from "./buffer.store";
@@ -29,9 +32,150 @@ async function recordLocalHistoryBeforeWrite(
   }
 }
 
+const COPYABLE_BUFFER_TYPES = new Set<string>(["image", "pdf", "binary"]);
+
+type PathComparison = "same" | "different" | "unknown";
+
+function normalizeWindowsPath(path: string): string {
+  return path.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+}
+
+async function comparePaths(sourcePath: string, targetPath: string): Promise<PathComparison> {
+  if (sourcePath === targetPath) return "same";
+  if (IS_WINDOWS && normalizeWindowsPath(sourcePath) === normalizeWindowsPath(targetPath)) {
+    return "same";
+  }
+
+  const source = await stat(sourcePath);
+
+  let target;
+  try {
+    target = await stat(targetPath);
+  } catch {
+    return "different";
+  }
+
+  if (
+    typeof source.dev !== "number" ||
+    typeof source.ino !== "number" ||
+    typeof target.dev !== "number" ||
+    typeof target.ino !== "number"
+  ) {
+    return "unknown";
+  }
+
+  return source.dev === target.dev && source.ino === target.ino ? "same" : "different";
+}
+
+async function saveEditorBufferAs(bufferId: string): Promise<boolean> {
+  const { buffers } = useBufferStore.getState();
+  const { markBufferSaved, updateBufferPath } = useBufferStore.getState().actions;
+  const { markPendingSave } = useFileWatcherStore.getState().actions;
+  const initialBuffer = getBufferById(buffers, bufferId);
+  if (!initialBuffer || (isEditorContent(initialBuffer) && initialBuffer.readOnly)) return false;
+
+  const { save: saveDialog } = await import("@tauri-apps/plugin-dialog");
+  const result = await saveDialog({
+    title: "Save As",
+    defaultPath: initialBuffer.name,
+    filters: [
+      { name: "All Files", extensions: ["*"] },
+      {
+        name: "Text Files",
+        extensions: ["txt", "md", "json", "js", "ts", "tsx", "jsx", "css", "html"],
+      },
+    ],
+  });
+  if (!result) return false;
+
+  markPendingSave(result);
+
+  try {
+    const buffer = getBufferById(useBufferStore.getState().buffers, bufferId);
+    if (!buffer) return false;
+
+    const { buffers: currentBuffers } = useBufferStore.getState();
+    const destinationBuffer = getBufferByPath(
+      currentBuffers.filter((candidate) => candidate.id !== buffer.id),
+      result,
+    );
+
+    if (destinationBuffer) {
+      const destinationHasEdits = isEditorContent(destinationBuffer) && destinationBuffer.isDirty;
+
+      if (destinationHasEdits) {
+        const choice = await showChoiceDialog<"cancel" | "replace">(
+          `${destinationBuffer.name} is open with unsaved changes. Saving here replaces its contents on disk and closes that tab.`,
+          {
+            title: "File Already Open",
+            choices: [
+              { value: "cancel", label: "Cancel" },
+              { value: "replace", label: "Replace File", variant: "danger" },
+            ],
+          },
+        );
+
+        if (choice !== "replace") return false;
+      }
+    }
+
+    if (!isEditorContent(buffer)) {
+      if (!COPYABLE_BUFFER_TYPES.has(buffer.type) || !buffer.path || buffer.path.includes("://")) {
+        await showAlertDialog("Save As is not available for this tab.", "Save As");
+        return false;
+      }
+
+      const comparison = await comparePaths(buffer.path, result);
+
+      if (comparison === "different") {
+        await copyFile(buffer.path, result);
+      } else if (comparison === "unknown") {
+        const bytes = await readFile(buffer.path);
+        await writeFileBytes(result, bytes);
+      }
+
+      if (destinationBuffer) {
+        useBufferStore.getState().actions.closeBufferForce(destinationBuffer.id);
+      }
+      return true;
+    }
+
+    const contentToSave = buffer.content;
+    await writeFile(result, contentToSave);
+    await recordLocalHistoryBeforeWrite(result, "save");
+
+    if (destinationBuffer) {
+      useBufferStore.getState().actions.closeBufferForce(destinationBuffer.id);
+    }
+
+    const canRebindPath =
+      buffer.path.startsWith("untitled:") || (!buffer.isVirtual && !buffer.path.includes("://"));
+
+    if (canRebindPath) {
+      updateBufferPath(buffer.id, result);
+      markBufferSaved(buffer.id, contentToSave);
+    }
+
+    const rootFolderPath = useFileSystemStore.getState().rootFolderPath;
+    if (rootFolderPath) {
+      emitGitChanged({
+        repoPath: rootFolderPath,
+        filePath: result,
+        scopes: ["working-tree"],
+        source: "save",
+      });
+    }
+    return true;
+  } catch (error) {
+    console.error("Error saving file as:", error);
+    await showAlertDialog("Failed to save file. Please try again.", "Save As");
+    return false;
+  }
+}
+
 async function saveEditorBufferById(bufferId: string): Promise<boolean> {
   const { buffers } = useBufferStore.getState();
-  const { markBufferDirty, updateBufferContent, updateBufferPath } =
+  const { markBufferDirty, markBufferSaved, updateBufferContent, updateBufferPath } =
     useBufferStore.getState().actions;
   const { updateSettingsFromJSON } = useSettingsStore.getState().actions;
   const { markPendingSave } = useFileWatcherStore.getState().actions;
@@ -124,7 +268,7 @@ async function saveEditorBufferById(bufferId: string): Promise<boolean> {
   try {
     markPendingSave(activeBuffer.path);
 
-    let contentToSave = activeBuffer.content;
+    const contentAtSaveStart = activeBuffer.content;
     const { settings } = useSettingsStore.getState();
 
     if (settings.formatOnSave) {
@@ -133,21 +277,36 @@ async function saveEditorBufferById(bufferId: string): Promise<boolean> {
 
       const formatResult = await formatContent({
         filePath: activeBuffer.path,
-        content: activeBuffer.content,
+        content: contentAtSaveStart,
         languageId: languageId || undefined,
       });
 
-      if (formatResult.success && formatResult.formattedContent) {
-        contentToSave = formatResult.formattedContent;
-        updateBufferContent(activeBuffer.id, contentToSave, false);
+      const bufferAfterFormat = getBufferById(useBufferStore.getState().buffers, activeBuffer.id);
+      const contentAfterFormat =
+        bufferAfterFormat && isEditorContent(bufferAfterFormat)
+          ? bufferAfterFormat.content
+          : contentAtSaveStart;
+
+      if (
+        formatResult.success &&
+        formatResult.formattedContent &&
+        contentAfterFormat === contentAtSaveStart
+      ) {
+        updateBufferContent(activeBuffer.id, formatResult.formattedContent, false);
       }
     }
+
+    const bufferBeforeWrite = getBufferById(useBufferStore.getState().buffers, activeBuffer.id);
+    const contentToSave =
+      bufferBeforeWrite && isEditorContent(bufferBeforeWrite)
+        ? bufferBeforeWrite.content
+        : contentAtSaveStart;
 
     await recordLocalHistoryBeforeWrite(activeBuffer.path, "save");
     await writeFile(activeBuffer.path, contentToSave);
     const { LspClient } = await import("@/features/editor/lsp/lsp-client");
     await LspClient.getInstance().notifyDocumentSave(activeBuffer.path, contentToSave);
-    markBufferDirty(activeBuffer.id, false);
+    markBufferSaved(activeBuffer.id, contentToSave);
 
     if (settings.lintOnSave) {
       const { lintContent } = await import("@/features/editor/linter/linter-service");
@@ -209,6 +368,7 @@ interface AppActions {
     options?: EditorContentChangeOptions,
   ) => Promise<void>;
   handleSave: () => Promise<boolean>;
+  handleSaveAs: () => Promise<boolean>;
   handleSaveAll: () => Promise<number>;
   openQuickEdit: (params: {
     text: string;
@@ -326,6 +486,13 @@ export const useEditorAppStore = createSelectors(
             return false;
 
           return saveEditorBufferById(activeBuffer.id);
+        },
+
+        handleSaveAs: async () => {
+          const { activeBufferId } = useBufferStore.getState();
+          if (!activeBufferId) return false;
+
+          return saveEditorBufferAs(activeBufferId);
         },
 
         handleSaveAll: async () => {

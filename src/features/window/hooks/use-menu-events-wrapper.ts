@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
 import { editorAPI } from "@/features/editor/extensions/api";
 import { useBufferStore } from "@/features/editor/stores/buffer.store";
 import { useFileSystemStore } from "@/features/file-system/stores/file-system.store";
@@ -27,7 +26,7 @@ export function useMenuEventsWrapper() {
   const closeFolder = useFileSystemStore.use.closeFolder();
   const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
   const { closeBuffer } = useBufferStore.use.actions();
-  const { handleSave } = useEditorAppStore.use.actions();
+  const { handleSave, handleSaveAs } = useEditorAppStore.use.actions();
   const openWhatsNew = useWhatsNewStore((state) => state.actions.open);
   const { checkForUpdates } = useUpdater(false);
   const { showToast } = useToast();
@@ -72,45 +71,7 @@ export function useMenuEventsWrapper() {
     onOpenFolder: handleOpenFolder,
     onCloseFolder: closeFolder,
     onSave: handleSave,
-    onSaveAs: async () => {
-      const activeBuffer = useBufferStore.getState().actions.getActiveBuffer();
-      if (!activeBuffer) return;
-
-      try {
-        const result = await save({
-          title: "Save As",
-          defaultPath: activeBuffer.name,
-          filters: [
-            {
-              name: "All Files",
-              extensions: ["*"],
-            },
-            {
-              name: "Text Files",
-              extensions: ["txt", "md", "json", "js", "ts", "tsx", "jsx", "css", "html"],
-            },
-          ],
-        });
-
-        if (result) {
-          // Save the active buffer content to the new file path
-          try {
-            await invoke("write_file", {
-              path: result,
-              contents: activeBuffer.type === "editor" ? activeBuffer.content : "",
-            });
-            console.log("File saved successfully to:", result);
-            // Update buffer with new file path if needed
-            // This would require updating the buffer store with the new file path
-          } catch (writeError) {
-            console.error("Failed to save file:", writeError);
-            await showAlertDialog("Failed to save file. Please try again.", "Save As");
-          }
-        }
-      } catch (error) {
-        console.error("Save As dialog error:", error);
-      }
-    },
+    onSaveAs: handleSaveAs,
     onCloseTab: () => {
       // Check if terminal is focused - if so, dispatch event to close terminal instead
       const activeElement = document.activeElement as HTMLElement;

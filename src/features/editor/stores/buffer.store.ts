@@ -168,6 +168,7 @@ interface BufferActions {
   updateBufferTokens: (bufferId: string, tokens: TokenEntry[]) => void;
   updateBufferLanguage: (bufferId: string, language: string) => void;
   markBufferDirty: (bufferId: string, isDirty: boolean) => void;
+  markBufferSaved: (bufferId: string, savedContent: string) => void;
   updateBufferPath: (bufferId: string, newPath: string) => void;
   updateBuffer: (updatedBuffer: PaneContent) => void;
   handleTabClick: (bufferId: string) => void;
@@ -1297,6 +1298,16 @@ const createBufferStore = (workspaceId: string) => {
               if (!isDirty) {
                 buffer.savedContent = buffer.content;
               }
+            }
+          });
+        },
+
+        markBufferSaved: (bufferId: string, savedContent: string) => {
+          set((state) => {
+            const buffer = state.buffers.find((b) => b.id === bufferId);
+            if (buffer && isEditorContent(buffer)) {
+              buffer.savedContent = savedContent;
+              buffer.isDirty = buffer.content !== savedContent;
             }
           });
         },
