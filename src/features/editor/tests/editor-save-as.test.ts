@@ -132,7 +132,12 @@ describe("editor save as", () => {
     mocks.notifyDocumentSave.mockResolvedValue(undefined);
     mocks.stopForFile.mockResolvedValue(undefined);
     mocks.copyFile.mockResolvedValue(undefined);
-    mocks.stat.mockRejectedValue(new Error("not found"));
+    mocks.stat.mockImplementation(async (path: string) => {
+      if (path.includes("copy.ts")) {
+        throw new Error("not found");
+      }
+      return { dev: 1, ino: 1 };
+    });
     mocks.showAlertDialog.mockResolvedValue(undefined);
 
     ({ useBufferStore } = await import("../stores/buffer.store"));
@@ -350,6 +355,57 @@ describe("editor save as", () => {
     expect(mocks.showChoiceDialog).toHaveBeenCalledOnce();
     expect(mocks.copyFile).not.toHaveBeenCalled();
     expect(useBufferStore.getState().buffers).toHaveLength(2);
+  });
+
+  it("copies when the platform reports no device or inode for the files", async () => {
+    useBufferStore.setState({
+      activeBufferId: "image-buffer",
+      buffers: [
+        {
+          id: "image-buffer",
+          type: "image",
+          path: "/workspace/pic.png",
+          name: "pic.png",
+          isPinned: false,
+          isPreview: false,
+          isActive: true,
+        },
+      ],
+      pendingClose: null,
+      closedBuffersHistory: [],
+    });
+    mocks.stat.mockResolvedValue({ dev: null, ino: null });
+
+    const saved = await useEditorAppStore.getState().actions.handleSaveAs();
+
+    expect(saved).toBe(true);
+    expect(mocks.copyFile).toHaveBeenCalledWith("/workspace/pic.png", "/workspace/copy.ts");
+  });
+
+  it("fails visibly instead of copying when the source cannot be inspected", async () => {
+    useBufferStore.setState({
+      activeBufferId: "image-buffer",
+      buffers: [
+        {
+          id: "image-buffer",
+          type: "image",
+          path: "/workspace/pic.png",
+          name: "pic.png",
+          isPinned: false,
+          isPreview: false,
+          isActive: true,
+        },
+      ],
+      pendingClose: null,
+      closedBuffersHistory: [],
+    });
+    mocks.stat.mockRejectedValue(new Error("stat not permitted"));
+
+    const saved = await useEditorAppStore.getState().actions.handleSaveAs();
+
+    expect(saved).toBe(false);
+    expect(mocks.copyFile).not.toHaveBeenCalled();
+    expect(mocks.showAlertDialog).toHaveBeenCalledOnce();
   });
 
   it("skips the copy when the destination names the same file through another path", async () => {

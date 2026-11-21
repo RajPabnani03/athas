@@ -36,17 +36,21 @@ const COPYABLE_BUFFER_TYPES = new Set<string>(["image", "pdf", "binary"]);
 async function pathsPointAtSameFile(sourcePath: string, targetPath: string): Promise<boolean> {
   if (sourcePath === targetPath) return true;
 
+  const source = await stat(sourcePath);
+
+  let target;
   try {
-    const [source, target] = await Promise.all([stat(sourcePath), stat(targetPath)]);
-    return (
-      source.dev !== undefined &&
-      source.dev === target.dev &&
-      source.ino !== undefined &&
-      source.ino === target.ino
-    );
+    target = await stat(targetPath);
   } catch {
     return false;
   }
+
+  return (
+    typeof source.dev === "number" &&
+    typeof source.ino === "number" &&
+    source.dev === target.dev &&
+    source.ino === target.ino
+  );
 }
 
 async function saveEditorBufferAs(bufferId: string): Promise<boolean> {
